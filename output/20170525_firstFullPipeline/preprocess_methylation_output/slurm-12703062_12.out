@@ -1,0 +1,228 @@
+[[1]]
+ [1] "dplyr"     "purrr"     "readr"     "tidyr"     "tibble"    "ggplot2"  
+ [7] "tidyverse" "stats"     "graphics"  "grDevices" "utils"     "datasets" 
+[13] "base"     
+
+[[2]]
+ [1] "minfi"                "bumphunter"           "locfit"              
+ [4] "iterators"            "foreach"              "Biostrings"          
+ [7] "XVector"              "SummarizedExperiment" "GenomicRanges"       
+[10] "GenomeInfoDb"         "IRanges"              "S4Vectors"           
+[13] "stats4"               "Biobase"              "BiocGenerics"        
+[16] "parallel"             "methods"              "dplyr"               
+[19] "purrr"                "readr"                "tidyr"               
+[22] "tibble"               "ggplot2"              "tidyverse"           
+[25] "stats"                "graphics"             "grDevices"           
+[28] "utils"                "datasets"             "base"                
+
+[[3]]
+ [1] "wateRmelon"                                  
+ [2] "illuminaio"                                  
+ [3] "IlluminaHumanMethylation450kanno.ilmn12.hg19"
+ [4] "ROC"                                         
+ [5] "lumi"                                        
+ [6] "methylumi"                                   
+ [7] "FDb.InfiniumMethylation.hg19"                
+ [8] "org.Hs.eg.db"                                
+ [9] "TxDb.Hsapiens.UCSC.hg19.knownGene"           
+[10] "GenomicFeatures"                             
+[11] "AnnotationDbi"                               
+[12] "reshape2"                                    
+[13] "scales"                                      
+[14] "matrixStats"                                 
+[15] "limma"                                       
+[16] "minfi"                                       
+[17] "bumphunter"                                  
+[18] "locfit"                                      
+[19] "iterators"                                   
+[20] "foreach"                                     
+[21] "Biostrings"                                  
+[22] "XVector"                                     
+[23] "SummarizedExperiment"                        
+[24] "GenomicRanges"                               
+[25] "GenomeInfoDb"                                
+[26] "IRanges"                                     
+[27] "S4Vectors"                                   
+[28] "stats4"                                      
+[29] "Biobase"                                     
+[30] "BiocGenerics"                                
+[31] "parallel"                                    
+[32] "methods"                                     
+[33] "dplyr"                                       
+[34] "purrr"                                       
+[35] "readr"                                       
+[36] "tidyr"                                       
+[37] "tibble"                                      
+[38] "ggplot2"                                     
+[39] "tidyverse"                                   
+[40] "stats"                                       
+[41] "graphics"                                    
+[42] "grDevices"                                   
+[43] "utils"                                       
+[44] "datasets"                                    
+[45] "base"                                        
+
+[[4]]
+ [1] "RefFreeEWAS"                                 
+ [2] "quadprog"                                    
+ [3] "isva"                                        
+ [4] "JADE"                                        
+ [5] "fastICA"                                     
+ [6] "qvalue"                                      
+ [7] "wateRmelon"                                  
+ [8] "illuminaio"                                  
+ [9] "IlluminaHumanMethylation450kanno.ilmn12.hg19"
+[10] "ROC"                                         
+[11] "lumi"                                        
+[12] "methylumi"                                   
+[13] "FDb.InfiniumMethylation.hg19"                
+[14] "org.Hs.eg.db"                                
+[15] "TxDb.Hsapiens.UCSC.hg19.knownGene"           
+[16] "GenomicFeatures"                             
+[17] "AnnotationDbi"                               
+[18] "reshape2"                                    
+[19] "scales"                                      
+[20] "matrixStats"                                 
+[21] "limma"                                       
+[22] "minfi"                                       
+[23] "bumphunter"                                  
+[24] "locfit"                                      
+[25] "iterators"                                   
+[26] "foreach"                                     
+[27] "Biostrings"                                  
+[28] "XVector"                                     
+[29] "SummarizedExperiment"                        
+[30] "GenomicRanges"                               
+[31] "GenomeInfoDb"                                
+[32] "IRanges"                                     
+[33] "S4Vectors"                                   
+[34] "stats4"                                      
+[35] "Biobase"                                     
+[36] "BiocGenerics"                                
+[37] "parallel"                                    
+[38] "methods"                                     
+[39] "dplyr"                                       
+[40] "purrr"                                       
+[41] "readr"                                       
+[42] "tidyr"                                       
+[43] "tibble"                                      
+[44] "ggplot2"                                     
+[45] "tidyverse"                                   
+[46] "stats"                                       
+[47] "graphics"                                    
+[48] "grDevices"                                   
+[49] "utils"                                       
+[50] "datasets"                                    
+[51] "base"                                        
+
+[[5]]
+ [1] "FlowSorted.Blood.450k"                       
+ [2] "RefFreeEWAS"                                 
+ [3] "quadprog"                                    
+ [4] "isva"                                        
+ [5] "JADE"                                        
+ [6] "fastICA"                                     
+ [7] "qvalue"                                      
+ [8] "wateRmelon"                                  
+ [9] "illuminaio"                                  
+[10] "IlluminaHumanMethylation450kanno.ilmn12.hg19"
+[11] "ROC"                                         
+[12] "lumi"                                        
+[13] "methylumi"                                   
+[14] "FDb.InfiniumMethylation.hg19"                
+[15] "org.Hs.eg.db"                                
+[16] "TxDb.Hsapiens.UCSC.hg19.knownGene"           
+[17] "GenomicFeatures"                             
+[18] "AnnotationDbi"                               
+[19] "reshape2"                                    
+[20] "scales"                                      
+[21] "matrixStats"                                 
+[22] "limma"                                       
+[23] "minfi"                                       
+[24] "bumphunter"                                  
+[25] "locfit"                                      
+[26] "iterators"                                   
+[27] "foreach"                                     
+[28] "Biostrings"                                  
+[29] "XVector"                                     
+[30] "SummarizedExperiment"                        
+[31] "GenomicRanges"                               
+[32] "GenomeInfoDb"                                
+[33] "IRanges"                                     
+[34] "S4Vectors"                                   
+[35] "stats4"                                      
+[36] "Biobase"                                     
+[37] "BiocGenerics"                                
+[38] "parallel"                                    
+[39] "methods"                                     
+[40] "dplyr"                                       
+[41] "purrr"                                       
+[42] "readr"                                       
+[43] "tidyr"                                       
+[44] "tibble"                                      
+[45] "ggplot2"                                     
+[46] "tidyverse"                                   
+[47] "stats"                                       
+[48] "graphics"                                    
+[49] "grDevices"                                   
+[50] "utils"                                       
+[51] "datasets"                                    
+[52] "base"                                        
+
+[read.metharray.sheet] Found the following CSV files:
+
+[1] "../data//sample_sheet4.csv"
+[1] "Samples to read: 1440 to 1570"
+[1] "Samples read and saved."
+Loading required package: IlluminaHumanMethylation450kmanifest
+[1] "Detection-based QC run. Mem used so far:"
+1.62 GB
+   user  system elapsed 
+ 97.712   0.149  98.025 
+[preprocessNoob] Applying R/G ratio flip to fix dye bias...
+[1] "Preprocessing done."
+[1] "Removed 0 samples"
+[1] "QC complete. Mem used so far:"
+1.59 GB
+   user  system elapsed 
+215.640   2.767 218.763 
+
+Attaching package: ‘RPMM’
+
+The following object is masked from ‘package:limma’:
+
+    ebayes
+
+
+Attaching package: ‘RPMM’
+
+The following object is masked from ‘package:limma’:
+
+    ebayes
+
+
+Attaching package: ‘RPMM’
+
+The following object is masked from ‘package:limma’:
+
+    ebayes
+
+
+Attaching package: ‘RPMM’
+
+The following object is masked from ‘package:limma’:
+
+    ebayes
+
+[1] "BMIQ normalization done. Memory used:"
+1.07 GB
+   user  system elapsed 
+911.224   4.996 470.161 
+[1] "BMIQ-normalized matrix saved."
+1.07 GB
+   user  system elapsed 
+ 28.596   0.353  32.289 
+[1] "Cell counts matrix saved."
+1.07 GB
+   user  system elapsed 
+  1.066   0.002   1.074 

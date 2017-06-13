@@ -1,0 +1,128 @@
+---
+title: Analysis of FHS Offspring CVD Incidence EWAS Results
+author: Kenny Westerman
+output: pdf_document
+---
+
+```{r prereqs, include=FALSE}
+lapply(c("knitr","tidyverse","minfi"), library, character.only=T)
+opts_chunk$set(warning=FALSE, message=FALSE, echo=FALSE, cache.path="../int/")#, tidy=TRUE, tidy.opts=list(width.cutoff=30))
+pdf.options(useDingbats=TRUE)
+```
+
+These methylation data come from Framingham Offspring Study, Exam 8. Results are from Cox proportional hazards regression of incidence of cardiovascular events on baseline methylation levels.
+
+```{r load-data}
+resMats_list <- list()
+resMat_files <- grep("resMats_[0-9]+.*", list.files("../int/"), value=T)
+for(f in resMat_files) {
+  load(paste0("../int/", f))
+  for(nm in names(resMats)) resMats_list[[nm]] <- rbind(resMats_list[[nm]], resMats[[nm]])
+}
+
+clean_resMat <- function(mat) {
+  data.frame(mat, stringsAsFactors=F) %>%
+  dplyr::rename(beta=coef, p=Pr...z..) %>%
+  mutate_at(vars(one_of("beta","z","p")), as.numeric)
+}
+resMats <- lapply(resMats_list, clean_resMat)
+resMat <- resMats[[length(resMats)]]  # Default choice for downstream analyses is the fully-adjusted
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+Locs <- rownames_to_column(data.frame(Locations), var="CpG")
+resMat <- inner_join(resMat, Locs, by="CpG")
+# resMats <- lapply(resMat_files, function(f) {load(paste0("../int/",f)); resMat})
+# resMat <- data.frame(do.call(rbind, resMats), stringsAsFactors=F)
+# names(resMat) <- c("CpG","beta","z","p")
+# resMat <- mutate_at(resMat, vars(one_of("beta","z","p")), as.numeric)
+```
+
+## QQ plots 
+Increasing adjustment for potential confounders from left to right.
+
+```{r qqplot, fig.show="hold", fig.width=3.5}
+make_qqplot <- function(pVec, plotTitle) {
+  pVec <- pVec[!is.na(pVec)]
+  qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle)
+  abline(0,1,col="red")
+}
+for(i in 1:length(resMats)) make_qqplot(resMats[[i]]$p, names(resMats)[i])
+# Side by side plots: https://stackoverflow.com/questions/13996567/knitr-how-to-show-two-plots-of-different-sizes-next-to-each-other
+```
+
+## Manhattan plot
+Using the fully adjusted model.
+
+```{r manhattan-plot}
+source("manhattan_plot.R")
+manhattan.plot(resMat$chr, resMat$pos, resMat$p, sig.level=0.05/nrow(resMat),
+               col=c("deepskyblue4","deepskyblue1"))
+```
+
+
+```{r characterization}
+bad_CpGs <- resMat$p[is.na(resMat$p)]
+print(paste(length(bad_CpGs), "regressions failed."))
+Bonf_sig_level <- 0.05/nrow(resMat)
+Bonf_CpGs <- resMat$CpG[resMat$p<Bonf_sig_level]
+resMat$fdr <- p.adjust(resMat$p, "BH")
+FDR_CpGs <- resMat$CpG[resMat$fdr<0.05]
+# resMat.clean <- filter(resMat, !is.na(p)) %>%
+#   mutate_at(vars(one_of("beta","z","p")), as.numeric)
+```
+
+## Genomic control
+Estimate genomic inflation factor lambda based on set of p-values.
+
+```{r genomic-control}
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(resMat$p, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
+print(paste("lambda =", lambda))
+resMat$p_gc <- pchisq(qchisq(resMat$p, df=1, lower.tail=F)/lambda, df=1, lower.tail=F)
+```
+
+## Gene set enrichment analysis
+Currently based only on single-CpG annotations rather than differentially methylated regions. Gene sets are taken from the Broad Institute's MSigDB v6 canonical pathways.
+
+```{r cpg-investigation}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+cpgSet <- FDR_CpGs[!is.na(FDR_CpGs)]
+cpgSet_anno <- data.frame(cbind(Locations[cpgSet,], Other[cpgSet,], Islands.UCSC[cpgSet,])) %>%
+  separate_rows(UCSC_RefGene_Name, sep=";")
+print(paste(length(unique(cpgSet_anno$UCSC_RefGene_Name)), "relevant genes found."))
+
+## Enrichment analysis
+msigdb_file <- file("../data/gsea/c2.cp.v6.0.symbols.gmt")  # MSigDB file from http://software.broadinstitute.org/gsea/msigdb/collections.jsp#C2
+msigdb <- strsplit(readLines(msigdb_file), split="\t")  # File is tab-separated
+names(msigdb) <- purrr::map(msigdb, 1)  # First element of each msig vector is name
+msigdb <- purrr::map(msigdb, function(sig) sig[-c(1,2)])  # No need for name or URL
+totalAnnotatedGenes <- length(unique(unlist(strsplit(Other$UCSC_RefGene_Name, split=";"))))
+run_HGtest <- function(msig, mygeneset, N) {
+  numHits <- sum(mygeneset %in% msig)
+  numMsig <- length(msig)
+  numNonMsig <- N - numMsig
+  numDrawn <- length(mygeneset)
+  phyper(numHits, numMsig, numNonMsig, numDrawn)
+}
+enrichment_res <- lapply(msigdb, run_HGtest, cpgSet_anno$UCSC_RefGene_Name, totalAnnotatedGenes)
+enrich_tbl <- data.frame(Category=names(enrichment_res), p.value=unname(unlist(enrichment_res))) %>%
+  arrange(p.value)
+kable(head(enrich_tbl, 25))
+```
+
+## Initial MRS calculation and evaluation
+45 CpG sites were significant at FDR < 0.01.
+Multiple regression on methylation M-values at these sites gives coefficient beta values that were then used as weights to construct the MRS.
+Three regressions were then performed: Framingham risk score alone, methylation risk score alone, and the two together.
+Note: take these results with a huge grain of salt, since the evaluation is being done in the same dataset as was used to develop the MRS.
+
+```{r MRS-evaluation}
+load("../int/tmp_coxfitresults.RData")
+print("Framingham risk score only (plus covariates)")
+head(summary(FRSonly.fit)$coef, 1)
+print("Methylation risk score only (plus covariates)")
+head(summary(MRSonly.fit)$coef, 1)
+print("FRS and MRS together")
+head(summary(combined.fit)$coef, 2)
+```
+

@@ -1,0 +1,30 @@
+[1] "Methylation data loaded."
+[1] "Sample indices for this chunk: 63507 to 79383"
+[1] "Dimensions of survData:"
+[1] 2610   65
+[1] "Dimensions of M-value matrix:"
+[1] 15877  2610
+   user  system elapsed 
+  1.810   0.358   3.944 
+[[1]]
+[1] "survival"  "stats"     "graphics"  "grDevices" "utils"     "datasets" 
+[7] "methods"   "base"     
+
+[[2]]
+[1] "survival"  "stats"     "graphics"  "grDevices" "utils"     "datasets" 
+[7] "methods"   "base"     
+
+[[3]]
+[1] "survival"  "stats"     "graphics"  "grDevices" "utils"     "datasets" 
+[7] "methods"   "base"     
+
+[[4]]
+[1] "survival"  "stats"     "graphics"  "grDevices" "utils"     "datasets" 
+[7] "methods"   "base"     
+
+    user   system  elapsed 
+   2.639    0.414 1959.563 
+
+real	33m54.096s
+user	1m12.805s
+sys	0m4.103s

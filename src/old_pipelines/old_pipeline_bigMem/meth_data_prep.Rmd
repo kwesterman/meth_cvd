@@ -1,0 +1,58 @@
+---
+title: Quality control and preprocessing for Framingham data
+author: Kenny Westerman
+output: pdf_document
+---
+
+```{r prereqs, include=FALSE}
+lapply(c("knitr","tidyverse","minfi","wateRmelon","RefFreeEWAS","FlowSorted.Blood.450k"),
+       library, character.only=T)
+opts_chunk$set(warning=FALSE, message=FALSE, cache.path="../cache/meth_data_prep/", tidy=TRUE, tidy.opts=list(width.cutoff=30))
+```
+
+```{r load-data, cache=TRUE}
+dataDir <- "../data/"  # At the moment, this only contains a few samples for development
+targets <- read.metharray.sheet(base=dataDir, pattern="^sample_sheet4.csv$") %>%
+  dplyr::filter(Basename!="character(0)")
+rgSet <- read.metharray.exp(targets=targets, extended=T)
+```
+```{r signal-plots, eval=FALSE}
+# Boxplots to check on signals across samples -- not performed for many samples.
+boxplot(log(getGreen(rgSet)))
+boxplot(log(getRed(rgSet)))
+```
+
+QC: based on detection p-values, remove questionable probes and samples, each defined by having a certain percentage of undetected elements
+```{r QC, cache=TRUE, dependson="load-data"}
+mSet.filt <- pfilter(mn=rgSet, pnthresh=0.05, perc=5, pthresh=5)  # Samples and probes must have <5% of representatives with detection P>0.05
+```
+
+Normalization is performed using beta-mixture quantile normalization (BMIQ; Teschendorff et al. 2013).
+```{r normalization, cache=TRUE, dependson="QC"}
+mSet.filt.bmiq_matrix <- BMIQ(mSet.filt)
+mSet.filt.bmiq <- RatioSet(Beta=mSet.filt.bmiq_matrix)
+```
+
+Calculate cell counts using the reference-based approach from Houseman et al. 2012.
+```{r cell-counts, cache=TRUE, dependson="normalization"}
+data(FlowSorted.Blood.450k.compTable)
+cellRef <- as.matrix(FlowSorted.Blood.450k.compTable)[,c('CD8T','CD4T','NK','Bcell','Mono','Gran')]  # Only needs cols representing actual cell types
+commonCpGs <- intersect(rownames(mSet.filt.bmiq), rownames(cellRef))  # Which CpG sites are common to my set and the cell type reference?
+estCellCounts <- projectMix(Y=mSet.filt.bmiq_matrix[commonCpGs,], Xmat=cellRef[commonCpGs,])
+boxplot(estCellCounts, main="Calculated cell type proportions")
+```
+
+Create final table with technical, and cell count covariates.
+```{r covariate-table, cache=TRUE, dependson=c("load-data","cell-counts")}
+targets_withKey <- mutate(targets, Sample_pKey=paste(Slide, Sample_Well, sep="_"))
+estCellCounts_df <- rownames_to_column(as.data.frame(estCellCounts), var="Sample_pKey")
+meth_covData <- inner_join(targets_withKey, estCellCounts_df, by="Sample_pKey")
+```
+
+
+```{r save-data, cache=TRUE, dependson="covariate-table"}
+save("mSet.filt.bmiq", file="../data/preprocessed_methylation_data.Rdata")
+save("meth_covData", file="../data/methylation_covariates.Rdata")
+```
+
+

@@ -1,0 +1,63 @@
+---
+title: Covariate assembly 
+author: Kenny Westerman
+output: pdf_document
+---
+
+```{r prereqs, include=FALSE}
+lapply(c("knitr","tidyverse","survival","gtools"), library, character.only=T)
+opts_chunk$set(warning=FALSE, message=FALSE, cache.path="../cache/cox_ewas/",
+               cache.extra=tools::md5sum("meth_data_prep.Rmd"), cache=TRUE, dep_prev())
+```
+
+```{r load-data}
+load("../data/preprocessed_methylation_data.Rdata")
+load("../data/covariates.Rdata")
+soe2015 <- read.delim("../data/pheno_files/phs000007.v29.pht000309.v12.p10.c1.vr_soe_2015_a_0991s.HMB-IRB-MDS.txt", skip=10)
+```
+
+
+```{r prepare-events}
+soe2015.clean <- soe2015 %>%
+  mutate(numDays=DATE-37*365) %>%  # Days between sample and event (NOTE: specific values here will change)
+  filter(numDays>0) %>%  # Don't keep events that occurred prior to methylation collection
+  filter(EVENT %in% 1:26) %>%  # Only events of interest (CVD, stroke, etc. -- see data dictionary)
+  group_by(shareid) %>%  # To trim to earliest relevant event per person (what about people who have already had events?)
+  slice(which.min(numDays)) %>%  # Only keep first relevant event per person
+  ungroup()
+survData <- left_join(covData, soe2015.clean, by="shareid") %>%
+    mutate(event=!is.na(numDays),  # event == TRUE when a specific time of event exists, otherwise FALSE
+           time=na.replace(numDays, 800)) %>%  ## NOTE: this 800 needs to be switched for an *actual* number
+  slice(match(colnames(mSet.filt.bmiq), Sample_pKey))  # Re-order so rows match methylation columns
+# survData$time <- rnorm(nrow(survData), 200, 50)
+# survData$event <- base::sample(c(0,1), size=nrow(survData), replace=T)
+survData$survObj <- Surv(time=survData$time, event=survData$event, type="right")  # all subjects without an event time get max. # days as time to censor
+stopifnot(ncol(mSet.filt.bmiq)==nrow(survData),  # Ensure same # of samples in methylation and covariate data
+          all(colnames(mSet.filt.bmiq)==survData$Sample_pKey))  # Ensure identical order of samples for methylation and covariate data
+```
+
+```{r run-ewas}
+mVals <- getM(mSet.filt.bmiq)
+run_cox <- function(i) {
+  survData <- survData %>%
+    cbind(meth=mVals[i,]) %>%
+    dplyr::select(survObj,meth,sex,age,smoking_now,bmi,CD8T,CD4T,NK,Bcell,Mono,Gran) %>%
+    na.omit()
+  # survData$meth <- mVals[i,]  # Take the i'th CpG from the methylation matrix
+  # cox.fit <- coxph(survObj~meth+CD8T+CD4T+NK+Bcell+Mono+Gran, data=survData)
+  returnVal <- tryCatch({
+    cox.fit <- coxph(survObj~meth, data=survData)
+    summary(cox.fit)$coefficients['meth','Pr(>|z|)']
+  }, error=function(e) {
+    return(NA)
+  }, warning=function(w) {
+    return(NA)
+  })
+  returnVal
+}
+system.time(pVals <- mclapply(1:nrow(mVals), run_cox, mc.cores=detectCores()))
+```
+
+```{r}
+qqplot(-log10(1:nrow(mVals)/nrow(mVals)), -log10(unlist(pVals))) 
+```

@@ -1,0 +1,33 @@
+---
+title: Covariate assembly 
+author: Kenny Westerman
+output: pdf_document
+---
+
+```{r prereqs, include=FALSE}
+lapply(c("knitr","tidyverse"), library, character.only=T)
+opts_chunk$set(warning=FALSE, message=FALSE, cache.path="../cache/assemble_covariates/",
+               cache.extra=tools::md5sum("meth_data_prep.Rmd"), cache=TRUE, dep_prev())
+```
+
+```{r load-data}
+load("../data/methylation_covariates.Rdata")  # Technical variables (from sample sheet) and cell counts
+phen2 <- read.csv("../data/Off_Exam8_ex1_phen2.csv")  # Has BMI
+phenAll <- read.csv("../data/Off_Exam8_phen_cov_all.csv")  # Has age and smoking status
+```
+
+```{r merge-covariates}
+covData <- phenAll %>%
+  dplyr::select(shareid, SEX, AGE8, smoking_now) %>%
+  inner_join(phen2, by="shareid") %>%
+  dplyr::select(shareid, dbGaP_Subject_ID, SEX, AGE8, smoking_now, bmi) %>%
+  dplyr::rename(sex=SEX, age=AGE8) %>%
+  inner_join(meth_covData, by=c("shareid"="Sample_Name"))
+lapply(c("sex","age","smoking_now","bmi"), function(var) hist(covData[[var]], main=var))
+```
+
+```{r save-data}
+save("covData", file="../data/covariates.Rdata")
+```
+
+

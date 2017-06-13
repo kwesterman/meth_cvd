@@ -1,0 +1,39 @@
+[[1]]
+ [1] "dplyr"     "purrr"     "readr"     "tidyr"     "tibble"    "ggplot2"  
+ [7] "tidyverse" "stats"     "graphics"  "grDevices" "utils"     "datasets" 
+[13] "base"     
+
+[[2]]
+ [1] "minfi"                "bumphunter"           "locfit"              
+ [4] "iterators"            "foreach"              "Biostrings"          
+ [7] "XVector"              "SummarizedExperiment" "GenomicRanges"       
+[10] "GenomeInfoDb"         "IRanges"              "S4Vectors"           
+[13] "stats4"               "Biobase"              "BiocGenerics"        
+[16] "parallel"             "methods"              "dplyr"               
+[19] "purrr"                "readr"                "tidyr"               
+[22] "tibble"               "ggplot2"              "tidyverse"           
+[25] "stats"                "graphics"             "grDevices"           
+[28] "utils"                "datasets"             "base"                
+
+[read.metharray.sheet] Found the following CSV files:
+
+[1] "../data//sample_sheet4.csv"
+ [1] "bad_probes_1.RData"  "bad_probes_10.RData" "bad_probes_11.RData"
+ [4] "bad_probes_12.RData" "bad_probes_13.RData" "bad_probes_14.RData"
+ [7] "bad_probes_15.RData" "bad_probes_16.RData" "bad_probes_17.RData"
+[10] "bad_probes_18.RData" "bad_probes_19.RData" "bad_probes_2.RData" 
+[13] "bad_probes_20.RData" "bad_probes_3.RData"  "bad_probes_4.RData" 
+[16] "bad_probes_5.RData"  "bad_probes_6.RData"  "bad_probes_7.RData" 
+[19] "bad_probes_8.RData"  "bad_probes_9.RData" 
+[1] "Probes filtered."
+[1] "Mvals generated"
+[1] "M-values generated and saved."
+Loading required package: IlluminaHumanMethylation450kmanifest
+[1] "Control probe matrix constructed. Performing CPA..."
+[1] 2617  220
+[1] "CPA done."
+[1] "CPA performed and results saved."
+
+real	17m52.599s
+user	18m17.266s
+sys	0m49.466s
