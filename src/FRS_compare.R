@@ -1,66 +1,92 @@
 library(tidyverse)
 library(survival)
 library(gtools)
+library(caret)
+library(Coxnet)
 
-resMat_files <- grep("resMats_[0-9]+.*", list.files("../int/"), value=T)
-resMat_list <- lapply(resMat_files, function(f) {
-  load(paste0("../int/", f))
-  resMats[[length(resMats)]]
-})
-resMat <- do.call(rbind, resMat_list)
-clean_resMat <- function(mat) {
-  data.frame(mat, stringsAsFactors=F) %>%
-    dplyr::rename(beta=coef, p=Pr...z..) %>%
-    mutate_at(vars(one_of("beta","z","p")), as.numeric) %>%
-    na.omit()
-}
-resMat <- clean_resMat(resMat)
-resMat$fdr <- p.adjust(resMat$p, "BH")
-keep_CpGs <- resMat$CpG[resMat$fdr < 0.01]
+## Determine set of candidate CpGs from EWAS results
+load("../int/ewasRes.RData")
+resDF <- data.frame(res, stringsAsFactors=F)
+names(resDF) <- c("CpG","beta","p")
+resDF$p <- as.numeric(resDF$p)
+resDF$fdr <- p.adjust(resDF$p, method="BH")
+# keep_CpG_idx <- order(resDF$fdr)[1:20]
+keep_CpGs <- na.omit(resDF$CpG[resDF$fdr < 0.05])
+keep_CpGs <- resDF$CpG[keep_CpG_idx]
 print(head(keep_CpGs))
 
+# Load M-values
 load("../int/Mvals.RData")
-print("M-values loaded.")
-Mvals_keep <- data.frame(t(Mvals[keep_CpGs,]))
-print(dim(Mvals_keep))
 
-load("../int/phenoData.RData")
-load("../int/sampleData.RData")
-load("../int/eventData.RData")
+# Load non-methylation (event + covariate) data
+load("../int/nonMethData.RData")
+nonMethData$survObj <- Surv(time=nonMethData$timeToEvent, event=nonMethData$event, type="right")
 
-survData <- sampleData %>%
-  left_join(phenoData, by="shareid") %>%
-  left_join(eventData, by="shareid") %>%
-  dplyr::mutate(event=!is.na(timeToEvent),  # event == TRUE when a specific time of event exists, otherwise FALSE
-                time=na.replace(timeToEvent, 1000)) %>%  ## NOTE: this 800 needs to be switched for an *actual* number
-  dplyr::slice(match(colnames(Mvals), sampleKey))  # Re-order so rows match methylation columns
-survData$survObj <- Surv(time=survData$time, event=survData$event, type="right")  # all subjects without an event time get max. # days as time to censor
-print("Survival data prepared.")
+final_id_set <- intersect(nonMethData$sampleKey, colnames(Mvals))
+nonMethData <- nonMethData[match(final_id_set, nonMethData$sampleKey),]
+Mvals_keep <- Mvals[keep_CpGs,final_id_set]
+allModelData <- cbind(nonMethData, t(Mvals_keep))
 
-smaller_model <- paste0("survObj~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
-                paste0("PC",1:10,"_cp",collapse="+"),"+",paste0(keep_CpGs,collapse="+"))
+train_MRS <- function(train_idx, modelData, penalized=F) {
+  
+  trainSet <- allModelData[train_idx,]
+  if (penalized==T) {
+    design_mat_form <- paste0("~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
+                              paste0("PC",1:20,"_cp",collapse="+"),"+",paste0(keep_CpGs,collapse="+"))
+    x <- model.frame(as.formula(design_mat_form), trainSet, na.action=na.pass)
+    x <- apply(x, 2, scale)
+    y <- cbind(time=trainSet$timeToEvent, status=trainSet$event)
+    mrs.fit <- Coxnet(x, y, penalty="Enet", alpha=0.5)
+    testSet <- allModelData[test_idx,]
+    coefs <- mrs.fit$Beta[which(colnames(x) %in% keep_CpGs), ncol(mrs.fit$Beta)]
+  } else {
+    model_spec <- paste0("survObj~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
+                         paste0("PC",1:20,"_cp",collapse="+"),"+",paste0(keep_CpGs,collapse="+"))
+    mrs.fit <- coxph(as.formula(model_spec), data=trainSet)
+    coefs <- summary(mrs.fit)$coef[keep_CpGs,'coef']  # Extract regression coefficients
+  }
+  coefs
+}
 
-modelData <- cbind(survData, Mvals_keep)
-small.fit <- coxph(as.formula(smaller_model), data=modelData)
-coef_mat <- summary(small.fit)$coef
-CpG_coefs <- coef_mat[keep_CpGs,'coef']
-methRiskScore <- apply(Mvals_keep, 1, function(r) sum(r*CpG_coefs))
+test_MRS <- function(test_idx, modelData, coefs) {
+  testSet <- allModelData[test_idx,]
+  testSet$mrs <- as.vector(as.matrix(testSet[,keep_CpGs]) %*% coefs)
+  
+  source("helpers.R")
+  testSet$frs <- calc_FRS(testSet[,-which(colnames(testSet)=="survObj")])
+  
+  FRSonly.fit <- coxph(survObj~frs, data=testSet)
+  FRSonly.res <- summary(FRSonly.fit)$coef['frs',c(1,5)]
+  MRSonly.fit <- coxph(survObj~mrs, data=testSet)
+  MRSonly.res <- summary(MRSonly.fit)$coef['mrs',c(1,5)]
+  combined.fit <- coxph(survObj~frs+mrs, data=testSet)
+  combined.res <- summary(combined.fit)$coef[c('frs','mrs'),c(1,5)]
+  res <- c(FRSonly.res, MRSonly.res, combined.res['frs',], combined.res['mrs',])
+  names(res) <- paste0(rep(c("FRS","MRS"), each=2, length.out=8), 
+                       rep(c("coef","p"), length.out=8),
+                       rep(c("alone","adjusted"), each=4))
+  res
+}
 
-source("FRS.R")
-modelData <- cbind(survData, 
-                   frs=calc_FRS(survData[,-which(colnames(survData)=="survObj")]),
-                   mrs=methRiskScore)
-FRSonly_model <- paste0("survObj~frs+sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
-                        paste0("PC",1:10,"_cp",collapse="+"))
-FRSonly.fit <- coxph(as.formula(FRSonly_model), data=modelData)
+run_MRS <- function(test_idx, modelData, penalized=F) {
+  ## Creates an MRS based on an initial regression, then tests compared to the FRS
+  coefs <- train_MRS(setdiff(1:nrow(modelData), test_idx), modelData, penalized)
+  test_MRS(test_idx, modelData, coefs)
+}
 
-MRSonly_model <- paste0("survObj~mrs+sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
-                        paste0("PC",1:10,"_cp",collapse="+"))
-MRSonly.fit <- coxph(as.formula(MRSonly_model), data=modelData)
+set.seed(1)
+folds <- createFolds(allModelData$event, 5)  # For 5-fold CV, keeping proportions of people with events constant
+modelStats <- do.call(rbind, lapply(folds, run_MRS, allModelData, penalized=F))
+summary(modelStats)
+modelStats_penalized <- do.call(rbind, lapply(folds, run_MRS, allModelData, penalized=T))
+summary(modelStats_penalized)
 
-combined_model <- MRSonly_model <- paste0("survObj~mrs+frs+sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
-                                          paste0("PC",1:10,"_cp",collapse="+"))
-combined.fit <- coxph(as.formula(combined_model), data=modelData)
-
-save("FRSonly.fit", "MRSonly.fit", "combined.fit", file="../int/tmp_coxfitresults.RData")
-
+folds <- createFolds(allModelData$event, 3)
+coefs <- train_MRS(setdiff(1:nrow(allModelData), folds[[1]]), allModelData, penalized=T)
+test <- allModelData[test_idx,]
+test$mrs <- as.vector(as.matrix(test[,keep_CpGs]) %*% coefs)
+test$mrs_binary <- test$mrs > mean(test$mrs)
+test.survfit <- survfit(survObj~mrs_binary, data=test, conf.type="log-log")
+test.survfit
+plot(test.survfit, col=1:2)
+legend("left", legend=c("lowMRS","highMRS"), col=1:2, lty=1)
