@@ -1,5 +1,5 @@
 ---
-title: Analysis of FHS Offspring CVD Incidence EWAS Results
+title: "FHS Offspring CVD Incidence EWAS: model comparison"
 author: Kenny Westerman
 output: pdf_document
 ---
@@ -13,41 +13,42 @@ pdf.options(useDingbats=TRUE)
 These methylation data come from Framingham Offspring Study, Exam 8. Results are from Cox proportional hazards regression of incidence of cardiovascular events on baseline methylation levels.
 
 ```{r load-data}
-resMats_list <- list()
-resMat_files <- grep("resMats_[0-9]+.*", list.files("../int/"), value=T)
-for(f in resMat_files) {
-  load(paste0("../int/", f))
-  for(nm in names(resMats)) resMats_list[[nm]] <- rbind(resMats_list[[nm]], resMats[[nm]])
-}
+load("../int/ewasRes_modelCompare.RData")
 
 clean_resMat <- function(mat) {
-  data.frame(mat, stringsAsFactors=F) %>%
-  dplyr::rename(beta=coef, p=Pr...z..) %>%
-  mutate_at(vars(one_of("beta","z","p")), as.numeric)
+  df <- data.frame(mat, stringsAsFactors=F)
+  names(df) <- c("CpG","beta","p")
+  mutate_at(df, vars(one_of("beta","p")), as.numeric)
 }
-resMats <- lapply(resMats_list, clean_resMat)
+resMats <- lapply(res, clean_resMat)
 resMat <- resMats[[length(resMats)]]  # Default choice for downstream analyses is the fully-adjusted
 library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 Locs <- rownames_to_column(data.frame(Locations), var="CpG")
 resMat <- inner_join(resMat, Locs, by="CpG")
-# resMats <- lapply(resMat_files, function(f) {load(paste0("../int/",f)); resMat})
-# resMat <- data.frame(do.call(rbind, resMats), stringsAsFactors=F)
-# names(resMat) <- c("CpG","beta","z","p")
-# resMat <- mutate_at(resMat, vars(one_of("beta","z","p")), as.numeric)
 ```
 
-## QQ plots 
-Increasing adjustment for potential confounders from left to right.
+## P-value analysis for model comparison 
 
-```{r qqplot, fig.show="hold", fig.width=3.5}
+```{r pVals}
 make_qqplot <- function(pVec, plotTitle) {
   pVec <- pVec[!is.na(pVec)]
   qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle)
   abline(0,1,col="red")
 }
-for(i in 1:length(resMats)) make_qqplot(resMats[[i]]$p, names(resMats)[i])
+gControl <- function(mat) {
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(mat$p, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
+print(paste("lambda =", lambda))
+}
+for(i in 1:length(resMats)) {
+  make_qqplot(resMats[[i]]$p, names(resMats)[i])
+  gControl(resMats[[i]])
+} 
 # Side by side plots: https://stackoverflow.com/questions/13996567/knitr-how-to-show-two-plots-of-different-sizes-next-to-each-other
 ```
+
+<!--
 
 ## Manhattan plot
 Using the fully adjusted model.
@@ -68,17 +69,6 @@ resMat$fdr <- p.adjust(resMat$p, "BH")
 FDR_CpGs <- resMat$CpG[resMat$fdr<0.05]
 # resMat.clean <- filter(resMat, !is.na(p)) %>%
 #   mutate_at(vars(one_of("beta","z","p")), as.numeric)
-```
-
-## Genomic control
-Estimate genomic inflation factor lambda based on set of p-values.
-
-```{r genomic-control}
-# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
-# Below is modeled after Lehne 2015
-lambda <- median(qchisq(resMat$p, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
-print(paste("lambda =", lambda))
-resMat$p_gc <- pchisq(qchisq(resMat$p, df=1, lower.tail=F)/lambda, df=1, lower.tail=F)
 ```
 
 ## Gene set enrichment analysis
@@ -126,3 +116,4 @@ print("FRS and MRS together")
 head(summary(combined.fit)$coef, 2)
 ```
 
+-->

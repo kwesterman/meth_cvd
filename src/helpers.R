@@ -1,3 +1,5 @@
+## Miscellaneous helper functions to import functionality from relevant papers/methods
+
 run_CPA <- function(RGset) {
   # Performs control probe adjustment (CPA) by running PCA on positive control probes from 450k array
   # Code adapted from Lehne et al. 2015
@@ -127,4 +129,146 @@ run_CPA <- function(RGset) {
   colnames(ctrlprobes.scores) = paste(colnames(ctrlprobes.scores), '_cp', sep='')
   ctrlprobes.scores
 }
+
+
+
+refactor <- function(betavals, k, covarfile = NULL, t = 500, numcomp = NULL, stdth = 0.02, out = "refactor") {
+  ## Performs sparse PCA to return k components theoretically representing cell counts or other substructure
+  ## Adapted from R code based on Rahmani et al. 2016
+  
+  ranked_filename = paste(out, ".out.rankedlist.txt", sep="")
+  components_filename = paste(out, ".out.components.txt", sep="")
+  
+  print('Starting ReFACTor v1.0...');
+  
+  print('Reading input files...');
+  
+  # O = as.matrix(read.table(data_file))
+  # O = Mvals
+  # sample_id <- O[1, -1] # extract samples ID
+  # O <- O[-1,] # remove sample ID from matrix
+  # cpgnames <- O[, 1] ## set rownames
+  # O <- O[, -1] 
+  sample_id <- colnames(betavals)
+  cpgnames <- rownames(betavals)
+  O <- betavals
+  O = matrix(as.numeric(O),nrow=nrow(O),ncol=ncol(O))
+  
+  print(paste("Excluding sites with low variance (std < ", stdth, ")..."), sep="")
+  sds = apply(t(O), 2, sd)
+  m_before = length(sds)
+  include = which(sds >= stdth)
+  O = O[include,]
+  cpgnames = cpgnames[include]
+  print(paste((m_before - length(which(sds >= stdth))), " sites were excluded due to low variance...", sep=""))
+  
+  if (is.null(numcomp) || is.na(numcomp)) 
+  {
+    numcomp = k
+  }
+  
+  # Adjust the data for the covariates
+  if (!is.null(covarfile))
+  {
+    covs = as.matrix(read.table(covarfile))
+    sample_id2 <- covs[, 1]
+    if (!all(sample_id == sample_id2)){
+      print("ERROR: The order of the samples in the covariates file must be the same as the order in the data file")
+      quit()
+    }
+    covs <- covs[,-1]
+    if (length(covs) > dim(O)[2])
+    {
+      covs = matrix(as.numeric(covs),nrow=nrow(covs),ncol=ncol(covs))
+    }else{
+      covs = as.numeric(covs)
+    }    
+    O_adj = O
+    for (site in 1:nrow(O))
+    {
+      model <- lm(O[site,] ~  covs)
+      O_adj[site,] = residuals(model)
+    }
+    O = O_adj
+  }
+  
+  print('Running a standard PCA...')
+  pcs = prcomp(scale(t(O)));
+  
+  coeff = pcs$rotation
+  score = pcs$x
+  
+  print('Compute a low rank approximation of input data and rank sites...')
+  x = score[,1:k]%*%t(coeff[,1:k]);
+  An = scale(t(O),center=T,scale=F)
+  Bn = scale(x,center=T,scale=F)
+  An = t(t(An)*(1/sqrt(apply(An^2,2,sum))))
+  Bn = t(t(Bn)*(1/sqrt(apply(Bn^2,2,sum))))
+  
+  
+  # Find the distance of each site from its low rank approximation.
+  distances = apply((An-Bn)^2,2,sum)^0.5 ;
+  dsort = sort(distances,index.return=T);
+  ranked_list = dsort$ix
+  
+  print('Compute ReFACTor components...')
+  sites = ranked_list[1:t];
+  pcs = prcomp(scale(t(O[sites,])));
+  first_score <- score[,1:k];
+  score = pcs$x
+  
+  # print('Saving a ranked list of the data features...');
+  # write(t(cpgnames[ranked_list]),file=ranked_filename,ncol=1)
+  # #write(t(cbind(ranked_list,cpgnames[ranked_list])),file=ranked_filename,ncol=2)
+  # 
+  # print('Saving the ReFACTor components...');
+  # write(t(score[,1:numcomp]), file=components_filename, ncol=numcomp)
+  
+  print('ReFACTor is Done');
+  result <- list(refactor_components=score[,1:numcomp], ranked_list=ranked_list, standard_pca=first_score) 
+  return(result$refactor_components)
+}
+
+
+
+calc_FRS <- function(pData) {
+  # Calculation of Framingham risk score based on D'Agostino 2008 
+  # doi: https://doi.org/10.1161/CIRCULATIONAHA.107.699579
+  
+  FRS_coefs <- list(male=c(logAge=2.32888, logTC=1.20904, logHDL=-0.70833, logSBPnontreat=2.76157, 
+                           logSBPtreat=2.82263, smoking=0.52973, diabetes=0.69154),
+                    female=c(logAge=3.06117, logTC=1.12370, logHDL=-0.93263, logSBPnontreat=1.93303,
+                             logSBPtreat=1.99881, smoking=0.65451, diabetes=-0.57367))
+  
+  
+  FRS_data <- pData %>%
+    mutate(logAge=log(age),
+           logTC=log(TOT_CHOL),
+           logHDL=log(HDL_CHOL),
+           logSBP=log(SBP),
+           smoking=smoking_now,
+           diabetes=T2D_med) %>%
+    select(shareid, sex, logAge, logTC, logHDL, HT_med, logSBP, smoking, diabetes)
+  
+  ## negative for diabetes??
+  with(FRS_data, {
+    frs <- ifelse(sex==1,
+                  2.32888*logAge + 1.20904*logTC - 0.70833*logHDL + 2.76157*logSBP*(1-HT_med) + 2.82263*logSBP*(HT_med) + 0.52973*smoking + 0.69154*diabetes,
+                  3.06117*logAge + 1.12370*logTC - 0.93263*logHDL + 1.93303*logSBP*(1-HT_med) + 1.99881*logSBP*(HT_med) + 0.65451*smoking - 0.57367*diabetes)
+  })
+}
+
+
+
+calc_zhang_mrs <- function(betas) {
+  # Calculate mortality risk score from Zhang et al. 2017
+  
+  zhang_coefs <- data.frame(cpg=c("cg01612140","cg05575921","cg06126421","cg08362785","cg10321156",
+                                  "cg14975410","cgcg19572487","cg23665802","cg24704287","cg25983901"),
+                            coef=c(-0.38253,-0.92224,-1.70129,2.71749,-0.02073,-0.04156,
+                                   -0.28069,-0.89440,-2.98637-1.80325))
+  zhang_subset <- betas[zhang_coefs$cpg,]
+  mrs_vals <- t(zhang_subset) %*% zhang_coefs$coef
+}
+
 
