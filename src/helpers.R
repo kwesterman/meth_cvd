@@ -266,9 +266,10 @@ calc_zhang_mrs <- function(betas) {
   zhang_coefs <- data.frame(cpg=c("cg01612140","cg05575921","cg06126421","cg08362785","cg10321156",
                                   "cg14975410","cgcg19572487","cg23665802","cg24704287","cg25983901"),
                             coef=c(-0.38253,-0.92224,-1.70129,2.71749,-0.02073,-0.04156,
-                                   -0.28069,-0.89440,-2.98637-1.80325))
+                                   -0.28069,-0.89440,-2.98637,-1.80325))
   zhang_subset <- betas[zhang_coefs$cpg,]
   mrs_vals <- t(zhang_subset) %*% zhang_coefs$coef
+  data.frame(sampleKey=colnames(betas), zhang_mrs=mrs_vals, stringsAsFactors=F)
 }
 
 
