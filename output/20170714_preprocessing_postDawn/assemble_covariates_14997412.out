@@ -1,0 +1,22 @@
+[1] "Phenotype variables..."
+[1] "Sample metadata..."
+[1] "Cardiovascular event data..."
+[1] "ReFACTor..."
+[1] "Starting ReFACTor v1.0..."
+[1] "Reading input files..."
+[1] "Excluding sites with low variance (std <  0.02 )..."
+[1] "167828 sites were excluded due to low variance..."
+[1] "Running a standard PCA..."
+[1] "Compute a low rank approximation of input data and rank sites..."
+[1] "Compute ReFACTor components..."
+[1] "ReFACTor is Done"
+[1] "ReFACTor results saved."
+[1] "PCA on 50k most variable probes..."
+Error in data.frame(..., check.names = FALSE) : 
+  arguments imply differing number of rows: 2590, 2904
+Calls: cbind ... eval -> eval -> eval -> .Method -> cbind -> data.frame
+Execution halted
+
+real	159m20.230s
+user	158m20.831s
+sys	0m57.113s

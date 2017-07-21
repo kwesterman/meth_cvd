@@ -1,0 +1,21 @@
+[1] "Phenotype variables..."
+[1] "Sample metadata..."
+[1] "Cardiovascular event data..."
+[1] "Cell count estimation..."
+[1] "Cell counts matrix saved."
+[1] "SVA..."
+Number of significant surrogate variables is:  168 
+Iteration (out of 5 ):1  2  3  4  5  [1] "Surrogate variables saved."
+[1] "CPA method (control probe PCA)..."
+Loading required package: IlluminaHumanMethylation450kmanifest
+[1] "CPA results saved."
+[1] "ReFACTor..."
+[1] "Starting ReFACTor v1.0..."
+[1] "Reading input files..."
+Error in ilogit2(Mvals) : object 'Mvals' not found
+Calls: refactor -> colnames -> ilogit2
+Execution halted
+
+real	95m5.030s
+user	94m25.233s
+sys	0m39.548s

@@ -1,0 +1,26 @@
+[1] "Phenotype variables..."
+[1] "Sample metadata..."
+[1] "Cardiovascular event data..."
+[1] "PCA on 50k most variable probes..."
+Warning messages:
+1: In inner_join_impl(x, y, by$x, by$y, suffix$x, suffix$y) :
+  joining character vector and factor, coercing into character vector
+2: In inner_join_impl(x, y, by$x, by$y, suffix$x, suffix$y) :
+  joining character vector and factor, coercing into character vector
+3: In inner_join_impl(x, y, by$x, by$y, suffix$x, suffix$y) :
+  joining character vector and factor, coercing into character vector
+4: In inner_join_impl(x, y, by$x, by$y, suffix$x, suffix$y) :
+  joining character vector and factor, coercing into character vector
+5: In inner_join_impl(x, y, by$x, by$y, suffix$x, suffix$y) :
+  joining character vector and factor, coercing into character vector
+Warning message:
+In inner_join_impl(x, y, by$x, by$y, suffix$x, suffix$y) :
+  joining factor and character vector, coercing into character vector
+Error in switch(units, `in` = res, cm = res/2.54, mm = res/25.4, px = 1) *  : 
+  non-numeric argument to binary operator
+Calls: jpeg -> .geometry
+Execution halted
+
+real	33m7.755s
+user	32m51.611s
+sys	0m15.746s

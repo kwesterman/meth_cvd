@@ -1,0 +1,11 @@
+[1] "Phenotype variables..."
+[1] "Sample metadata..."
+[1] "Cardiovascular event data..."
+Error in data.frame(..., check.names = FALSE) : 
+  arguments imply differing number of rows: 2590, 2904
+Calls: cbind ... eval -> eval -> eval -> .Method -> cbind -> data.frame
+Execution halted
+
+real	3m36.945s
+user	3m25.788s
+sys	0m10.239s

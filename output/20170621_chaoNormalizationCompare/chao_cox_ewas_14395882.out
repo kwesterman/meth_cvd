@@ -1,0 +1,13 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2412"
+[2] "Dimensions of event/covariate matrix: 442" 
+[1] "Dimensions of M-value matrix: 415202"
+[2] "Dimensions of M-value matrix: 2412"  
+Warning message:
+In .Method(..., deparse.level = deparse.level) :
+  number of columns of result is not a multiple of vector length (arg 2)
+[1] "Saving results..."
+
+real	5m25.247s
+user	4m36.657s
+sys	0m11.287s

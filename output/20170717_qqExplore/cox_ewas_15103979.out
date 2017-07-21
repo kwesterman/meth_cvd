@@ -1,0 +1,12 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539"
+[2] "Dimensions of event/covariate matrix: 446" 
+[1] "Dimensions of M-value matrix: 426957"
+[2] "Dimensions of M-value matrix: 2539"  
+There were 50 or more warnings (use warnings() to see the first 50)
+There were 12 warnings (use warnings() to see them)
+[1] "Saving results..."
+
+real	39m1.892s
+user	7m34.951s
+sys	0m26.065s
