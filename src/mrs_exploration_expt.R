@@ -1,4 +1,4 @@
-suppressMessages(silent <- lapply(c("tidyverse","doParallel","itertools","survival","gtools","coxme","glmnet"), 
+suppressMessages(silent <- lapply(c("tidyverse","doParallel","itertools","survival","gtools","coxme","glmnet","minfi"), 
                                   library, character.only=T))
 source("helpers.R")
 
@@ -10,7 +10,6 @@ print("Methylation data loaded.")
 
 # Load non-methylation (event + covariate) data and sample similarity matrix
 load("../int/nonMethData2.RData")
-nonMethData$survObj <- Surv(time=nonMethData$timeToEvent, event=nonMethData$event, type="right")
 
 # Sanity checks
 final_id_set <- intersect(nonMethData$sampleKey, colnames(Mvals))
@@ -69,7 +68,7 @@ stopifnot(ncol(Mvals)==nrow(nonMethData),  # Ensure same # of samples in methyla
 # vars <- apply(Mvals, 1, var)
 # Mvals <- Mvals[vars>0.5,]
 # Mvals <- Mvals[1:10000,]
-nonMethData$frs <- calc_FRS(nonMethData[,-which(colnames(nonMethData)=="survObj")])
+nonMethData$frs <- calc_FRS(nonMethData)
 
 # modelData <- cbind(nonMethData, t(Mvals))
 design_mat_form <- paste0("~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
@@ -82,31 +81,37 @@ x <- cbind(covars, t(Mvals))[complete.cases(covars),]
 x <- apply(x, 2, scale)
 cvd_surv <- cbind(time=nonMethData$timeToEvent, status=nonMethData$event)[complete.cases(covars),]
 frs <- nonMethData$frs[complete.cases(covars)]
-imt_mean <- nonMethData$IMT_mean
+imt_mean <- nonMethData$IMT_mean[complete.cases(covars)]
 
 print("CVD:")
 mrs.fit <- glmnet(x, cvd_surv, family="cox", alpha=0.5)
 coefs_cvd <- mrs.fit$beta[,ncol(mrs.fit$beta)]
 coefs_cvd <- coefs_cvd[coefs_cvd!=0]
-keep_CpGs_cvd <- names(coefs_cvd)
 print(paste(length(coefs_cvd), "nonzero coefficients"))
-print(head(coefs_cvd, 25))
+print(head(coefs_cvd, 10))
+coefs_cvd <- coefs_cvd[grepl("cg", names(coefs_cvd))]
+keep_CpGs_cvd <- names(coefs_cvd)
+
 
 print("FRS:")
-mrs.fit <- glmnet(x, frs, family="gaussian", alpha=0.5)
+mrs.fit <- glmnet(x[!is.na(frs),], na.omit(frs), family="gaussian", alpha=0.5)
 coefs_frs <- mrs.fit$beta[,ncol(mrs.fit$beta)]
 coefs_frs <- coefs_frs[coefs_frs!=0]
-keep_CpGs_frs <- names(coefs_frs)
 print(paste(length(coefs_frs), "nonzero coefficients"))
-print(head(coefs_frs, 25))
+print(head(coefs_frs, 10))
+coefs_frs <- coefs_frs[grepl("cg", names(coefs_frs))]
+keep_CpGs_frs <- names(coefs_frs)
+
 
 print("IMT:")
-mrs.fit <- glmnet(x, imt_mean, family="gaussian", alpha=0.5)
+mrs.fit <- glmnet(x[!is.na(imt_mean),], na.omit(imt_mean), family="gaussian", alpha=0.5)
 coefs_imt <- mrs.fit$beta[,ncol(mrs.fit$beta)]
 coefs_imt <- coefs_imt[coefs_imt!=0]
-keep_CpGs_imt <- names(coefs_imt)
 print(paste(length(coefs_imt), "nonzero coefficients"))
-print(head(coefs_imt, 25))
+print(head(coefs_imt[coefs_imt!=0], 10))
+coefs_imt <- coefs_imt[grepl("cg", names(coefs_imt))]
+keep_CpGs_imt <- names(coefs_imt)
+
 
 ## Calculate MRS
 nonMethData$mrs_cvd <- as.vector(t(Mvals[keep_CpGs_cvd,]) %*% coefs_cvd)
@@ -117,7 +122,8 @@ mrsDat <- nonMethData
 
 ## Calculate Zhang MRS
 zhang_MRS <- calc_zhang_mrs(ilogit2(Mvals))
-mrsDat <- left_join(dplyr::select(mrsDat, -survObj), zhang_MRS, by="sampleKey")  # Adds Zhang MRS
+mrsDat <- left_join(mrsDat, zhang_MRS, by="sampleKey")  # Adds Zhang MRS
+rm(Mvals)
 
 ## Calculate cumulative exposures
 
@@ -154,11 +160,13 @@ foodLib <- c(satfat="NUT_SATFAT", monfat="NUT_MONFAT", polyfat="NUT_POLY", beans
 
 library(readxl)
 dietDat_all <- read_excel("../data/diet/phs000007.v28.pht002350.v4.p10.c1.vr_ffreq_ex08_1_0615s.HMB-IRB-MDS_ex8_diet.xlsx", sheet=2)
-dietDat <- dplyr::select(dietDat_all, shareid, foodLib)
+dietDat <- dplyr::select(dietDat_all, shareid, one_of(foodLib))
 names(dietDat) <- c("shareid", names(foodLib))
 
 # load("../int/mrsDat2.RData")
-dietDat <- left_join(dplyr::select(mrsDat, shareid, mrs), dietDat, by="shareid")
+dietDat <- left_join(dplyr::select(mrsDat, shareid, frs, zhang_mrs, contains("mrs")), 
+                     dietDat, by="shareid")
+
 save("mrsDat", file="../int/mrsDat_penalized.RData")
 
 
