@@ -18,15 +18,17 @@ stopifnot(ncol(Mvals)==nrow(nonMethData),  # Ensure same # of samples in methyla
           all(colnames(Mvals)==nonMethData$sampleKey))  # Ensure identical order of samples for methylation and covariate data
 
 # Variables for regressions (including methylation M-values)
+Bvals <- minfi::ilogit2(Mvals)
 covars_formula <- paste0("~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
                          paste0("PC",1:20,collapse="+"))
 covars_mat <- data.matrix(model.frame(as.formula(covars_formula), nonMethData, na.action=na.pass))
 complete_cases <- complete.cases(covars_mat)  # Can't have missing values in glmnet input
-design_mat <- cbind(covars_mat, t(Mvals))[complete_cases,]
+design_mat <- cbind(covars_mat, t(Bvals))[complete_cases,]
 cvd_surv <- Surv(time=nonMethData$timeToEvent, event=nonMethData$event)[complete_cases]  # Outcome
 
 # Perform elastic net regression to generate MRS coefficients
-mrs.fit <- glmnet(design_mat, cvd_surv, family="cox", alpha=0.5)
+mrs.fit <- glmnet(design_mat, cvd_surv, family="cox", alpha=0.5,
+                  penalty.factor=ifelse(grepl("^cg", colnames(design_mat)), 1, 0))
 coefs <- mrs.fit$beta[,ncol(mrs.fit$beta)]
 coefs_meth_full <- coefs[coefs!=0 & grepl("cg", names(coefs))]
 
@@ -34,13 +36,14 @@ coefs_meth_full <- coefs[coefs!=0 & grepl("cg", names(coefs))]
 set.seed(50)
 train_idx <- createFolds(factor(cvd_surv[,"status"]), 2)[[1]]
 train_ids <- nonMethData$shareid[complete_cases][train_idx]
-mrs.fit <- glmnet(design_mat[train_idx,], cvd_surv[train_idx], family="cox", alpha=0.5)
+mrs.fit <- glmnet(design_mat[train_idx,], cvd_surv[train_idx], family="cox", alpha=0.5,
+                  penalty.factor=ifelse(grepl("^cg", colnames(design_mat)), 1, 0))
 coefs <- mrs.fit$beta[,ncol(mrs.fit$beta)]
 coefs_meth_half <- coefs[coefs!=0 & grepl("cg", names(coefs))]
 
 # Calculate MRS for all subjects
-mrs_calc_full <- as.vector(t(Mvals)[,names(coefs_meth_full)] %*% coefs_meth_full)
-mrs_calc_half <- as.vector(t(Mvals)[,names(coefs_meth_half)] %*% coefs_meth_half)
+mrs_calc_full <- as.vector(t(Bvals)[,names(coefs_meth_full)] %*% coefs_meth_full)
+mrs_calc_half <- as.vector(t(Bvals)[,names(coefs_meth_half)] %*% coefs_meth_half)
 
 # Return final dataset
 mrsData <- nonMethData %>%

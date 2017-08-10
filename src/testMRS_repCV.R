@@ -21,11 +21,12 @@ stopifnot(ncol(Mvals)==nrow(nonMethData),  # Ensure same # of samples in methyla
           all(colnames(Mvals)==nonMethData$sampleKey))  # Ensure identical order of samples for methylation and covariate data
 
 # Covariates for regressions (including methylation M-values)
+Bvals <- ilogit2(Mvals)
 covars_formula <- paste0("~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+", 
                          paste0("PC",1:20,collapse="+"))
 covars_mat <- as.matrix(model.frame(as.formula(covars_formula), nonMethData, na.action=na.pass))
 complete_cases <- complete.cases(covars_mat)
-design_mat <- cbind(covars_mat, t(Mvals))[complete_cases,]
+design_mat <- cbind(covars_mat, t(Bvals))[complete_cases,]
 
 # Additional needed variables
 shareids <- nonMethData$shareid[complete_cases]
@@ -34,7 +35,9 @@ frs <- calc_FRS(nonMethData)[complete_cases]
 
 trainTestMRS <- function(cvd_surv, design_mat, frs, shareids, trainset_idx) {
   train_ids <- shareids[trainset_idx]
-  mrs.fit <- glmnet(design_mat[trainset_idx,], cvd_surv[trainset_idx], family="cox", alpha=0.5)
+  mrs.fit <- glmnet(design_mat[trainset_idx,], cvd_surv[trainset_idx], family="cox", alpha=0.5,
+                    penalty.factor=ifelse((grepl("^cg", colnames(design_mat)) | 
+                                             grepl("^PC", colnames(design_mat))), 1, 0))
   coefs <- mrs.fit$beta[,ncol(mrs.fit$beta)]
   coefs_meth <- coefs[coefs!=0 & grepl("cg", names(coefs))]
   mrs_calc <- as.vector(design_mat[,names(coefs_meth)] %*% coefs_meth)
@@ -51,6 +54,6 @@ for (i in 1:20) {
   allRes[[i]] <- trainTestMRS(cvd_surv, design_mat, frs, shareids, twoFold[[1]])
 }
 
-save("allRes", file="../int/testMRS_repCV_res.RData")
+save("allRes", file="../int/testMRS_repCV_res_BVALS_lowPen.RData")
 
 
