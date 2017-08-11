@@ -289,12 +289,15 @@ include_graphics("../output/mediation-diagram.png")
 
 library(readxl)
 fram_lipid_varNames <- data.frame(exam=1:7,
+                                  weight_lbs=c("A50","B15","C416","D401","E024","F007","G440"),
+                                  height_inches=c("A51","B16","C417","D402","E025","F008","G441"),
                                   chol=c("A9","B352","C429","D448","E667","F726","G704"),
                                   hdl=c("A10","B355","C431","D449","E668","F725","G703"),
                                   ldl=c("A12","B357","C442",NA,NA,NA,NA),
                                   tg=c("A13","B358","C433","D451","E670","F727","G706"),
                                   glu=c("A31","B737","C434","D452","E671","F724","G705"),
-                                  sysBP=c("A55","B24","C184","D192","E485","F476","G271"))
+                                  sysBP1=c("A55","B24","C184","D192","E485","F476","G271"),
+                                  sysBP2=c("A57","B26","C286","D288","E581","F576","G354"))
 
 exams <- apply(fram_lipid_varNames, 1, function(row) {
   fileName <- grep(paste0("c1\\.ex1_", row["exam"]), list.files("../data/phenotypes/"), value=T)
@@ -304,35 +307,37 @@ exams <- apply(fram_lipid_varNames, 1, function(row) {
 })
 names(exams) <- paste0("exam", 1:7)
 allExams <- bind_rows(exams, .id="exam") %>%
-  mutate(nonHDL=chol-hdl)
+  mutate(bmi=weight_lbs/height_inches^2*703,
+         sysBP=(sysBP1+sysBP2)/2,
+         nonHDL=chol-hdl) %>%
+  select(-one_of("weight_lbs","height_inches","sysBP1","sysBP2"))
 cumVals <- allExams %>%
   group_by(shareid) %>%
-  summarise_at(vars(-exam), mean)
-names(cumVals)[-1] <- paste0(names(cumVals)[-1], "_cum")
+  summarise_at(vars(-exam), mean) %>%
+  rename_at(vars(-shareid), paste0, "_cum")
 recentVals <- allExams %>%
   filter(exam %in% paste0("exam", 5:7)) %>%
     group_by(shareid) %>%
-  summarise_at(vars(-exam), mean)
-names(recentVals)[-1] <- paste0(names(recentVals)[-1], "_recent")
+  summarise_at(vars(-exam), mean) %>%
+  rename_at(vars(-shareid), paste0, "_recent")
 
-allCumVals <- inner_join(cumVals, recentVals, by="shareid")
-
-cumData <- inner_join(mrsData, allCumVals, by="shareid")
+cumData <- Reduce(function(x,y) inner_join(x, y, by="shareid"), list(mrsData, cumVals, recentVals))
 ```
 
 First, do the cumulative exposures have any additive explanatory power beyond current exposure levels (in full dataset) in predicting cardiovascular events? Heatmap represents z-scores from the relevant Cox models. 
 
 ```{r cumulative-to-CVD, fig.align="center", out.width="80%"}
 library(survival)
-bmFields <- data.frame(recent=c("HDL_CHOL","TOT_CHOL","TRIG","GLUCOSE","SBP"), 
-                       cum=c("hdl_cum","chol_cum","tg_cum","glu_cum","sysBP_cum"))
+# bmFields <- data.frame(current=c("HDL_CHOL","TOT_CHOL","TRIG","GLUCOSE","SBP","bmi"), 
+#                        cum=c("hdl_cum","chol_cum","tg_cum","glu_cum","sysBP_cum","bmi_cum"))
+risk_factors <- c("bmi","sysBP","chol","hdl","tg","glu")
 cvdData <- inner_join(cumData, distinct(select(nonMethData, shareid, timeToEvent, event), 
                                         shareid, .keep_all=T), by="shareid")
 CVD_model <- function(predictors, bm, dat) {
     cox.fit <- coxph(as.formula(paste0("Surv(time=dat$timeToEvent, event=dat$event)~",predictors)), data=dat)
     summary(cox.fit)$coef[bm,'z']
 }
-cum_to_CVD <- sapply(c("sysBP","chol","hdl","tg","glu"), function(bm) {
+cum_to_CVD <- sapply(risk_factors, function(bm) {
   cum <- CVD_model(paste0(bm, "_cum"), paste0(bm, "_cum"), cvdData)
   recent <- CVD_model(paste0(bm, "_recent"), paste0(bm, "_recent"), cvdData)
   current <- CVD_model(bm, bm, cvdData)
@@ -353,7 +358,7 @@ Next, do the calculated methylation risk scores have an independent association 
 ```{r cumulative-to-MRS, fig.align="center", out.width="80%"}
 MRS_model <- function(predictors, bm, dat)
   summary(lm(as.formula(paste0("mrs_full~",predictors)), data=dat))$coef[bm,"t value"]
-cum_to_MRS <- sapply(c("sysBP","chol","hdl","tg","glu"), function(bm) {
+cum_to_MRS <- sapply(risk_factors, function(bm) {
   cum <- MRS_model(paste0(bm, "_cum"), paste0(bm, "_cum"), cvdData)
   recent <- MRS_model(paste0(bm, "_recent"), paste0(bm, "_recent"), cvdData)
   current <- MRS_model(bm, bm, cvdData)
@@ -373,7 +378,7 @@ Finally, does the MRS potentially mediate these relationships of cumulative biom
 
 ```{r MRS-mediation, fig.align="center", out.width="80%"}
 holdoutSet <- filter(cvdData, !inTrainSet)
-mediation <- sapply(c("sysBP","chol","hdl","tg","glu"), function(bm) {
+mediation <- sapply(risk_factors, function(bm) {
   cum <- CVD_model(paste0(bm, "_cum"), paste0(bm, "_cum"), holdoutSet)
   cum_withMRS <- CVD_model(paste0(bm, "_cum+mrs_half"), paste0(bm, "_cum"), holdoutSet)
   recent <- CVD_model(paste0(bm, "_recent"), paste0(bm, "_recent"), holdoutSet)
