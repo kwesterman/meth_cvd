@@ -1,5 +1,5 @@
 ---
-title: Committee meeting 8/7/17
+title: Investigation and downstream analysis of MRS findings
 author: Kenny Westerman
 date: "`r Sys.Date()`"
 output: 
@@ -10,6 +10,7 @@ output:
 ```{r prereqs, include=F}
 library(tidyverse)
 library(knitr)
+library(survival)
 opts_chunk$set(echo=F, cache=T, cache.path="../cache/", fig.path="../cache/")
 ```
 
@@ -52,7 +53,8 @@ Correlations of the top PCs with basic covariates:
 ```{r pca-correlations, fig.align="center", out.width="75%"}
 load("../int/nonMethData.RData")
 pcaData <- select(nonMethData, one_of(paste0("PC",1:10)), age, sex, bmi, smoking_now,
-                  CD8T, CD4T, NK, Bcell, Mono, Gran)
+                  CD8T, CD4T, NK, Bcell, Mono, Gran) %>%
+  mutate(sex=ifelse(sex=="M", 1, 2))
 cors <- cor(pcaData, use="pairwise.complete.obs")
 cors[cors==1] <- 0
 corsDF <- data.frame(cors) %>%
@@ -62,9 +64,20 @@ corsDF <- data.frame(cors) %>%
   filter(!grepl("PC", var1), grepl("PC", var2))
 ggplot(corsDF, aes(x=var1, y=var2, fill=correlation)) +
   geom_tile(color="white") +
-  scale_fill_gradient2(low='#0000FF',mid='#ffffbf',high='#FF0000') +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
   scale_x_discrete(position="top") +
   theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+
+
+## Investigate correlations of covariates with top 10 PCs
+
+# PC_df <- inner_join(PCs[,1:11], 
+#                     nonMethData[,unique(c("sampleKey","sex","age","event",names(estCellCounts)))],
+#                     by="sampleKey") %>%
+#   dplyr::select(-sampleKey)
+# PC_corMat <- cor(PC_df)[-(1:10),]
+# save("PC_corMat", file="../output/PC_corMat.RData")
+# jpeg("../output/PC_heatmap.jpg"); heatmap(PC_corMat, Rowv=NA); dev.off()
 ```
 
 # Subject metadata
@@ -94,8 +107,8 @@ A genome-wide scan was performed using methylation M-values ($=log_2\left(\frac{
 Some level of inflation was seen in the overall p-value distribution, using a random subset of 50k probes. Inflation levels were tested across different combinations of the methylation-based covariates mentioned above, and the best performance was seen with a combination of cell counts and principal components, so these covariates were taken forward.
 
 ```{r ewas, include=F}
-load("../int/ewasRes.RData")
-ewasRes <- data.frame(res[[1]], stringsAsFactors=F) %>%
+load("../int/ewasRes7_pastEventsAdjustment.RData")
+ewasRes <- data.frame(res[["sixPCs"]], stringsAsFactors=F) %>%
   mutate(p=as.numeric(Pr...z..)) %>%
   select(CpG, p)
 
@@ -109,6 +122,14 @@ gControl <- function(pVals) {
 # Below is modeled after Lehne 2015
 lambda <- median(qchisq(pVals, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
 round(lambda, 2)
+}
+for (nm in names(res)) {
+  ewasRes <- data.frame(res[[nm]], stringsAsFactors=F) %>%
+    mutate(p=as.numeric(Pr...z..)) %>%
+    select(CpG, p)
+  jpeg(paste0("qq_", nm, ".jpg"))
+  make_qqplot(ewasRes$p, plotTitle=print(paste0(nm, " (lambda = ", gControl(ewasRes$p), ")")))
+  dev.off()
 }
 ```
 
@@ -135,7 +156,7 @@ The notable inflation reduction with alternate outcomes (despite the same covari
 
 ```{r FDR-CpGs, warning=F}
 ewasRes$FDR <- p.adjust(ewasRes$p, "BH")
-fdr_thresh <- 0.05
+fdr_thresh <- 0.25
 FDR_CpGs <- na.omit(ewasRes$CpG[ewasRes$FDR<fdr_thresh])
 
 suppressMessages(library(IlluminaHumanMethylation450kanno.ilmn12.hg19, quietly=T))
@@ -150,19 +171,24 @@ cpgSet_anno <- cbind(Locations[FDR_CpGs,], Other[FDR_CpGs,], Islands.UCSC[FDR_Cp
 
 ```{r gsea, results="asis"}
 ## Enrichment analysis
-msigdb_file <- file("../data/misc/gsea/c2.cp.v6.0.symbols.gmt")  # MSigDB file from http://software.broadinstitute.org/gsea/msigdb/collections.jsp#C2
-msigdb <- strsplit(readLines(msigdb_file), split="\t")  # File is tab-separated with gene lists immediately following their names and URLs
-names(msigdb) <- purrr::map(msigdb, 1)  # First element of each msig vector is name
-msigdb <- purrr::map(msigdb, function(sig) sig[-c(1,2)])  # No need for name or URL
-totalNumAnnotatedGenes <- length(unique(unlist(strsplit(Other$UCSC_RefGene_Name, split=";"))))
-run_HGtest <- function(msig, mygeneset, N) {
-  numHits <- sum(mygeneset %in% msig)
-  numMsig <- length(msig)
-  numNonMsig <- N - numMsig
-  numDrawn <- length(mygeneset)
-  phyper(numHits, numMsig, numNonMsig, numDrawn)
+run_enrichment_test <- function(cpgSet_anno) {
+  msigdb_file <- file("../data/misc/gsea/c2.cp.v6.0.symbols.gmt")  # MSigDB file from http://software.broadinstitute.org/gsea/msigdb/collections.jsp#C2
+  msigdb <- strsplit(readLines(msigdb_file), split="\t")  # File is tab-separated with gene lists immediately following their names and URLs
+  names(msigdb) <- purrr::map(msigdb, 1)  # First element of each msig vector is name
+  msigdb <- purrr::map(msigdb, function(sig) sig[-c(1,2)])  # No need for name or URL
+  totalNumAnnotatedGenes <- length(unique(unlist(strsplit(Other$UCSC_RefGene_Name, split=";"))))
+  run_HGtest <- function(msig, mygeneset, N) {
+    numHits <- sum(mygeneset %in% msig)
+    numMsig <- length(msig)
+    numNonMsig <- N - numMsig
+    numDrawn <- length(mygeneset)
+    phyper(numHits, numMsig, numNonMsig, numDrawn)
+  }
+  enrichment_res <- lapply(msigdb, run_HGtest, cpgSet_anno$UCSC_RefGene_Name, totalNumAnnotatedGenes)
+  enrichment_res
 }
-enrichment_res <- lapply(msigdb, run_HGtest, cpgSet_anno$UCSC_RefGene_Name, totalNumAnnotatedGenes)
+
+enrichment_res <- run_enrichment_test(cpgSet_anno)
 enrich_tbl <- data.frame(Category=names(enrichment_res), 
                          p.value=unname(unlist(enrichment_res))) %>%
   mutate(FDR=p.adjust(p.value, method="BH")) %>%
@@ -232,13 +258,24 @@ ggplot(data=pValsDF, aes(x=mrs, y=frs)) +
   ggtitle("P-values from repeated CV") +
   theme(plot.background=element_rect(size=1, linetype=1, color="black"))
 
+zScores <- purrr::map(allRes, function(x) x$res[,"z"])
+zScoresDF <- data.frame(t(data.frame(zScores)))
+ggplot(data=zScoresDF, aes(x=mrs, y=frs)) + 
+  geom_point() + 
+  geom_vline(xintercept=0.05, linetype=2, alpha=0.25) +
+  geom_hline(yintercept=0.05, linetype=2, alpha=0.25) +
+  scale_x_log10() + scale_y_log10() +
+  xlab("MRS p-value") + ylab("FRS p-value") +
+  ggtitle("P-values from repeated CV") +
+  theme(plot.background=element_rect(size=1, linetype=1, color="black"))
+
 load("../int/mrsData.RData")  # To retrieve SDs for MRS and FRS
 source("helpers.R")  # Contains FRS calculation script
 mrsData$frs <- calc_FRS(dplyr::rename(mrsData, TOT_CHOL=chol, HDL_CHOL=hdl, SBP=sysBP))
 
 coefs <- purrr::map(allRes, function(x) x$res[,"coef"])
 HRs_per_mad <- data.frame(t(data.frame(coefs))) %>%
-  mutate(mrs_hr_per_mad=exp(sd(mrsData$mrs_full, na.rm=T) * mrs),
+  mutate(mrs_hr_per_mad=exp(sd(mrsData$mrs, na.rm=T) * mrs),
          frs_hr_per_mad=exp(sd(mrsData$frs, na.rm=T) * frs))
 
 ggplot(data=HRs_per_mad, aes(x=mrs_hr_per_mad, y=frs_hr_per_mad)) + 
@@ -258,20 +295,81 @@ Though the specific units are arbitrary, the MRS distribution has more extreme v
 
 ```{r risk-score-distributions, fig.show="hold", out.width="50%", message=F, warning=F}
 ggplot(mrsData, aes(x=frs)) + geom_histogram() + ggtitle("FRS distribution")
-ggplot(mrsData, aes(x=mrs_full)) + geom_histogram() + ggtitle("MRS distribution")
+ggplot(mrsData, aes(x=mrs)) + geom_histogram() + ggtitle("MRS distribution")
 ```
 
+## Kaplan-Meier plots
+```{r KM-plots, fig.show="hold", out.width="50%"}
+withSurv <- inner_join(mrsData, select(nonMethData, shareid, timeToEvent, event), by="shareid")
+withSurv$timeToEvent[withSurv$timeToEvent==1000] <- max(withSurv$timeToEvent)  ### REMOVE THIS LATER
+withSurv$mrs_tertiles <- with(withSurv, cut(mrs_half, 
+                              breaks=quantile(mrs_half, probs=seq(0,1,length.out=4)),
+                              labels=F, include.lowest=T))
+withSurv$survObj <- Surv(time=withSurv$timeToEvent, event=withSurv$event)
+
+KM_plot <- function(sFit, title="CVD survival plots based on MRS tertiles", ylims) {
+  plot(sFit, col=1:3, main=title, ylim=ylims)
+  legend("left", legend=c("1st tertile","2nd tertile","3rd tertile"), col=1:3, lty=1)
+}
+
+survfit_inSample <- survfit(survObj~mrs_tertiles, data=withSurv[withSurv$inTrainSet,])
+KM_plot(survfit_inSample, title="Training set", ylims=c(0.7,1))
+
+survfit_outOfSample <- survfit(survObj~mrs_tertiles, data=withSurv[!withSurv$inTrainSet,])
+KM_plot(survfit_outOfSample, title="Test set", ylims=c(0.7,1))
+```
+
+## MRS Biology
+
+```{r mrs-biology}
+mrs_CpGs <- names(table(unlist(cpgs))[which(table(unlist(cpgs))>5)])  # All appearing >5 times out of 20
+suppressMessages(library(IlluminaHumanMethylation450kanno.ilmn12.hg19, quietly=T))
+mrs_cpgSet_anno <- cbind(Locations[mrs_CpGs,], Other[mrs_CpGs,], Islands.UCSC[mrs_CpGs,]) %>%
+  data.frame(stringsAsFactors=F) %>%
+  rownames_to_column(var="cpg")
+
+enrichment_res <- run_enrichment_test(mrs_cpgSet_anno)
+enrich_tbl <- data.frame(Category=names(enrichment_res), 
+                         p.value=unname(unlist(enrichment_res))) %>%
+  mutate(FDR=p.adjust(p.value, method="BH")) %>%
+  arrange(p.value)
+kable(head(enrich_tbl, 15), digits=3)
+
+top_mrs_CpGs <- names(table(unlist(cpgs))[which(table(unlist(cpgs))>10)])  # All appearing >10 times out of 20
+top_mrs_cpgSet_anno <- cbind(Locations[top_mrs_CpGs,], Other[top_mrs_CpGs,], Islands.UCSC[top_mrs_CpGs,]) %>%
+  data.frame(stringsAsFactors=F) %>%
+  rownames_to_column(var="cpg") %>%
+  select(cpg, UCSC_RefGene_Name)
+print("Top CpGs")
+kable(top_mrs_cpgSet_anno)
+
+annot_plot("UCSC_RefGene_Group", mrs_cpgSet_anno, annot)
+annot_plot("Relation_to_Island", mrs_cpgSet_anno, annot)
+```
+
+
+## ROC curves
+```{r roc, eval=F}
+library(pROC)
+withSurv <- inner_join(mrsData, select(nonMethData, shareid, timeToEvent, event), by="shareid")
+  
+plot(roc(event~frs, data=filter(mrsData, !inTrainSet)))
+lr.fit <- glm(event~frs, data=withSurv[!withSurv$inTrainSet,])
+
+plot(roc(event~fitted_values, data=mutate(withSurv[!withSurv$inTrainSet,], probs=lr.fit$fitted.values)))
+plot(roc(event~mrs_half, data=withSurv[!withSurv$inTrainSet,]))
+```
 
 ## Association with cardiovascular risk factors
 
 ```{r mrs-correlations, fig.align="center", fig.width=2, fig.height=3, out.width="60%"}
 bms <- c("sex","age","bmi","sysBP","chol","hdl","tg","glu","frs")
-cors <- sapply(bms, function(bm) cor(mrsData$mrs_full, mrsData[[bm]], use="pairwise.complete.obs"))
+cors <- sapply(bms, function(bm) cor(mrsData$mrs, mrsData[[bm]], use="pairwise.complete.obs"))
 cor_df <- rownames_to_column(data.frame(cor=cors), var="variable") %>%
   mutate(variable=factor(variable, levels=rev(variable)))
 ggplot(cor_df, aes(x="Correlation with MRS", y=variable, fill=cor)) + 
   geom_tile(color="white") +
-  scale_fill_gradient2(low='#0000FF',mid='#ffffbf',high='#FF0000') +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
   theme(axis.title=element_blank())
 ```
 
@@ -348,7 +446,7 @@ plotDF <- rownames_to_column(data.frame(t(cum_to_CVD))) %>%
   gather(key=model, value=zScore, 2:4, factor_key=T)
 ggplot(plotDF, aes(x=model, y=biomarker, fill=zScore)) + 
   geom_tile(color="white") + 
-  scale_fill_gradient2(low='#0000FF',mid='#ffffbf',high='#FF0000') +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
   scale_x_discrete(position="top") +
   theme(axis.title=element_blank())
 ```
@@ -357,7 +455,7 @@ Next, do the calculated methylation risk scores have an independent association 
 
 ```{r cumulative-to-MRS, fig.align="center", out.width="80%"}
 MRS_model <- function(predictors, bm, dat)
-  summary(lm(as.formula(paste0("mrs_full~",predictors)), data=dat))$coef[bm,"t value"]
+  summary(lm(as.formula(paste0("mrs~",predictors)), data=dat))$coef[bm,"t value"]
 cum_to_MRS <- sapply(risk_factors, function(bm) {
   cum <- MRS_model(paste0(bm, "_cum"), paste0(bm, "_cum"), cvdData)
   recent <- MRS_model(paste0(bm, "_recent"), paste0(bm, "_recent"), cvdData)
@@ -369,7 +467,7 @@ plotDF <- rownames_to_column(data.frame(t(cum_to_MRS))) %>%
   gather(key=model, value=tScore, 2:4, factor_key=T)
 ggplot(plotDF, aes(x=model, y=biomarker, fill=tScore)) + 
   geom_tile(color="white") + 
-  scale_fill_gradient2(low='#0000FF',mid='#ffffbf',high='#FF0000') +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
   scale_x_discrete(position="top") +
   theme(axis.title=element_blank())
 ```
@@ -377,12 +475,13 @@ ggplot(plotDF, aes(x=model, y=biomarker, fill=tScore)) +
 Finally, does the MRS potentially mediate these relationships of cumulative biomarker levels with CVD incidence (in "left out" 50% of full dataset)? Heatmap represents z-scores from the relevant Cox models.
 
 ```{r MRS-mediation, fig.align="center", out.width="80%"}
-holdoutSet <- filter(cvdData, !inTrainSet)
+# holdoutSet <- filter(cvdData, !inTrainSet)
+holdoutSet <- cvdData ########
 mediation <- sapply(risk_factors, function(bm) {
   cum <- CVD_model(paste0(bm, "_cum"), paste0(bm, "_cum"), holdoutSet)
-  cum_withMRS <- CVD_model(paste0(bm, "_cum+mrs_half"), paste0(bm, "_cum"), holdoutSet)
+  cum_withMRS <- CVD_model(paste0(bm, "_cum+mrs"), paste0(bm, "_cum"), holdoutSet)
   recent <- CVD_model(paste0(bm, "_recent"), paste0(bm, "_recent"), holdoutSet)
-  recent_withMRS <- CVD_model(paste0(bm, "_recent+mrs_half"), paste0(bm, "_recent"), holdoutSet)
+  recent_withMRS <- CVD_model(paste0(bm, "_recent+mrs"), paste0(bm, "_recent"), holdoutSet)
   c(cum, cum_withMRS, recent, recent_withMRS)
 })
 plotDF <- rownames_to_column(data.frame(t(mediation))) %>%
@@ -391,9 +490,9 @@ plotDF <- rownames_to_column(data.frame(t(mediation))) %>%
   gather(key=model, value=zScore, 2:5, factor_key=T)
 ggplot(plotDF, aes(x=model, y=biomarker, fill=zScore)) + 
   geom_tile(color="white") + 
-  scale_fill_gradient2(low='#0000FF',mid='#ffffbf',high='#FF0000') +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
   scale_x_discrete(position="top") +
-  theme(axis.text.x=element_text(angle=30), axis.title=element_blank()) +
+  theme(axis.text.x=element_text(angle=20), axis.title=element_blank()) +
   geom_vline(xintercept=2.5)
 ```
 
@@ -417,17 +516,17 @@ withDiet <- inner_join(mrsData, dietData, by="shareid")
 ```
 
 ```{r diet-correlations}
-mrsDiet <- select(withDiet, frs, mrs_full, one_of(names(foodLib)))
+mrsDiet <- select(withDiet, frs, mrs, one_of(names(foodLib)))
 mdCors <- cor(mrsDiet, use="pairwise.complete.obs")
 mdCorsDF <- mdCors %>%
   data.frame() %>%
   rownames_to_column(var="marker") %>%
-  filter(marker %in% c("mrs_full","frs")) %>%
-  select(-one_of("mrs_full","frs")) %>%
+  filter(marker %in% c("mrs","frs")) %>%
+  select(-one_of("mrs","frs")) %>%
   gather(key=diet_component, value=correlation, -marker)
 ggplot(mdCorsDF, aes(x=factor(diet_component, levels=unique(diet_component)), y=marker, fill=correlation)) +
   geom_tile(color="white") +
-  scale_fill_gradient2(low='#0000FF',mid='#ffffbf',high='#FF0000') +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
   theme(axis.text.x=element_text(angle=30), axis.title=element_blank())
 ```
 
