@@ -14,9 +14,6 @@ registerDoParallel(cl)
 mSet <- foreach(rgChunk=rgSet.split, .packages="minfi", .combine="combine") %dopar% 
   preprocessNoob(rgChunk)
 stopCluster(cl)
-# mSet <- MethylSet(Meth=do.call(cbind, lapply(mSet_list, getMeth)),  # Construct MethylSet from mSet_list chunks
-#                   Unmeth=do.call(cbind, lapply(mSet_list, getUnmeth)),
-#                   phenoData=do.call(Biobase::combine, lapply(mSet_list, phenoData)))
 rm(rgSet, rgSet.split); invisible(gc())
 
 ## Sample QC
@@ -28,8 +25,8 @@ lowIntensity <- medIntensities$mMed < 10 | medIntensities$uMed < 10  # Informed 
 sexMismatch <- pData(mSet)$sex!=getSex(mapToGenome(mSet))$predictedSex
 keepSamples <- !(lowDetection | lowIntensity | sexMismatch)
 mSet.qc <- mSet[,keepSamples]
-print(paste("QC: Removed", sum(!keepSamples), "samples."))
-print(paste(sum(lowDetection), "detection,", sum(lowIntensity), "intensity,", sum(sexMismatch), "sex mismatch"))
+print(paste("QC: Removed", sum(!keepSamples), "samples (", sum(lowDetection), "detection,", 
+            sum(lowIntensity), "intensity,", sum(sexMismatch), "sex mismatch)."))
 rm(mSet); invisible(gc())
 
 ## Type I/II comparison plot (pre-normalization)

@@ -1,31 +1,25 @@
 suppressMessages(silent <- lapply(c("tidyverse","minfi","doParallel"), library, character.only=T))
 
 ## Sample sheet
-methSheet <- read.metharray.sheet(base="../data/", pattern="^sample_sheet4.csv$")
-phen <- read.csv("../data/phenotypes/Off_Exam8_phen_cov_all.csv")
-targets <- inner_join(methSheet, phen, by=c("Sample_Name"="shareid")) %>%
-  dplyr::mutate(shareid=Sample_Name, 
-                sex=c("M","F")[SEX], 
-                age=as.numeric(AGE8)) %>%
-  dplyr::select(shareid, Array, Slide, Basename, sex, age) %>%
-  dplyr::filter(Basename!="character(0)",  # Seems to appear in read.metharray.sheet output when a channel is missing
-                shareid!=21084)  # This sample is missing red channel .idat
-save("targets", file="../int/targets.RData")
+load("../int/sampleSheet.RData")
+targets <- sampleSheet %>%
+  dplyr::mutate(Basename=paste0("../data/raw_methylation/", sampleKey)) %>%
+  dplyr::filter(file.exists(paste0(Basename, "_Red.idat")),
+                file.exists(paste0(Basename, "_Grn.idat"))) %>%
+  distinct()
 
 ## Read in .idat intensity files
 print("Reading .idat files...")
-cl <- makePSOCKcluster(detectCores(), outfile="")
+# rgSet <- read.metharray.exp(targets=targets, verbose=T)
+numCores <- min(16, detectCores())
+cl <- makePSOCKcluster(numCores)
 registerDoParallel(cl)
-targetSplit <- splitIndices(nrow(targets), detectCores())  # Splits samples into equally-sized chunks
-rgSet <- foreach(targetIdxSet=targetSplit, .packages="minfi",
-                 .combine="combine", .multicombine=T) %dopar% 
+targetSplit <- splitIndices(nrow(targets), 2*numCores)  # Splits samples into equally-sized chunks
+rgSet <- foreach(targetIdxSet=targetSplit, .packages="minfi", 
+                      .combine=BiocGenerics::combine, .multicombine=T) %dopar%
   read.metharray.exp(targets=targets[targetIdxSet,])
 stopCluster(cl)
-# greens <- do.call(cbind, lapply(rgSet_list, getGreen))  # Extract greens from each subset
-# reds <- do.call(cbind, lapply(rgSet_list, getRed))  # Extract reds from each subset
-# rgSet <- RGChannelSet(Green=greens, Red=reds, annotation=annotation(rgSet_list[[1]]))  # Create full rgSet
-# pData(rgSet) <- do.call(rbind, lapply(rgSet_list, pData))
-# rm(rgSet_list, greens, reds)  # Remove older objects to save memory
+
 print("Saving rgSet...")
 save("rgSet", file="../int/rgSet.RData")
 

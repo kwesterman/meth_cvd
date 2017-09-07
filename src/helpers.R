@@ -124,10 +124,8 @@ run_CPA <- function(RGset) {
                 (hybridL.Green),as.matrix(target.Green),as.matrix(specI.Green),as.matrix(specI.Red), 
                 as.matrix(specII.Red),(np.Red[1,]),(np.Red[2,]),(np.Green[1,]),(np.Green[2,]),
                 as.matrix(normC.Green),as.matrix(normG.Green), as.matrix(normA.Red),as.matrix(normT.Red))
-  pca <- prcomp(na.omit(t(ctrl)))
-  ctrlprobes.scores <- pca$x
-  colnames(ctrlprobes.scores) = paste(colnames(ctrlprobes.scores), '_cp', sep='')
-  ctrlprobes.scores
+  pca.fit <- prcomp(na.omit(t(ctrl)))
+  pca.fit
 }
 
 
