@@ -1,0 +1,12 @@
+[1] "Reading .idat files..."
+[1] "Saving rgSet..."
+[1] "Running probe detection confidence tests..."
+Loading required package: IlluminaHumanMethylation450kmanifest
+[1] "Saving detection p-values..."
+[1] "Creating QC intensity plot..."
+null device 
+          1 
+
+real	102m40.649s
+user	94m43.726s
+sys	1m13.816s

@@ -1,0 +1,25 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539 x 452"
+[1] "Dimensions of M-value matrix: 426957 x 2539"
+[1] "~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+PC1"
+           coef exp(coef)  se(coef)         z  Pr(>|z|)
+mrs 0.007477714  1.007506 0.0146011 0.5121336 0.6085575
+[1] "~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+PC1+PC2"
+           coef exp(coef)   se(coef)         z  Pr(>|z|)
+mrs 0.005147863  1.005161 0.01466646 0.3509956 0.7255917
+[1] "~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+PC1+PC2+PC3"
+          coef exp(coef)   se(coef)         z  Pr(>|z|)
+mrs 0.01125485  1.011318 0.01295204 0.8689634 0.3848671
+[1] "~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+Gran+PC1+PC2+PC3+PC4"
+            coef exp(coef)  se(coef)          z  Pr(>|z|)
+mrs -0.002763385 0.9972404 0.0133422 -0.2071162 0.8359191
+[1] "~sex+age+smoking_now+bmi+CD8T+CD4T+NK+Bcell+Mono+PC1+PC2+PC3+PC4"
+            coef exp(coef)  se(coef)          z  Pr(>|z|)
+mrs -0.002430005 0.9975729 0.0134358 -0.1808605 0.8564771
+[1] "~sex+age+smoking_now+bmi+CD4T+NK+Bcell+Mono+Gran+PC1+PC2+PC3+PC4"
+            coef exp(coef)   se(coef)          z  Pr(>|z|)
+mrs -0.002127772 0.9978745 0.01347232 -0.1579366 0.8745068
+
+real	58m20.615s
+user	57m30.132s
+sys	0m48.421s

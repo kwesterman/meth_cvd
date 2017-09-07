@@ -1,0 +1,4 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539 x 453"
+[1] "Dimensions of M-value matrix: 426957 x 2539"
+slurmstepd: *** JOB 20251216 ON alpha004 CANCELLED AT 2017-08-30T08:08:31 ***

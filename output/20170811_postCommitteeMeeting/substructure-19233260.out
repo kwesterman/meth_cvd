@@ -1,0 +1,8 @@
+Warning messages:
+1: Column `sampleKey` joining character vector and factor, coercing into character vector 
+2: Column `sampleKey` joining character vector and factor, coercing into character vector 
+3: Column `sampleKey` joining character vector and factor, coercing into character vector 
+
+real	1m42.970s
+user	1m32.137s
+sys	0m4.471s

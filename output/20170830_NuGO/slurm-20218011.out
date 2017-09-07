@@ -1,0 +1,9 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2457 x 452"
+[1] "Dimensions of M-value matrix: 426957 x 2457"
+[1] "Generating full MRS..."
+[1] "Generating half MRS"
+
+real	12m16.938s
+user	12m4.456s
+sys	0m11.104s

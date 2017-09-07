@@ -1,0 +1,22 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539 x 452"
+[1] "Dimensions of M-value matrix: 426957 x 2539"
+[1] "Usings PCs 1 to 2"
+          coef exp(coef)   se(coef)        z   Pr(>|z|)
+mrs -0.0233071 0.9769624 0.01204638 -1.93478 0.05301728
+[1] "Usings PCs 1 to 3"
+            coef exp(coef)   se(coef)          z  Pr(>|z|)
+mrs -0.009620164  0.990426 0.01091364 -0.8814804 0.3780578
+[1] "Usings PCs 1 to 4"
+           coef exp(coef)    se(coef)         z   Pr(>|z|)
+mrs -0.02126891 0.9789557 0.009972156 -2.132829 0.03293873
+[1] "Usings PCs 1 to 5"
+          coef exp(coef)    se(coef)         z   Pr(>|z|)
+mrs -0.0224816 0.9777692 0.009959728 -2.257251 0.02399241
+[1] "Usings PCs 1 to 6"
+           coef exp(coef)    se(coef)         z   Pr(>|z|)
+mrs -0.02293569 0.9773253 0.009977934 -2.298641 0.02152532
+
+real	41m34.090s
+user	39m58.638s
+sys	1m14.405s

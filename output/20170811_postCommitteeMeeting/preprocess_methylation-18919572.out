@@ -1,0 +1,22 @@
+[1] "Number of cores: 8"
+[1] "Preprocessing using Noob method..."
+[1] "Sample QC..."
+Warning message:
+In .getSex(CN = CN, xIndex = xIndex, yIndex = yIndex, cutoff = cutoff) :
+  An inconsistency was encountered while determining sex. One possibility is that only one sex is present. We recommend further checks, for example with the plotSex function.
+[1] "QC: Removed 27 samples."
+[1] "7 detection, 8 intensity, 22 sex mismatch"
+null device 
+          1 
+[1] "Normalization using BMIQ..."
+[1] "BMIQ normalization done."
+null device 
+          1 
+[1] "Probe filtering..."
+[1] "Filtering: Removed 58555 probes."
+[1] "Dimensions of final methylation set: 426957 x 2590"
+[1] "Saving M-value matrix..."
+
+real	144m19.934s
+user	56m16.260s
+sys	5m0.644s

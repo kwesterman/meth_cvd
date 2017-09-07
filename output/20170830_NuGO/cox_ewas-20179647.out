@@ -1,0 +1,8 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539 x 453"
+[1] "Dimensions of M-value matrix: 426957 x 2539"
+[1] "Saving results..."
+
+real	45m30.091s
+user	22m43.945s
+sys	1m15.068s

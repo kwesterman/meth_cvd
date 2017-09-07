@@ -1,0 +1,20 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539 x 452"
+[1] "Dimensions of M-value matrix: 426957 x 2539"
+[1] "Usings PC 1"
+            coef exp(coef)   se(coef)          z  Pr(>|z|)
+mrs -0.008211853 0.9918218 0.01209285 -0.6790667 0.4970956
+[1] "Usings PC 2"
+          coef exp(coef)   se(coef)        z    Pr(>|z|)
+mrs 0.04373631  1.044707 0.01330405 3.287443 0.001011018
+[1] "Usings PC 3"
+          coef exp(coef)   se(coef)        z     Pr(>|z|)
+mrs 0.07245724  1.075147 0.01399704 5.176613 2.259499e-07
+[1] "Usings PC 4"
+          coef exp(coef)   se(coef)        z    Pr(>|z|)
+mrs 0.04055988  1.041394 0.01491745 2.718955 0.006548848
+[1] "Usings PC 5"
+          coef exp(coef)   se(coef)       z     Pr(>|z|)
+mrs 0.05555208  1.057124 0.01465773 3.78995 0.0001506774
+[1] "Usings PC 6"
+slurmstepd: *** JOB 20175261 ON m4lmem01 CANCELLED AT 2017-08-23T08:34:18 DUE TO TIME LIMIT ***

@@ -1,0 +1,9 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539 x 445"
+[1] "Dimensions of M-value matrix: 426957 x 2539"
+Setting options('download.file.method.GEOquery'='auto')
+Setting options('GEOquery.inmemory.gpl'=FALSE)
+
+real	21m25.319s
+user	20m59.246s
+sys	0m22.831s

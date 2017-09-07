@@ -1,0 +1,29 @@
+[1] "SVA..."
+Number of significant surrogate variables is:  168 
+Iteration (out of 5 ):1  2  3  4  5  [1] "Surrogate variables saved."
+[1] "CPA method (control probe PCA)..."
+Loading required package: IlluminaHumanMethylation450kmanifest
+[1] "CPA results saved."
+[1] "ReFACTor..."
+[1] "Starting ReFACTor v1.0..."
+[1] "Reading input files..."
+[1] "Excluding sites with low variance (std <  0.02 )..."
+[1] "168076 sites were excluded due to low variance..."
+[1] "Running a standard PCA..."
+[1] "Compute a low rank approximation of input data and rank sites..."
+[1] "Compute ReFACTor components..."
+[1] "ReFACTor is Done"
+[1] "ReFACTor results saved."
+[1] "PCA on 50k most variable probes..."
+Error in save(., "nonMethData", file = "../int/nonMethData.RData") : 
+  object ‘nonMethData’ not found
+Calls: %>% ... _fseq -> freduce -> withVisible -> <Anonymous> -> save
+In addition: Warning messages:
+1: Column `sampleKey` joining character vector and factor, coercing into character vector 
+2: Column `sampleKey` joining character vector and factor, coercing into character vector 
+3: Column `sampleKey` joining character vector and factor, coercing into character vector 
+Execution halted
+
+real	248m6.643s
+user	246m34.217s
+sys	1m16.125s

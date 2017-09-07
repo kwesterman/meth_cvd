@@ -1,0 +1,27 @@
+[1] "Methylation data loaded."
+[1] "Dimensions of event/covariate matrix: 2539 x 445"
+[1] "Dimensions of M-value matrix: 426957 x 2539"
+[1] "Iteration 1"
+[1] "Iteration 2"
+[1] "Iteration 3"
+[1] "Iteration 4"
+[1] "Iteration 5"
+[1] "Iteration 6"
+[1] "Iteration 7"
+[1] "Iteration 8"
+[1] "Iteration 9"
+[1] "Iteration 10"
+[1] "Iteration 11"
+[1] "Iteration 12"
+[1] "Iteration 13"
+[1] "Iteration 14"
+[1] "Iteration 15"
+[1] "Iteration 16"
+[1] "Iteration 17"
+[1] "Iteration 18"
+[1] "Iteration 19"
+[1] "Iteration 20"
+
+real	67m44.236s
+user	66m43.374s
+sys	0m50.582s

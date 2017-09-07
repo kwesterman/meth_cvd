@@ -1,0 +1,1 @@
+Contains output from a series of tests consisting of tweaks to the MRS generation model. The first set were generated in late July 2017, using an elastic net regression with equal penalty for all covariates. Two alternatives explored here include removing any shrinkage/penalty on the non-CpG covariates as well as MRS creation using beta-values instead of M-values.
