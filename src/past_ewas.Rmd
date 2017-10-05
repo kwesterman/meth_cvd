@@ -1,0 +1,91 @@
+---
+title: EWAS for Prior Cardiovascular Events
+output: html_document
+---
+
+```{r prereqs, include=F, cache=F}
+library(knitr)
+opts_chunk$set(echo=F, message=F, warning=F, 
+              cache=T, cache.lazy=F, autodep=T, cache.path="../cache/past_ewas/")
+suppressMessages(silent <- lapply(c("tidyverse","survival","glmnet","minfi",
+                                    "caret","doParallel","itertools"), library, character.only=T))
+# args <- commandArgs(trailingOnly=T)
+# numCores <- if (length(args)>0) as.integer(args[1]) else detectCores()
+```
+
+```{r load-data, cache=F}
+# Load methylation data
+load("../int/Mvals.RData")  # Loads Mvals object
+
+# Load non-methylation (event + covariate) data
+load("../int/nonMethData.RData")
+nonMethData <- replace_na(nonMethData,  # Replace missing values (very few) with median
+                          list(bmi=median(nonMethData$bmi, na.rm=T),
+                               smoking_now=median(nonMethData$smoking_now, na.rm=T)))
+
+# Make sure samples and their ordering are identical in methylation and metadata
+Mvals <- Mvals[,match(nonMethData$sampleKey, colnames(Mvals))]
+print(paste("Dimensions of event/covariate matrix:", paste(dim(nonMethData), collapse=" x ")))
+print(paste("Dimensions of M-value matrix:", paste(dim(Mvals), collapse=" x ")))
+stopifnot(all(colnames(Mvals)==nonMethData$sampleKey))  # Ensure identical number and order of samples for methylation and covariate data
+```
+
+```{r ewas}
+cl <- makePSOCKcluster(32, outfile="")
+registerDoParallel(cl)
+
+myTry <- function(expr, CpG) {
+  # Captures model failures and returns successful result or vector of NAs
+  tryCatch(expr,
+           error = function(e) {print(e); return(c(CpG, rep(NA, 3)))},
+           warning = function(w) {print(w); return(c(CpG, rep(NA, 3)))})
+}
+
+run_glm <- function(probeData, covarData, model_spec, subset) {
+  CpG <- rownames(probeData)
+  modelData <- cbind(covarData, meth=as.numeric(probeData))
+  myTry({
+    glm.fit <- glm(as.formula(model_spec), family="binomial", data=modelData)
+    c(CpG=CpG, summary(glm.fit)$coef['meth',c('Estimate','z value','Pr(>|z|)')])
+  }, CpG)
+}
+
+basic_model <- "pastEvent~meth+sex+age+smoking_now+CD4T+NK+Bcell+Mono+Gran+PC1_cp"
+
+ewasRes <- foreach(meth=enumerate(iter(Mvals, by="row")), .combine=rbind) %dopar% {
+  if (meth$index %% 5000 == 0) print(paste0("CpG ", meth$index))
+  run_glm(meth$value, nonMethData, basic_model, trainset)
+}
+
+message("after creating ewasRes")
+
+stopCluster(cl)
+
+ewasResDF <- ewasRes %>%
+  data.frame(stringsAsFactors=F) %>%
+  dplyr::rename(coef=Estimate, z=z.value, p=Pr...z..) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r inflation}
+make_qqplot <- function(pVec, plotTitle="Title") {
+  pVec <- pVec[!is.na(pVec)]
+  qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle, xlab="Expected (-logP)", ylab="Observed (-logP)")
+  abline(0,1,col="red")
+}
+
+gControl <- function(pVals) {
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(pVals, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
+round(lambda, 2)
+}
+
+make_qqplot(ewasResDF$p)
+```
+
+The observed genomic inflation factor is $\lambda=$ `r gControl(ewasResDF$p)`.
+
+

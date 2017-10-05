@@ -8,6 +8,7 @@ print("Methylation data loaded.")
 # Load non-methylation (event + covariate) data
 load("../int/nonMethData.RData")
 nonMethData$survObj <- Surv(time=nonMethData$timeToEvent, event=nonMethData$event, type="right")
+nonMethData <- replace_na(nonMethData, list(pastEvent=FALSE))
 
 # Sanity checks
 Mvals <- Mvals[,match(nonMethData$sampleKey, colnames(Mvals))]
@@ -16,9 +17,9 @@ print(paste("Dimensions of M-value matrix:", paste(dim(Mvals), collapse=" x ")))
 stopifnot(all(colnames(Mvals)==nonMethData$sampleKey))  # Ensure identical number and order of samples for methylation and covariate data
 
 ## Run regressions
-set.seed(1)
-Mvals <- Mvals[sample(1:nrow(Mvals), 100000),]
-cl <- makePSOCKcluster(detectCores(), outfile="progress.txt")
+# set.seed(1)
+# Mvals <- Mvals[sample(1:nrow(Mvals), 100000),]
+cl <- makePSOCKcluster(detectCores(), outfile="")
 registerDoParallel(cl)
 
 myTry <- function(expr, CpG) {
@@ -41,10 +42,10 @@ run_cox <- function(probeData, model_spec) {
 } 
 
 model_list <- list(
-  basic=paste0("survObj~meth+sex+age+smoking_now+bmi"),
-  wbcOnly=paste0("survObj~meth+sex+age+smoking_now+bmi+CD4T+NK+Bcell+Mono+Gran"),
-  pastEventOnly=paste0("survObj~meth+sex+age+smoking_now+bmi+pastEvent"),
-  wbcPastEvent=paste0("survObj~meth+sex+age+smoking_now+bmi+CD4T+NK+Bcell+Mono+Gran+pastEvent"),
+  # basic=paste0("survObj~meth+sex+age+smoking_now+bmi"),
+  # wbcOnly=paste0("survObj~meth+sex+age+smoking_now+bmi+CD4T+NK+Bcell+Mono+Gran"),
+  # pastEventOnly=paste0("survObj~meth+sex+age+smoking_now+bmi+pastEvent"),
+  # wbcPastEvent=paste0("survObj~meth+sex+age+smoking_now+bmi+CD4T+NK+Bcell+Mono+Gran+pastEvent"),
   wbcPastEvent1CPA=paste0("survObj~meth+sex+age+smoking_now+bmi+CD4T+NK+Bcell+Mono+Gran+pastEvent+PC1_cp")
 )
 
@@ -57,5 +58,5 @@ res <- foreach(mod=model_list, .final=function(l) setNames(l, names(model_list))
 
 stopCluster(cl)
 
-print("Saving results...")
-save("res", file=paste0("../int/ewasRes7_pastEventsAdjustment.RData"))
+# print("Saving results...")
+# save("res", file=paste0("../int/ewasRes7_pastEventsAdjustment.RData"))
