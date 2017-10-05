@@ -3,15 +3,15 @@ title: MRS Model Experimentation
 output: html_document
 ---
 
-```{r prereqs, include=F}
+```{r prereqs, include=F, cache=F}
 library(knitr)
 opts_chunk$set(echo=F, message=F, warning=F, 
-              cache=T, cache.lazy=F, autodep=T, cache.path="../cache/mrs_experiments/")
+              cache=T, cache.lazy=F, cache.path="../cache/mrs_experiments/")
 suppressMessages(silent <- lapply(c("tidyverse","survival","glmnet","minfi",
                                     "caret","doParallel","itertools"), library, character.only=T))
 ```
 
-```{r load-data}
+```{r load-data, cache=F}
 # Load methylation data
 load("../int/Mvals.RData")  # Loads Mvals object
 Mvals_full <- Mvals
@@ -44,8 +44,10 @@ trainTestMRS <- function(mod, meta, methMat, trainset, testset, alpha=0.5) {
   mrs_calc <- as.vector(design_mat[,names(coefs_meth)] %*% coefs_meth)  # Calculate the MRS for all samples
   mrs.test <- coxph(cvd_surv~mrs, data=cbind(cvd_surv=cvd_surv, mrs=mrs_calc,  # Test the predictivity of the MRS using a basic Cox model
                                              meta), subset=testset)
+  hr_per_sd <- exp(sd(mrs_calc[testset])*summary(mrs.test)$coef[,"coef"])
   
-  list(components=coefs_meth, res=summary(mrs.test)$coef)
+  list(components=coefs_meth, 
+       res=cbind(HR_per_SD=hr_per_sd, p=summary(mrs.test)$coef[,"Pr(>|z|)"]))
 }
 ```
 
@@ -74,8 +76,13 @@ varThreshTbl <- map_dfr(varThreshRes, function(res) data.frame(res$res)) %>%
   mutate(varThreshold=varThresh)
 ```
 
-```{r variance-thresholds-out}
+```{r variance-thresholds-out, cache=F}
 kable(varThreshTbl)
+
+ggplot(data=mutate(varThreshTbl, negLogP=-log(p)), 
+       aes(x=varThreshold, y=negLogP)) +
+  geom_point() + 
+  geom_line()
 ```
 
 ## Logistic regression instead of Cox
@@ -109,7 +116,7 @@ print(res$res)
 ## EWAS-based approach
 
 ```{r ewas}
-cl <- makePSOCKcluster(detectCores())
+cl <- makePSOCKcluster(4)
 registerDoParallel(cl)
 
 myTry <- function(expr, CpG) {
@@ -145,24 +152,29 @@ ewasResDF <- ewasRes %>%
   arrange(p)
 ```
 
-```{r ewas-mrs}
+```{r ewas-mrs, dependson=-1}
 cpgNum <- c(100,500,1000,2000)
 ewasMrsRes <- lapply(cpgNum, function(num) {
   mrs_coefs <- setNames(ewasResDF[seq(1,num),"coef"], ewasResDF[seq(1,num),"CpG"])
-  mrs <- as.vector(t(Mvals)[,names(mrs_coefs)] %*% mrs_coefs)
+  mrs_calc <- as.vector(t(Mvals)[,names(mrs_coefs)] %*% mrs_coefs)
   mrs.test <- coxph(Surv(time=nonMethData$timeToEvent, event=nonMethData$event)~mrs,
-                  data=cbind(nonMethData, mrs=mrs), subset=testset)
+                  data=cbind(nonMethData, mrs=mrs_calc), subset=testset)
+  hr_per_sd <- exp(sd(mrs_calc[testset])*summary(mrs.test)$coef[,"coef"])
   ewasEnetMrs.test <- trainTestMRS(basic_model, nonMethData, Mvals[names(mrs_coefs),], trainset, testset)$res
-  list(ewas=summary(mrs.test)$coef, ewasEnet=ewasEnetMrs.test)
+  list(ewas=cbind(HR_per_SD=hr_per_sd, p=summary(mrs.test)$coef[,"Pr(>|z|)"]),
+       ewasEnet=ewasEnetMrs.test)
 })
-ewasResTbl <- map_dfr(ewasMrsRes, function(res) data.frame(res$ewas)) %>%
-  mutate(numCpGsUsed=cpgNum)
-kable(ewasResTbl, digits=3)
-ewasEnetResTbl <- map_dfr(ewasMrsRes, function(res) data.frame(res$ewasEnet)) %>%
-  mutate(numCpGsUsed=cpgNum)
 ```
 
-```{r ewas-mrs-out}
+```{r ewas-mrs-out, dependson=-1}
+ewasResTbl <- map_dfr(ewasMrsRes, function(res) data.frame(res$ewas)) %>%
+  mutate(numCpGsUsed=cpgNum, p=format(p, scientific=T))
+ewasEnetResTbl <- map_dfr(ewasMrsRes, function(res) data.frame(res$ewasEnet)) %>%
+  mutate(numCpGsUsed=cpgNum, p=format(p, scientific=T))
+
+print("EWAS weighted sum approach:")
+kable(ewasResTbl)
+print("Elastic net regression on EWAS CpGs:")
 kable(ewasEnetResTbl)
 ```
 
@@ -171,6 +183,9 @@ kable(ewasEnetResTbl)
 ```{r past-events}
 print("Analysis taking past events into account (all with variance threshold of 0.4)...")
 nonMethData <- replace_na(nonMethData, list(pastEvent=F))
+print("Distribution of past events in train and test sets:")
+with(mutate(filter(nonMethData, event==T), inTrainSet=shareid %in% train_shareids), 
+     table(pastEvent, inTrainSet))
 print("Adjust for past events in training only:")
 res <- trainTestMRS(paste0(basic_model,"+pastEvent"), nonMethData, Mvals[Mval_variances>0.4,],
                     trainset, testset)
@@ -178,21 +193,40 @@ print(res$res)
 print("Remove everyone with past events completely:")
 npeTrainSet <- trainset[nonMethData$pastEvent[trainset]==F]
 npeTestSet <- testset[nonMethData$pastEvent[testset]==F]
-print(paste("...", sum(nonMethData$event[npeTrainSet]), "events in train set."))
-print(paste("...", sum(nonMethData$event[npeTestSet]), "events in test set."))
 res <- trainTestMRS(basic_model, nonMethData, Mvals[Mval_variances>0.4,], npeTrainSet, npeTestSet)
 print(res$res)
 print("Remove everyone with past events from only the train set:")
-print(paste("...", sum(nonMethData$event[npeTrainSet]), "events in train set."))
-print(paste("...", sum(nonMethData$event[testset]), "events in test set."))
 res <- trainTestMRS(basic_model, nonMethData, Mvals[Mval_variances>0.4,], npeTrainSet, testset)
 print(res$res)
 print("Remove everyone with past events from only the test set:")
-print(paste("...", sum(nonMethData$event[trainset]), "events in train set."))
-print(paste("...", sum(nonMethData$event[npeTestSet]), "events in test set."))
 res <- trainTestMRS(basic_model, nonMethData, Mvals[Mval_variances>0.4,], trainset, npeTestSet)
 print(res$res)
 ```
+
+## Male/female differences
+```{r male-female}
+maleTrainSet <- trainset[nonMethData$sex[trainset]=="M"]
+femaleTrainSet <- trainset[nonMethData$sex[trainset]=="F"] 
+maleTestSet <- testset[nonMethData$sex[testset]=="M"]
+femaleTestSet <- testset[nonMethData$sex[testset]=="F"]
+print(paste0("Train on males only (n = ", length(maleTrainSet), "), then test on..."))
+
+print(paste0("Males (n = ", length(maleTestSet), "):"))
+res <- trainTestMRS(basic_model, nonMethData, Mvals[Mval_variances>0.4,], maleTrainSet, maleTestSet)
+print(res$res)
+print(paste0("Females (n = ", length(femaleTestSet), "):"))
+res <- trainTestMRS(basic_model, nonMethData, Mvals[Mval_variances>0.4,], maleTrainSet, femaleTestSet)
+print(res$res)
+
+print(paste0("Train on females only (n = ", length(femaleTrainSet), "), then test on..."))
+print(paste0("Males (n = ", length(maleTestSet), "):"))
+res <- trainTestMRS(basic_model, nonMethData, Mvals[Mval_variances>0.4,], femaleTrainSet, maleTestSet)
+print(res$res)
+print(paste0("Females (n = ", length(femaleTestSet), "):"))
+res <- trainTestMRS(basic_model, nonMethData, Mvals[Mval_variances>0.4,], femaleTrainSet, femaleTestSet)
+print(res$res)
+```
+
 
 ## Stability of the MRS in duplicate samples
 
@@ -209,13 +243,13 @@ iccRes <- ICCest(x=shareid, y=mrs, data=iccData)
 print(iccRes$ICC)
 ```
 
-## Try different CpG sets based on WBC biology
+## Try different hypothesis-driven CpG sets based on WBC biology
 
-```{r wbc-cpg-selection}
+```{r hypothesis-driven}
 # See how pre-selection of specific CpG sets affects model performance
 print("Test pre-selected CpG sets with biological relevance...")
 library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
-mon_to_mac <- read_csv("../data/literature/mon_to_mac_DMRs_Wallner2016.csv") %>%
+mon_to_mac <- suppressWarnings(read_csv("../data/literature/mon_to_mac_DMRs_Wallner2016.csv")) %>%
   filter(!is.na(Location)) %>%
   mutate(chr=gsub(":.*", "", Location),
          start=as.integer(gsub("-.*", "", gsub(".*:", "", Location))),
@@ -246,36 +280,85 @@ variable_tcellSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017
 variable_monNeutSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx",
                                        sheet="Monocytes + neutrophils")
 
-print("Monocyte-to-macrophage CpGs:")
-kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% mon_to_mac_cpgs$cpg,],
-                   trainset, testset)$res)
-print("Schroder CpGs:")
-kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% mon_var_schroder_cpgs$cpg,],
-                   trainset, testset)$res)
-print("Monocyte-specific variable CpGs:")
-kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_monSpecific$`Probe ID`,],
-                   trainset, testset)$res)
-print("Neutrophil-specific variable CpGs:")
-kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_neutSpecific$`Probe ID`,],
-                   trainset, testset)$res)
-print("T cell-specific variable CpGs:")
-kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_tcellSpecific$`Probe ID`,],
-                   trainset, testset)$res)
-print("MonocyteAndNeutrophil-specific variable CpGs:")
-kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_monNeutSpecific$`Probe ID`,],
-                   trainset, testset)$res)
+# CVD GWAS SNP-based
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+anno450k <- data.frame(getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19), stringsAsFactors=F)
+cvd_gwas_associations <- read_tsv("../data/literature/gwas-association-downloaded_2017-09-18-cardiovascular disease.tsv")
+cvd_gwas_genes <- unique(unlist(strsplit(cvd_gwas_associations$`REPORTED GENE(S)`, split=", ")))
+
+cvd_gwas_cpgs_byPos <- cvd_gwas_associations %>%
+    mutate(chr=paste0("chr", CHR_ID),
+         snp_pos=CHR_POS) %>%
+  select(chr, snp_pos) %>%
+  inner_join(select(anno450k, Name, chr, pos), by="chr") %>%
+  mutate(snp_pos=as.numeric(snp_pos)) %>%
+  filter(pos>=snp_pos-1000, pos<=snp_pos+1000) %>%
+  dplyr::rename(cpg=Name) %>%
+  distinct(cpg)
+
+cvd_gwas_cpgs_byGene <- anno450k %>%
+  filter(toupper(UCSC_RefGene_Name) %in% cvd_gwas_genes) %>%
+  dplyr::rename(cpg=Name) %>%
+  distinct(cpg)
+
+trainTest_cpgSet <- function(cpgSet, cpgSetName) {
+  print(paste0(cpgSetName, " (", length(cpgSet), " CpGs)"))
+  kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% cpgSet,],
+                     trainset, testset)$res)
+}
+
+trainTest_cpgSet(mon_to_mac_cpgs$cpg, "Monocyte-to-macrophage DMRs, Wallner 2016")
+trainTest_cpgSet(mon_var_schroder_cpgs$cpg, "Variable CpGs in monocytes, Schroder 2017")
+trainTest_cpgSet(variable_monSpecific$`Probe ID`, "Variable CpGs in monocytes only, Ecker 2017")
+trainTest_cpgSet(variable_neutSpecific$`Probe ID`, "Variable CpGs in neutrophils only, Ecker 2017")
+trainTest_cpgSet(variable_tcellSpecific$`Probe ID`, "Variable CpGs in T-cells only, Ecker 2017")
+trainTest_cpgSet(variable_monNeutSpecific$`Probe ID`, "Variable CpGs in monocytes and neutrophils only, Ecker 2017")
+trainTest_cpgSet(cvd_gwas_cpgs_byPos$cpg, "CpGs +/- 1kb from GWAS catalog CVD SNPs")
+trainTest_cpgSet(cvd_gwas_cpgs_byGene$cpg, 
+                 "CpGs annotated to genes to which GWAS catalog CVD SNPs are annotated")
+
+
+
+# print(paste0("Monocyte-to-macrophage variable CpGs (", nrow(mon_to_mac_cpgs), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% mon_to_mac_cpgs$cpg,],
+#                    trainset, testset)$res)
+# print(paste0("Schroder variable monocyte CpGs (", nrow(mon_var_schroder_cpgs), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% mon_var_schroder_cpgs$cpg,],
+#                    trainset, testset)$res)
+# print(paste0("Ecker monocyte-specific variable CpGs (", nrow(variable_monSpecific), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_monSpecific$`Probe ID`,],
+#                    trainset, testset)$res)
+# print(paste0("Ecker neutrophil-specific variable CpGs (", nrow(variable_neutSpecific), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_neutSpecific$`Probe ID`,],
+#                    trainset, testset)$res)
+# print(paste0("Ecker T cell-specific variable CpGs (", nrow(variable_tcellSpecific), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_tcellSpecific$`Probe ID`,],
+#                    trainset, testset)$res)
+# print(paste0("Ecker monocyte-and-neutrophil-specific variable CpGs (", nrow(variable_monNeutSpecific), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_monNeutSpecific$`Probe ID`,],
+#                    trainset, testset)$res)
+# print(paste0("Ecker monocyte-and-neutrophil-specific variable CpGs (", nrow(variable_monNeutSpecific), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% variable_monNeutSpecific$`Probe ID`,],
+#                    trainset, testset)$res)
+# 
+# all_wbc_cpgs <- unique(c(mon_to_mac_cpgs$cpg, mon_var_schroder_cpgs$cpg, 
+#                          variable_monSpecific$`Probe ID`, variable_neutSpecific$`Probe ID`,
+#                          variable_tcellSpecific$`Probe ID`, variable_monNeutSpecific$`Probe ID`))
+# print(paste0("All of the above CpGs together (", length(all_wbc_cpgs), "):"))
+# kable(trainTestMRS(basic_model, nonMethData, Mvals[rownames(Mvals) %in% all_wbc_cpgs,],
+#                    trainset, testset)$res)
 ```
 
-## What about random sets of 1000 CpGs for comparison?
+## What about random sets of 500 CpGs for comparison?
 ```{r random-cpg-sets}
 set.seed(1)
 randomSets <- lapply(1:5, function(iter) 
-  trainTestMRS(basic_model, nonMethData, Mvals[sample(1:nrow(Mvals), 1000),], trainset, testset))
+  trainTestMRS(basic_model, nonMethData, Mvals[sample(1:nrow(Mvals), 500),], trainset, testset))
 randomSetsRes <- map_dfr(randomSets, function(set) data.frame(set$res))
 ```
 
-```{r random-cpg-sets-out}
-kable(randomSetsRes, digits=3)
+```{r random-cpg-sets-out, dependson=-1}
+kable(randomSetsRes)
 ```
 
 ## Sensitivity of the model to the elastic net alpha parameter
@@ -292,8 +375,12 @@ alphasResTbl <- map_dfr(alphasRes, function(res) data.frame(res$res)) %>%
   mutate(alpha=alphas)
 ```
 
-```{r alpha-out}
+```{r alpha-out, cache=F}
 kable(alphasResTbl)
+
+ggplot(data=mutate(alphasResTbl, negLogP=-log(p)), aes(x=alpha, y=negLogP)) +
+  geom_point() +
+  geom_line()
 ```
 
 
