@@ -1,0 +1,160 @@
+
+
+processing file: mrs_experiments.Rmd
+  |                                                                         |                                                                 |   0%  |                                                                         |..                                                               |   3%
+  ordinary text without R code
+
+  |                                                                         |....                                                             |   6%
+label: prereqs (with options) 
+List of 2
+ $ include: symbol F
+ $ cache  : symbol F
+
+  |                                                                         |......                                                           |   9%
+  ordinary text without R code
+
+  |                                                                         |.......                                                          |  11%
+label: load-data (with options) 
+List of 1
+ $ cache: symbol F
+
+  |                                                                         |.........                                                        |  14%
+  ordinary text without R code
+
+  |                                                                         |...........                                                      |  17%
+label: train-test-func
+  |                                                                         |.............                                                    |  20%
+  ordinary text without R code
+
+  |                                                                         |...............                                                  |  23%
+label: misc
+  |                                                                         |.................                                                |  26%
+  ordinary text without R code
+
+  |                                                                         |...................                                              |  29%
+label: variance-thresholds
+  |                                                                         |....................                                             |  31%
+  ordinary text without R code
+
+  |                                                                         |......................                                           |  34%
+label: variance-thresholds-out (with options) 
+List of 1
+ $ cache: symbol F
+
+  |                                                                         |........................                                         |  37%
+  ordinary text without R code
+
+  |                                                                         |..........................                                       |  40%
+label: logistic
+  |                                                                         |............................                                     |  43%
+  ordinary text without R code
+
+  |                                                                         |..............................                                   |  46%
+label: ewas
+  |                                                                         |................................                                 |  49%
+  ordinary text without R code
+
+  |                                                                         |.................................                                |  51%
+label: ewas-mrs (with options) 
+List of 1
+ $ dependson: language -1
+
+  |                                                                         |...................................                              |  54%
+  ordinary text without R code
+
+  |                                                                         |.....................................                            |  57%
+label: ewas-mrs-out (with options) 
+List of 1
+ $ dependson: language -1
+
+  |                                                                         |.......................................                          |  60%
+  ordinary text without R code
+
+  |                                                                         |.........................................                        |  63%
+label: past-events
+  |                                                                         |...........................................                      |  66%
+  ordinary text without R code
+
+  |                                                                         |.............................................                    |  69%
+label: mrs-stability
+  |                                                                         |..............................................                   |  71%
+  ordinary text without R code
+
+  |                                                                         |................................................                 |  74%
+label: wbc-cpg-selection
+Parsed with column specification:
+cols(
+  .default = col_character(),
+  `#` = col_integer(),
+  `Dist (l)` = col_double(),
+  `Dist (r)` = col_double(),
+  `Ø Diff` = col_double(),
+  `#CpG` = col_integer(),
+  `Length (bp)` = col_integer(),
+  `Overlap with CGI (bp)` = col_integer(),
+  `Histone marks cluster` = col_integer(),
+  `Overlap withgained NOMEseq peak  (bp)` = col_integer(),
+  `Overlap with lost NOMEseq peak (bp)` = col_integer()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_double(),
+  `#` = col_integer(),
+  location = col_character(),
+  length = col_integer(),
+  n_cpg = col_integer(),
+  histone_cluster_Hm03 = col_integer(),
+  histone_cluster_Hm05 = col_integer(),
+  chromHMM_Hm03 = col_character(),
+  chromHMM_Hm05 = col_character(),
+  dmr_gene_location = col_character(),
+  cgi_pos = col_character(),
+  associated_genes = col_character(),
+  lncRNA = col_character(),
+  X22 = col_character()
+)
+See spec(...) for full column specifications.
+  |                                                                         |..................................................               |  77%
+  ordinary text without R code
+
+  |                                                                         |....................................................             |  80%
+label: random-cpg-sets
+  |                                                                         |......................................................           |  83%
+  ordinary text without R code
+
+  |                                                                         |........................................................         |  86%
+label: random-cpg-sets-out (with options) 
+List of 1
+ $ dependson: language -1
+
+  |                                                                         |..........................................................       |  89%
+  ordinary text without R code
+
+  |                                                                         |...........................................................      |  91%
+label: alpha
+  |                                                                         |.............................................................    |  94%
+  ordinary text without R code
+
+  |                                                                         |...............................................................  |  97%
+label: alpha-out (with options) 
+List of 1
+ $ cache: symbol F
+
+  |                                                                         |.................................................................| 100%
+  ordinary text without R code
+
+
+output file: mrs_experiments.knit.md
+
+/opt/shared/RStudio/0.98/bin/pandoc/pandoc +RTS -K512m -RTS mrs_experiments.utf8.md --to html --from markdown+autolink_bare_uris+ascii_identifiers+tex_math_single_backslash --output /cluster/kappa/90-days-archive/ordovaslab/meth_cvd/output/mrs_experiments.html --smart --email-obfuscation none --self-contained --standalone --section-divs --template /cluster/home/kweste01/R/x86_64-pc-linux-gnu-library/3.3/rmarkdown/rmd/h/default.html --no-highlight --variable highlightjs=1 --variable 'theme:bootstrap' --include-in-header /tmp/RtmpOI4Ys1/rmarkdown-str317c751be584.html --mathjax --variable 'mathjax-url:https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML' 
+
+Output created: /cluster/kappa/90-days-archive/ordovaslab/meth_cvd/output/mrs_experiments.html
+Warning messages:
+1: Missing column names filled in: 'X17' [17], 'X18' [18], 'X19' [19], 'X20' [20], 'X21' [21], 'X22' [22], 'X23' [23], 'X24' [24], 'X25' [25], 'X26' [26], 'X27' [27], 'X28' [28], 'X29' [29], 'X30' [30], 'X31' [31], 'X32' [32], 'X33' [33], 'X34' [34], 'X35' [35], 'X36' [36], 'X37' [37], 'X38' [38], 'X39' [39], 'X40' [40], 'X41' [41], 'X42' [42], 'X43' [43], 'X44' [44], 'X45' [45], 'X46' [46], 'X47' [47], 'X48' [48], 'X49' [49], 'X50' [50], 'X51' [51], 'X52' [52], 'X53' [53], 'X54' [54], 'X55' [55], 'X56' [56], 'X57' [57], 'X58' [58], 'X59' [59], 'X60' [60], 'X61' [61], 'X62' [62], 'X63' [63], 'X64' [64], 'X65' [65], 'X66' [66], 'X67' [67], 'X68' [68], 'X69' [69], 'X70' [70], 'X71' [71], 'X72' [72], 'X73' [73], 'X74' [74], 'X75' [75], 'X76' [76], 'X77' [77], 'X78' [78], 'X79' [79], 'X80' [80], 'X81' [81], 'X82' [82], 'X83' [83], 'X84' [84], 'X85' [85], 'X86' [86], 'X87' [87], 'X88' [88], 'X89' [89], 'X90' [90], 'X91' [91], 'X92' [92], 'X93' [93], 'X94' [94], 'X95' [95], 'X96' [96], 'X97' [9 [... truncated] 
+2: Missing column names filled in: 'X22' [22] 
+3: from glmnet Fortran code (error code -30092); Numerical error at 92th lambda value; solutions for larger values of lambda returned 
+
+real	76m17.034s
+user	75m36.009s
+sys	0m33.962s

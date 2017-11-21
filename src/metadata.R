@@ -2,62 +2,187 @@
 
 suppressMessages(silent <- lapply(c("tidyverse"), library, character.only=T))
 
-### SAMPLE DATA
+### SAMPLE DATA ###
 print("Sample metadata...")
 
-sampleData <- read.csv("../data/raw_methylation/sample_sheet4.csv", skip=7, header=T) %>%
-  mutate(sampleKey=paste(Sentrix_ID, Sentrix_Position, sep="_"),
-                Sentrix_Row=substr(Sentrix_Position, 1, 3),
-                Sentrix_Col=substr(Sentrix_Position, 4, 6)) %>%
-  rename(shareid=Sample_Name) %>%
-  select(shareid, sampleKey, Sentrix_ID, Sentrix_Row, Sentrix_Col)
-# save("sampleData", file="../int/sampleData.RData")
+sampleData_fhs_c1 <- read_tsv("../data/fhs/meth/sample_attributes_c1.txt", skip=10)
+sampleData_fhs_c2 <- read_tsv("../data/fhs/meth/sample_attributes_c2.txt", skip=10)
+sampleData_fhs <- bind_rows(sampleData_fhs_c1, sampleData_fhs_c2) %>%
+  mutate(subjID=as.integer(gsub("_[0-9]*", "", SAMPID)),  # These subject IDs (shareids) are in the 0-30,000 range
+         slide=gsub("_[[:alnum:]]*", "", LABID),
+         arrayPos=gsub("[0-9]*_", "", LABID),
+         sentrixRow=substr(arrayPos, 1, 3),
+         sentrixCol=substr(arrayPos, 4, 6)) %>%
+  rename(sampleKey=LABID,
+         plate=Plate) %>%
+  select(subjID, sampleKey, sentrixRow, sentrixCol, plate)
+  
+sampleData_whi_c1 <- read_tsv("../data/whi/meth/sample_attributes_c1.txt", skip=10)
+sampleData_whi_c2 <- read_tsv("../data/whi/meth/sample_attributes_c2.txt", skip=10)
+sampleData_whi <- bind_rows(sampleData_whi_c1, sampleData_whi_c2) %>%
+  mutate(subjID=SUBJECT_ID,  # These subject IDs are in the 700,000-900,000 range
+         sampleKey=paste(Methyl_Array, Array_pos, sep="_"),
+         sentrixRow=substr(Array_pos, 1, 3),
+         sentrixCol=substr(Array_pos, 4, 6)) %>%
+  rename(plate=Plate) %>%
+  select(subjID, sampleKey, sentrixRow, sentrixCol, plate)
 
-### PHENOTYPE DATA
-print("Phenotype variables...")
+sampleData <- bind_rows(sampleData_fhs, sampleData_whi, .id="study") %>%
+  mutate(study=case_when(study==1~"fhs", study==2~"whi"))
 
-phenAll <- read.csv("../data/phenotypes/Off_Exam8_phen_cov_all.csv") %>%  # Has age and smoking status
-  rename(sex=SEX, age=AGE8) %>%
-  mutate(sex=as.character(factor(sex, levels=c(1,2), labels=c("M","F")))) %>%
-  select(shareid, dbGaP_Subject_ID, sex, age, smoking_now, CVD_med, HT_med, T2D_med, SBP)
-phen2 <- read.csv("../data/phenotypes/Off_Exam8_ex1_phen2.csv") %>%  # Has BMI
-  select(shareid, bmi)
-labValData <- read.csv("../data/phenotypes/Off_ex8_lab_measures.csv") %>%  # Has blood draw date
-  select(-dbGaP_Subject_ID, -IDTYPE)
+### PHENOTYPE DATA ###
 
-phenoData <- phenAll %>%
-  left_join(phen2, by="shareid") %>%
-  left_join(labValData, by="shareid")
-source("helpers.R")  # Has Framingham Risk Score calculator function
-phenoData$frs <- calc_FRS(phenoData)
-# save("phenoData", file="../int/phenoData.RData")
+## FHS
+phenos_fhs_c1 <- read_tsv("../data/fhs/phen/phenos_fhs_c1.txt", skip=10)
+phenos_fhs_c2 <- read_tsv("../data/fhs/phen/phenos_fhs_c2.txt", skip=10)
+phenos_fhs <- bind_rows(phenos_fhs_c1, phenos_fhs_c2) %>%
+  filter(shareid %in% sampleData_fhs$subjID) %>%
+  rename(subjID=shareid, sex=SEX, age=AGE8, bmi=BMI8, smk_now=CURRSMK8, sbp=SBP8,
+         glu=FASTING_BG8, chol=TC8, ldl=CALC_LDL8, hdl=HDL8, tg=TRIG8,
+         ht_med=HRX8, lipid_med=LIPRX8, dm_med=DMRX8) %>%
+  mutate(sex=ifelse(sex==1, "M", "F"),
+         race="white") %>%
+  mutate_at(c("ht_med","lipid_med","dm_med"), as.logical) %>%
+  select(subjID, sex, age, race, bmi, smk_now, sbp, glu, chol, ldl, hdl, tg, ht_med, lipid_med, dm_med)
 
-### CVD DATA
+phenoData_fhs <- phenos_fhs
+
+## WHI
+basicData_whi_c1 <- read_tsv("../data/whi/phen/basic_whi_c1.txt", skip=10)
+basicData_whi_c2 <- read_tsv("../data/whi/phen/basic_whi_c2.txt", skip=10)
+basicData_whi <- bind_rows(basicData_whi_c1, basicData_whi_c2) %>%
+  filter(SUBJID %in% sampleData_whi$subjID) %>%
+  rename(subjID=SUBJID, age=AGE, race=RACE) %>%
+  mutate(sex="f",
+         race=c("1"="amind","2"="asian","3"="black","4"="hispanic","5"="white","8"="other")[race]) %>%
+  select(subjID, sex, age, race)
+
+behaviorData_whi_c1 <- read_tsv("../data/whi/phen/behavior_c1.txt", skip=10)
+behaviorData_whi_c2 <- read_tsv("../data/whi/phen/behavior_c2.txt", skip=10)
+behaviorData_whi <- bind_rows(behaviorData_whi_c1, behaviorData_whi_c2) %>%
+  filter(SUBJID %in% sampleData_whi$subjID) %>%
+  rename(subjID=SUBJID, smk_now=SMOKNOW, smk_py=PACKYRS) %>%
+  select(subjID, smk_now, smk_py)
+
+examData_whi_c1 <- read_tsv("../data/whi/phen/physical_whi_c1.txt", skip=10)
+examData_whi_c2 <- read_tsv("../data/whi/phen/physical_whi_c2.txt", skip=10)
+examData_whi <- bind_rows(examData_whi_c1, examData_whi_c2) %>%
+  filter(SUBJID %in% sampleData_whi$subjID) %>%
+  rename(subjID=SUBJID, sbp=SYST, bmi=BMIX, daysSinceEnrollment=F80DAYS) %>%
+  group_by(subjID) %>%
+  slice(which.min(daysSinceEnrollment)) %>%  # Get only earliest exam per person
+  ungroup() %>% 
+  select(subjID, sbp, bmi, daysSinceEnrollment)
+
+labData_whi_c1 <- read_tsv("../data/whi/phen/labs_c1.txt", skip=10)
+labData_whi_c2 <- read_tsv("../data/whi/phen/labs_c2.txt", skip=10)
+labData_whi <- bind_rows(labData_whi_c1, labData_whi_c2) %>%
+  filter(SUBJID %in% sampleData_whi$subjID,
+         COREVTYP==1) %>%  # Only care about blood samples from first year 
+  rename(subjID=SUBJID, glu=COREGLUC, chol=CORETCHO, ldl=CORELDLC, hdl=COREHDLC, tg=CORETRI) %>%
+  select(subjID, glu, chol, ldl, hdl, tg)
+
+medsData_whi_c1 <- read_tsv("../data/whi/phen/medications_c1.txt", skip=10)
+medsData_whi_c2 <- read_tsv("../data/whi/phen/medications_c2.txt", skip=10)
+medsRef_whi <- read_tsv("../data/whi/phen/medication_classes.dat")
+medsData_whi <- bind_rows(medsData_whi_c1, medsData_whi_c2) %>%
+  filter(SUBJID %in% sampleData_whi$subjID,
+         F44VY==1) %>%
+  inner_join(medsRef_whi, by="TCCODE") %>%
+  mutate(ht_med=grepl("DIURETIC|CALCIUM BLOCKER|ACE INHIBITOR|ANGIOTENSIN II|BETA BLOCKER|BETA-BLOCKER|ALPHA 1|ALPHA-2|VASODILATOR|ALDOSTERONE", TCNAME),
+         lipid_med=grepl("HMG COA REDUCTASE", TCNAME),
+         dm_med=grepl("INSULIN|GLUCOSIDASE|BIGUANIDE|MEGLITINIDE|SULFONYLUREA|THIAZOLIDINEDIONES", TCNAME)) %>%
+  rename(subjID=SUBJID) %>%
+  group_by(subjID) %>%
+  summarise(ht_med=any(ht_med),
+            lipid_med=any(lipid_med),
+            dm_med=any(dm_med)) %>%
+  select(subjID, ht_med, lipid_med, dm_med)
+
+phenoData_whi <- Reduce(function(x,y) left_join(x,y,by="subjID"), 
+                        list(basicData_whi, behaviorData_whi, examData_whi, labData_whi, medsData_whi))
+
+phenoData <- bind_rows(phenoData_fhs, phenoData_whi, .id="study") %>%
+  mutate(study=case_when(study==1~"fhs", study==2~"whi"))
+
+
+### CVD DATA ###
 print("Cardiovascular event data...")
 
-soe <- read.delim("../data/events/phs000007.v29.pht000309.v12.p10.c1.vr_soe_2015_a_0991s.HMB-IRB-MDS.txt", skip=10)
+## FHS
+exam_dates_fhs_c1 <- read_tsv("../data/fhs/phen/exam_dates_fhs_c1.txt", skip=10, 
+                              col_types=cols_only(shareid="i",date8="i",date9="i"))
+exam_dates_fhs_c2 <- read_tsv("../data/fhs/phen/exam_dates_fhs_c2.txt", skip=10,
+                              col_types=cols_only(shareid="i",date8="i",date9="i"))
+exam_dates_fhs <- bind_rows(exam_dates_fhs_c1, exam_dates_fhs_c2)
 
-eventData <- soe %>%
-  inner_join(labValData, by="shareid") %>%  # B/c has Exam 8 draw dates
-  mutate(timeToEvent=DATE-drawdate) %>%  # Days between sample and event (NOTE: specific values here will change)
-  rename(event=EVENT) %>%
-  filter(event %in% 1:26) %>%  # Only events of interest (CVD, stroke, etc. -- see data dictionary)
-  group_by(shareid) %>%  # To trim to earliest relevant event per person (what about people who have already had events?)
-  mutate(pastEvent=any(timeToEvent<0)) %>%  # For each individual, has he/she had an event before Exam 8?
-  filter(timeToEvent>0) %>%  # Don't keep events that occurred prior to methylation collection
-  slice(which.min(timeToEvent)) %>%  # Only keep first relevant event per person -- allow people with existing CVD for now
-  ungroup() %>%
-  select(shareid, event, drawdate, timeToEvent, pastEvent)
-# save("eventData", file="../int/eventData.RData")  # This is just the events, so not all subjects included
+soe2015_fhs_c1 <- read_tsv("../data/fhs/phen/soe2015_c1.txt", skip=10, col_types=cols(shareid="i"))
+soe2015_fhs_c2 <- read_tsv("../data/fhs/phen/soe2015_c2.txt", skip=10, col_types=cols(shareid="i"))
+soe2015_fhs <- bind_rows(soe2015_fhs_c1, soe2015_fhs_c2)
 
-survData <- left_join(sampleData, eventData, by="shareid") %>%  # Basis for including all relevant samples (not just those with events)
-  mutate(event=!is.na(timeToEvent)) %>%  # event field becomes logical, indicating whether an event has occurred
-  replace_na(list(timeToEvent=max(.$timeToEvent, na.rm=T))) %>%  # Replace missing times with max observed event time ## NOTE: this should be switched for an *actual* number
-  select(shareid, event, timeToEvent, pastEvent)
+soe2015_fhs_clean <- inner_join(soe2015_fhs, exam_dates_fhs, by="shareid") %>%
+  filter(!is.na(date8),  # Had a visit during Exam 8 
+         EVENT %in% c(1:29)) %>%  # CVD events (my definition) and all death
+  mutate(eventType=ifelse(EVENT %in% 1:26, "cvd", "death"),  # 27-29 codes are non-CVD deaths
+         time=DATE-date8) %>%
+  group_by(shareid) %>%
+  summarise(pastEvent=any(eventType=="cvd" & time<=0),  # Note if subject had an event before Exam 8
+            event=any(eventType=="cvd" & time>0),  # Future event if occurred after Exam 8
+            timeToEvent=ifelse(any(eventType=="cvd" & time>0), min(time[time>0]), NA),  # Earliest post-Exam 8 event time
+            death=any(eventType=="death"),  # Did the person die?
+            timeToDeath=ifelse(any(eventType=="death"), time[eventType=="death"], NA),  # If they died, get time to death
+            dateExam9=median(date9))  # Carry through for censorship times
+
+surv2014_fhs_c1 <- read_tsv("../data/fhs/phen/survcvd2014_fhs_c1.txt", skip=10)
+surv2014_fhs_c2 <- read_tsv("../data/fhs/phen/survcvd2014_fhs_c2.txt", skip=10)
+surv2014_fhs <- bind_rows(surv2014_fhs_c1, surv2014_fhs_c2)
+
+outcomeData_fhs <- left_join(surv2014_fhs, soe2015_fhs_clean, by="shareid") %>%
+  filter(shareid %in% sampleData_fhs$subjID) %>%
+  replace_na(list(event=F, pastEvent=F, death=F)) %>%  # Add "false" for events/deaths after left join
+  mutate(time=case_when(event==T ~ timeToEvent,  # Experienced an event after Exam 8 -> use that follow-up time
+                        death==T ~ timeToDeath,  # Didn't experience an event but died -> censor at death
+                        cvd==0 ~ cvddate,  # No event and no CVD in surv file -> censoring time from surv file
+                        TRUE ~ as.integer(dateExam9))) %>%  # No event and CVD in surv file -> use exam 9 date for censor time
+  filter(!is.na(time)) %>%  # Remove those individuals with no Exam 9 date and thus no known censorship time
+  rename(subjID=shareid) %>%
+  select(subjID, pastEvent, event, time)
+## NOTE: THE APPROACH ABOVE LEAVES A NUMBER OF SUBJECTS (114) WHO HAD A PAST EVENT, NO FUTURE EVENT,
+## AND NO AVAILABLE EXAM 9 DATE WITH MISSING "TIME" VALUES AND THEY ARE THUS EXCLUDED
+## THIS IS POTENTIALLY REASONABLE HERE BECAUSE NONE REPRESENT CASES (THE MORE CRITICAL SAMPLES TO KEEP)
+
+whi_event_names <- c("CAROTID","CHD","MI","CREVASC","DSMI","STROKE","STRKHEMO","STRKISCH","MITOTAL")
+whi_event_days <- paste0(whi_event_names, "DY")
+outcomeData_whi_c1 <- read_tsv("../data/whi/phen/outcomes_ctos_c1.txt", skip=10) %>%
+  select(SUBJID, whi_event_names, whi_event_days, ENDFOLLOWDY)
+outcomeData_whi_c2 <- read_tsv("../data/whi/phen/outcomes_ctos_c2.txt", skip=10) %>%
+  select(SUBJID, whi_event_names, whi_event_days, ENDFOLLOWDY)
+outcomeData_whi <- bind_rows(outcomeData_whi_c1, outcomeData_whi_c2) %>%
+  filter(SUBJID %in% sampleData_whi$subjID) %>%
+  mutate(event=rowSums(.[,whi_event_names], na.rm=T)>0,
+         time=do.call(pmin, c(.[,c(whi_event_days,"ENDFOLLOWDY")], na.rm=T)),  # Event time or censoring time
+         pastEvent=F) %>%  
+  rename(subjID=SUBJID) %>%
+  select(subjID, pastEvent, event, time)
+
+outcomeData <- bind_rows(outcomeData_fhs, outcomeData_whi, .id="study") %>%
+  mutate(study=case_when(study==1~"fhs", study==2~"whi"))
+  
+# outcomeData_whi_c1_nonCaD <- read_tsv("../data/whi/phen/outcomes_cardio_c1.txt", skip=10)
+# outcomeData_whi_c2_nonCaD <- read_tsv("../data/whi/phen/outcomes_cardio_c2.txt", skip=10)
+# outcomeData_whi_nonCaD <- bind_rows(outcomeData_whi_c1_nonCaD, outcomeData_whi_c2_nonCaD) %>%
+#   select(MI, CREVASC, MIDX, THRMAGNT)
+# outcomeData_whi_c1_CaD <- read_tsv("../data/whi/phen/outcomes_cardio_cad_c1.txt", skip=10)
+# outcomeData_whi_c2_CaD <- read_tsv("../data/whi/phen/outcomes_cardio_cad_c2.txt", skip=10)
+# outcomeData_whi_CaD <- bind_rows(outcomeData_whi_c1_CaD, outcomeData_whi_c2_CaD) %>%
+#   select(MI, CREVASC, MIDX, THRMAGNT) 
+# outcomeData_whi <- bind_rows(outcomeData_whi_nonCaD, outcomeData_whi_CaD)
+
 
 ### OUTPUTS FOR DOWNSTREAM USE
-metaData <- Reduce(function(x,y) inner_join(x, y, by="shareid"), list(sampleData, survData, phenoData))
-save("metaData", file="../int/metaData.RData")
+metaData <- Reduce(function(x,y) inner_join(x, y),  # Default natural join by subjID and study 
+                   list(sampleData, phenoData, outcomeData))
+saveRDS(metaData, file="../int/metaData.rds")
 
-sampleSheet <- select(metaData, one_of(names(sampleData), names(survData)), sex, age)
-save("sampleSheet", file="../int/sampleSheet.RData")
+sampleSheet <- select(metaData, one_of(names(sampleData)), sex, age, pastEvent, event)
+saveRDS(sampleSheet, file="../int/sampleSheet.rds")

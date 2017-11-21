@@ -1,9 +1,9 @@
 #!/bin/bash
 
 #SBATCH -p batch,largemem
-#SBATCH --mem 60G
-#SBATCH -c 1
-#SBATCH -t 1:00:00
+#SBATCH --mem 120G
+#SBATCH -c 8
+#SBATCH -t 4:00:00
 #SBATCH -o mrs_experiments-%A.out
 
 module load R/3.3.2

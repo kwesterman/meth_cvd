@@ -1,0 +1,161 @@
+
+
+processing file: past_ewas.Rmd
+  |                                                                         |                                                                 |   0%  |                                                                         |.......                                                          |  11%
+  ordinary text without R code
+
+  |                                                                         |..............                                                   |  22%
+label: prereqs (with options) 
+List of 2
+ $ include: symbol F
+ $ cache  : symbol F
+
+  |                                                                         |......................                                           |  33%
+  ordinary text without R code
+
+  |                                                                         |.............................                                    |  44%
+label: load-data (with options) 
+List of 1
+ $ cache: symbol F
+
+  |                                                                         |....................................                             |  56%
+  ordinary text without R code
+
+  |                                                                         |...........................................                      |  67%
+label: ewas
+starting worker pid=24554 on localhost:11607 at 08:39:30.883
+starting worker pid=24563 on localhost:11607 at 08:39:31.119
+starting worker pid=24572 on localhost:11607 at 08:39:31.354
+starting worker pid=24581 on localhost:11607 at 08:39:31.593
+starting worker pid=24590 on localhost:11607 at 08:39:31.829
+starting worker pid=24599 on localhost:11607 at 08:39:32.062
+starting worker pid=24608 on localhost:11607 at 08:39:32.292
+starting worker pid=24617 on localhost:11607 at 08:39:32.542
+starting worker pid=24626 on localhost:11607 at 08:39:32.773
+starting worker pid=24635 on localhost:11607 at 08:39:33.013
+starting worker pid=24644 on localhost:11607 at 08:39:33.244
+starting worker pid=24653 on localhost:11607 at 08:39:33.485
+starting worker pid=24662 on localhost:11607 at 08:39:33.717
+starting worker pid=24671 on localhost:11607 at 08:39:33.949
+starting worker pid=24680 on localhost:11607 at 08:39:34.180
+starting worker pid=24689 on localhost:11607 at 08:39:34.413
+starting worker pid=24698 on localhost:11607 at 08:39:34.650
+starting worker pid=24708 on localhost:11607 at 08:39:34.882
+starting worker pid=24717 on localhost:11607 at 08:39:35.114
+starting worker pid=24726 on localhost:11607 at 08:39:35.346
+starting worker pid=24735 on localhost:11607 at 08:39:35.582
+starting worker pid=24744 on localhost:11607 at 08:39:35.813
+starting worker pid=24753 on localhost:11607 at 08:39:36.047
+starting worker pid=24762 on localhost:11607 at 08:39:36.279
+starting worker pid=24771 on localhost:11607 at 08:39:36.521
+starting worker pid=24780 on localhost:11607 at 08:39:36.752
+starting worker pid=24789 on localhost:11607 at 08:39:36.983
+starting worker pid=24798 on localhost:11607 at 08:39:37.212
+starting worker pid=24807 on localhost:11607 at 08:39:37.443
+starting worker pid=24816 on localhost:11607 at 08:39:37.677
+starting worker pid=24825 on localhost:11607 at 08:39:37.912
+starting worker pid=24834 on localhost:11607 at 08:39:38.143
+[1] "CpG 5000"
+[1] "CpG 10000"
+[1] "CpG 15000"
+[1] "CpG 20000"
+[1] "CpG 25000"
+[1] "CpG 30000"
+[1] "CpG 35000"
+[1] "CpG 40000"
+[1] "CpG 45000"
+[1] "CpG 50000"
+[1] "CpG 55000"
+[1] "CpG 60000"
+[1] "CpG 65000"
+[1] "CpG 70000"
+[1] "CpG 75000"
+[1] "CpG 80000"
+[1] "CpG 85000"
+[1] "CpG 90000"
+[1] "CpG 95000"
+[1] "CpG 100000"
+[1] "CpG 105000"
+[1] "CpG 110000"
+[1] "CpG 115000"
+[1] "CpG 120000"
+[1] "CpG 125000"
+[1] "CpG 130000"
+[1] "CpG 135000"
+[1] "CpG 140000"
+[1] "CpG 145000"
+[1] "CpG 150000"
+[1] "CpG 155000"
+[1] "CpG 160000"
+[1] "CpG 165000"
+[1] "CpG 170000"
+[1] "CpG 175000"
+[1] "CpG 180000"
+[1] "CpG 185000"
+[1] "CpG 190000"
+[1] "CpG 195000"
+[1] "CpG 200000"
+[1] "CpG 205000"
+[1] "CpG 210000"
+[1] "CpG 215000"
+[1] "CpG 220000"
+[1] "CpG 225000"
+[1] "CpG 230000"
+[1] "CpG 235000"
+[1] "CpG 240000"
+[1] "CpG 245000"
+[1] "CpG 250000"
+[1] "CpG 255000"
+[1] "CpG 260000"
+[1] "CpG 265000"
+[1] "CpG 270000"
+[1] "CpG 275000"
+[1] "CpG 280000"
+[1] "CpG 285000"
+[1] "CpG 290000"
+[1] "CpG 295000"
+[1] "CpG 300000"
+[1] "CpG 305000"
+[1] "CpG 310000"
+[1] "CpG 315000"
+[1] "CpG 320000"
+[1] "CpG 325000"
+[1] "CpG 330000"
+[1] "CpG 335000"
+[1] "CpG 340000"
+[1] "CpG 345000"
+[1] "CpG 350000"
+[1] "CpG 355000"
+[1] "CpG 360000"
+[1] "CpG 365000"
+[1] "CpG 370000"
+[1] "CpG 375000"
+[1] "CpG 380000"
+[1] "CpG 385000"
+[1] "CpG 390000"
+[1] "CpG 395000"
+[1] "CpG 400000"
+[1] "CpG 405000"
+[1] "CpG 410000"
+[1] "CpG 415000"
+[1] "CpG 420000"
+[1] "CpG 425000"
+after creating ewasRes
+  |                                                                         |...................................................              |  78%
+  ordinary text without R code
+
+  |                                                                         |..........................................................       |  89%
+label: inflation
+  |                                                                         |.................................................................| 100%
+   inline R code fragments
+
+
+output file: past_ewas.knit.md
+
+/opt/shared/RStudio/0.98/bin/pandoc/pandoc +RTS -K512m -RTS past_ewas.utf8.md --to html --from markdown+autolink_bare_uris+ascii_identifiers+tex_math_single_backslash --output past_ewas.html --smart --email-obfuscation none --self-contained --standalone --section-divs --template /cluster/home/kweste01/R/x86_64-pc-linux-gnu-library/3.3/rmarkdown/rmd/h/default.html --no-highlight --variable highlightjs=1 --variable 'theme:bootstrap' --include-in-header /tmp/RtmpNoBfmj/rmarkdown-str5fb87a170dd8.html --mathjax --variable 'mathjax-url:https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML' 
+
+Output created: past_ewas.html
+
+real	26m3.925s
+user	20m26.257s
+sys	0m59.024s
