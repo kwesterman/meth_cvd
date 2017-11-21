@@ -3,25 +3,28 @@ suppressMessages(silent <- lapply(c("tidyverse","minfi","wateRmelon","doParallel
 num_cores <- min(detectCores(), 8)
 print(paste("Number of cores:", num_cores))
 
-load("../int/rgSet.RData")  # Load RGChannelSet object from previous step in pipeline
+rgSet <- readRDS("../int/rgSet.rds")  # Load RGChannelSet object from previous step in pipeline
 
 ## Noob procedure for background correction and dye bias adjustment
 print("Preprocessing using Noob method...")
 
-rgSet.split <- lapply(splitIndices(ncol(rgSet),32), function(idx_set) rgSet[,idx_set]) 
+rgSet.split <- lapply(splitIndices(ncol(rgSet),32), function(idx_set) rgSet[,idx_set])
 cl <- makePSOCKcluster(num_cores)
 registerDoParallel(cl)
-mSet <- foreach(rgChunk=rgSet.split, .packages="minfi", .combine="combine") %dopar% 
+mSet.list <- foreach(rgChunk=rgSet.split, .packages="minfi") %dopar% 
   preprocessNoob(rgChunk)
+mSet <- MethylSet(Meth=do.call(cbind, lapply(mSet.list, getMeth)),
+                  Unmeth=do.call(cbind, lapply(mSet.list, getUnmeth)),
+                  phenoData=do.call(combine, lapply(mSet.list, phenoData)))
 stopCluster(cl)
-rm(rgSet, rgSet.split); invisible(gc())
+rm(rgSet, rgSet.split, mSet.list); invisible(gc())
 
 ## Sample QC
 print("Sample QC...")
-load("../int/detP.RData")
-lowDetection <- colSums(detP>0.01)/nrow(detP) > 0.1  # Don't want >10% of probes whose detection failed at p=0.01
+detP <- readRDS("../int/detP.RData")
+lowDetection <- colSums(detP>1e-16)/nrow(detP) > 0.1  # Don't want >10% of probes whose detection failed at p=0.01
 medIntensities <- getQC(mSet)
-lowIntensity <- medIntensities$mMed < 10 | medIntensities$uMed < 10  # Informed by visual inspection of U vs. M intensity plot
+lowIntensity <- medIntensities$mMed < 11 | medIntensities$uMed < 10.5  # Informed by visual inspection of U vs. M intensity plot
 sexMismatch <- pData(mSet)$sex!=getSex(mapToGenome(mSet))$predictedSex
 keepSamples <- !(lowDetection | lowIntensity | sexMismatch)
 mSet.qc <- mSet[,keepSamples]
@@ -38,38 +41,39 @@ make_dplots <- function(betas, types, ttl) {
   for (samp in typeII_densities) lines(samp, col="green")
   legend("topright", c("Type I", "Type II"), col=c("red","green"), lty=1)
 }
+random1k <- sample.int(ncol(mSet.qc), size=1000)
 jpeg("../output/probeTypePlot_prenormalization.jpg")
-make_dplots(getBeta(mSet.qc), getAnnotation(mSet.qc)$Type, ttl="Pre-normalization")
+make_dplots(getBeta(mSet.qc[,random1k]), getAnnotation(mSet.qc)$Type, ttl="Pre-normalization")
 dev.off()
 
 ## Within-sample normalization using BMIQ
 print("Normalization using BMIQ...")
-
-mSet.qc.split <- lapply(splitIndices(ncol(mSet.qc),32), function(idx_set) mSet.qc[,idx_set]) 
+mSet.qc.split <- lapply(splitIndices(ncol(mSet.qc),32), function(idx_set) mSet.qc[,idx_set])
 cl <- makePSOCKcluster(num_cores)
 registerDoParallel(cl)
-betas.qc.norm <- foreach(mChunk=mSet.qc.split, .combine=cbind,.packages=c("minfi","wateRmelon")) %dopar% 
+betas.qc.norm_list <- foreach(mChunk=mSet.qc.split, .packages=c("minfi","wateRmelon")) %dopar% 
   BMIQ(mChunk)
+betas.qc.norm <- do.call(cbind, betas.qc.norm_list)
 stopCluster(cl)
 print("BMIQ normalization done.")
-rm(mSet.qc.split); invisible(gc())
+rm(mSet.qc.split, betas.qc.norm_list); invisible(gc())
 
 ## Type I/II comparison plot (post-normalization)
 jpeg("../output/probeTypePlot_postnormalization.jpg")
-make_dplots(betas.qc.norm, getAnnotation(mSet.qc)$Type, ttl="Post-normalization")
+make_dplots(betas.qc.norm[,random1k], getAnnotation(mSet.qc)$Type, ttl="Post-normalization")
 dev.off()
 
 ## Probe filtering
 print("Probe filtering...")
-# undetectedProbes <- rowSums(detP>0.01)/ncol(detP) < 0.1  # Don't want >10% of samples whose detection failed at p=0.01
+undetectedProbes <- rownames(detP)[rowSums(detP>1e-16)/ncol(detP) > 0.1]  # Don't want >10% of samples whose detection failed at p=0.01
 ann450k <- getAnnotation(mSet.qc)
 sexChromProbes <- ann450k$Name[ann450k$chr %in% c("chrX","chrY")]  # Probes in sex chromosomes
-crossReactiveProbesDF <- read.csv("../data/48639-non-specific-probes-Illumina450k.csv", stringsAsFactors=F)  # From Chen 2013
+crossReactiveProbesDF <- read.csv("../data/literature/48639-non-specific-probes-Illumina450k.csv", stringsAsFactors=F)  # From Chen 2013
 snpProbes <- grep("^rs", featureNames(mSet.qc), value=T)  # Probes measuring SNPs (may be none)
 chProbes <- grep("^ch\\.", featureNames(mSet.qc), value=T)  # Probes measuring CpH (non-CpG) methylation
 snpInfo <- getSnpInfo(mSet.qc)
 probesWithSNPs <- rownames(snpInfo)[!is.na(snpInfo$CpG_maf) | !is.na(snpInfo$SBE_maf)]  # Probes with SNPs at CpG site or single-base extension site
-keepProbes <- !(rownames(mSet.qc) %in% c(sexChromProbes, crossReactiveProbesDF$TargetID,
+keepProbes <- !(rownames(mSet.qc) %in% c(undetectedProbes, sexChromProbes, crossReactiveProbesDF$TargetID,
                                       snpProbes, chProbes, probesWithSNPs))
 betas.qc.norm.filt <- betas.qc.norm[keepProbes,]
 print(paste("Filtering: Removed", sum(!keepProbes), "probes."))
@@ -77,6 +81,5 @@ print(paste("Dimensions of final methylation set:", dim(betas.qc.norm.filt)[1], 
 rm(detP); invisible(gc())
 
 
-print("Saving M-value matrix...")
-Mvals <- logit2(betas.qc.norm.filt)
-save("Mvals", file="../int/Mvals.RData")
+print("Saving methylation matrix...")
+saveRDS(betas.qc.norm.filt, file="../int/betas.qc.norm.filt.rds", compress=F)
