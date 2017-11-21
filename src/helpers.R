@@ -238,21 +238,19 @@ calc_FRS <- function(pData) {
                     female=c(logAge=3.06117, logTC=1.12370, logHDL=-0.93263, logSBPnontreat=1.93303,
                              logSBPtreat=1.99881, smoking=0.65451, diabetes=-0.57367))
   
-  
   FRS_data <- pData %>%
     mutate(logAge=log(age),
-           logTC=log(TOT_CHOL),
-           logHDL=log(HDL_CHOL),
-           logSBP=log(SBP),
-           smoking=smoking_now,
-           diabetes=T2D_med) %>%
-    select(shareid, sex, logAge, logTC, logHDL, HT_med, logSBP, smoking, diabetes)
+           logTC=log(chol),
+           logHDL=log(hdl),
+           logSBP=log(sbp),
+           smoking=smk_now) %>%
+    select(sex, logAge, logTC, logHDL, ht_med, logSBP, smoking, diabetes)
   
   ## negative for diabetes??
   with(FRS_data, {
-    frs <- ifelse(sex==1,
-                  2.32888*logAge + 1.20904*logTC - 0.70833*logHDL + 2.76157*logSBP*(1-HT_med) + 2.82263*logSBP*(HT_med) + 0.52973*smoking + 0.69154*diabetes,
-                  3.06117*logAge + 1.12370*logTC - 0.93263*logHDL + 1.93303*logSBP*(1-HT_med) + 1.99881*logSBP*(HT_med) + 0.65451*smoking - 0.57367*diabetes)
+    frs <- ifelse(sex=="M",
+                  2.32888*logAge + 1.20904*logTC - 0.70833*logHDL + 2.76157*logSBP*(1-ht_med) + 2.82263*logSBP*(ht_med) + 0.52973*smoking + 0.69154*diabetes,
+                  3.06117*logAge + 1.12370*logTC - 0.93263*logHDL + 1.93303*logSBP*(1-ht_med) + 1.99881*logSBP*(ht_med) + 0.65451*smoking - 0.57367*diabetes)
   })
 }
 
