@@ -1,0 +1,9 @@
+[1] "Reading .idat files..."
+[1] "Saving rgSet..."
+[1] "Running probe detection confidence tests..."
+Loading required package: IlluminaHumanMethylation450kmanifest
+[1] "Saving detection p-values..."
+[1] "Creating QC intensity plot..."
+slurmstepd: Job 23100759 exceeded memory limit (127770260 > 125829120), being killed
+slurmstepd: Exceeded job memory limit
+slurmstepd: *** JOB 23100759 ON omega022 CANCELLED AT 2017-10-09T09:01:53 ***

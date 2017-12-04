@@ -1,0 +1,21 @@
+[1] "ComBat batch effect adjustment without outcome as covariate..."
+Found 2 batches
+Adjusting for 0 covariate(s) or covariate level(s)
+Standardizing Data across genes
+Fitting L/S model and finding priors
+Finding parametric adjustments
+Adjusting the Data
+[1] "ComBat batch effect adjustment with outcome as covariate..."
+Found 2 batches
+Adjusting for 1 covariate(s) or covariate level(s)
+Standardizing Data across genes
+Fitting L/S model and finding priors
+Finding parametric adjustments
+Adjusting the Data
+Warning messages:
+1: Column `sampleKey` joining character vector and factor, coercing into character vector 
+2: Column `sampleKey` joining character vector and factor, coercing into character vector 
+
+real	75m7.029s
+user	68m51.527s
+sys	4m34.491s

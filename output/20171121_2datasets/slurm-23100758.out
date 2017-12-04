@@ -1,0 +1,325 @@
+[1] "Sample metadata..."
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  SAMPID = col_character(),
+  LABID = col_character(),
+  Sample.Well = col_character(),
+  Image.date = col_character(),
+  Array = col_character(),
+  Slide = col_double(),
+  Plate = col_character(),
+  QCStatus = col_character(),
+  QC_Comment = col_character(),
+  Notes = col_character(),
+  Sentrix_ID = col_double(),
+  Sentrix_Position = col_character(),
+  Hybridization.Date = col_character(),
+  Initial.Concentration = col_double(),
+  Post.BCD.Concentration = col_double()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  SAMPID = col_character(),
+  LABID = col_character(),
+  Sample.Well = col_character(),
+  Image.date = col_character(),
+  Array = col_character(),
+  Slide = col_double(),
+  Plate = col_character(),
+  QCStatus = col_character(),
+  QC_Comment = col_character(),
+  Notes = col_character(),
+  Sentrix_ID = col_double(),
+  Sentrix_Position = col_character(),
+  Hybridization.Date = col_character(),
+  Initial.Concentration = col_double(),
+  Post.BCD.Concentration = col_double()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  dbGaP_Sample_ID = col_integer(),
+  SAMPLE_ID = col_character(),
+  SUBJECT_ID = col_integer(),
+  BA23_Pull_ID_DNA = col_character(),
+  Plate = col_character(),
+  Methyl_Array = col_double(),
+  Array_pos = col_character(),
+  `Body Site` = col_character(),
+  Analyte_Type = col_character(),
+  Histology_Type = col_character(),
+  Is_tumor = col_character()
+)
+Parsed with column specification:
+cols(
+  dbGaP_Sample_ID = col_integer(),
+  SAMPLE_ID = col_character(),
+  SUBJECT_ID = col_integer(),
+  BA23_Pull_ID_DNA = col_character(),
+  Plate = col_character(),
+  Methyl_Array = col_double(),
+  Array_pos = col_character(),
+  `Body Site` = col_character(),
+  Analyte_Type = col_character(),
+  Histology_Type = col_character(),
+  Is_tumor = col_character()
+)
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  BMI1 = col_double(),
+  BMI2 = col_double(),
+  BMI3 = col_double(),
+  BMI4 = col_double(),
+  BMI5 = col_double(),
+  BMI6 = col_double(),
+  BMI7 = col_double(),
+  BMI8 = col_double(),
+  BMI9 = col_double(),
+  CREAT2 = col_double(),
+  CREAT5 = col_double(),
+  CREAT6 = col_double(),
+  CREAT7 = col_double(),
+  CREAT8 = col_double(),
+  CREAT9 = col_double(),
+  DBP1 = col_double(),
+  DBP2 = col_double(),
+  DBP3 = col_double(),
+  DBP4 = col_double(),
+  DBP5 = col_double()
+  # ... with 26 more columns
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  BMI1 = col_double(),
+  BMI2 = col_double(),
+  BMI3 = col_double(),
+  BMI4 = col_double(),
+  BMI5 = col_double(),
+  BMI6 = col_double(),
+  BMI7 = col_double(),
+  BMI8 = col_double(),
+  BMI9 = col_double(),
+  CREAT2 = col_double(),
+  CREAT5 = col_double(),
+  CREAT6 = col_double(),
+  CREAT7 = col_double(),
+  CREAT8 = col_double(),
+  CREAT9 = col_double(),
+  DBP1 = col_double(),
+  DBP2 = col_double(),
+  DBP3 = col_double(),
+  DBP4 = col_double(),
+  DBP5 = col_double()
+  # ... with 26 more columns
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  HELPCC = col_character()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  HELPCC = col_character()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  TEPIWK = col_double(),
+  LEPITOT = col_double(),
+  MSEPIWK = col_double(),
+  XLMSEPI = col_double(),
+  TMINWK = col_double(),
+  MSMINWK = col_double(),
+  TEXPWK = col_double(),
+  WALKEXP = col_double(),
+  HARDEXP = col_double(),
+  MODEXP = col_double(),
+  MILDEXP = col_double(),
+  AVWKEXP = col_double(),
+  FFWKEXP = col_double(),
+  VFWKEXP = col_double(),
+  ALCSWK = col_double(),
+  PACKYRS = col_double()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  TEPIWK = col_double(),
+  LEPITOT = col_double(),
+  MSEPIWK = col_double(),
+  XLMSEPI = col_double(),
+  TMINWK = col_double(),
+  MSMINWK = col_double(),
+  TEXPWK = col_double(),
+  WALKEXP = col_double(),
+  HARDEXP = col_double(),
+  MODEXP = col_double(),
+  MILDEXP = col_double(),
+  AVWKEXP = col_double(),
+  FFWKEXP = col_double(),
+  VFWKEXP = col_double(),
+  ALCSWK = col_double(),
+  PACKYRS = col_double()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  HEIGHTX = col_double(),
+  WEIGHTX = col_double(),
+  WAISTX = col_double(),
+  HIPX = col_double(),
+  SYST = col_double(),
+  DIAS = col_double(),
+  BMIX = col_double(),
+  WHRX = col_double()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  HEIGHTX = col_double(),
+  WEIGHTX = col_double(),
+  WAISTX = col_double(),
+  HIPX = col_double(),
+  SYST = col_double(),
+  DIAS = col_double(),
+  BMIX = col_double(),
+  WHRX = col_double()
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  DRAWTIME = col_time(format = ""),
+  CFUGTIME = col_time(format = ""),
+  VIALTIME = col_time(format = ""),
+  FREZTIME = col_time(format = ""),
+  COREACAR = col_double(),
+  COREATOC = col_double(),
+  COREBCAR = col_double(),
+  COREBCXA = col_double(),
+  COREGTOC = col_double(),
+  COREINSU = col_double(),
+  COREINSU2 = col_double(),
+  CORELYCP = col_double(),
+  CORELZXA = col_double(),
+  CORERETI = col_double()
+)
+See spec(...) for full column specifications.
+Warning: 2 parsing failures.
+row # A tibble: 2 x 5 col     row      col               expected actual                           file expected   <int>    <chr>                  <chr>  <chr>                          <chr> actual 1  7404 COREF7AG no trailing characters     .6 '../data/whi/phen/labs_c1.txt' file 2  7405 COREF7AG no trailing characters    .16 '../data/whi/phen/labs_c1.txt'
+
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  DRAWTIME = col_time(format = ""),
+  CFUGTIME = col_time(format = ""),
+  VIALTIME = col_time(format = ""),
+  FREZTIME = col_time(format = ""),
+  COREACAR = col_double(),
+  COREATOC = col_double(),
+  COREBCAR = col_double(),
+  COREBCXA = col_double(),
+  COREGTOC = col_double(),
+  COREINSU = col_double(),
+  COREINSU2 = col_double(),
+  CORELYCP = col_double(),
+  CORELZXA = col_double(),
+  CORERETI = col_double()
+)
+See spec(...) for full column specifications.
+[1] "Cardiovascular event data..."
+Parsed with column specification:
+cols(
+  dbGaP_Subject_ID = col_integer(),
+  shareid = col_integer(),
+  IDTYPE = col_integer(),
+  cvd = col_integer(),
+  chd = col_integer(),
+  chf = col_integer(),
+  chddate = col_integer(),
+  chfdate = col_integer(),
+  cvddate = col_integer()
+)
+Parsed with column specification:
+cols(
+  dbGaP_Subject_ID = col_integer(),
+  shareid = col_integer(),
+  IDTYPE = col_integer(),
+  cvd = col_integer(),
+  chd = col_integer(),
+  chf = col_integer(),
+  chddate = col_integer(),
+  chfdate = col_integer(),
+  cvddate = col_integer()
+)
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  ADISSECTDY = col_character(),
+  ADISSECTSRC = col_character(),
+  SINUSDY = col_character(),
+  SINUSSRC = col_character(),
+  ADRENALDY = col_character(),
+  ADRENALSRC = col_character(),
+  BASETONGUEDY = col_character(),
+  BASETONGUESRC = col_character(),
+  BONELIMBDY = col_character(),
+  BONELIMBSRC = col_character(),
+  BONENONDY = col_character(),
+  BONENONSRC = col_character(),
+  BRAINDY = col_character(),
+  BRAINSRC = col_character(),
+  CNSCADY = col_character(),
+  CNSCASRC = col_character(),
+  ENDOCRINEDY = col_character(),
+  ENDOCRINESRC = col_character(),
+  ESOPHAGUSDY = col_character(),
+  ESOPHAGUSSRC = col_character()
+  # ... with 72 more columns
+)
+See spec(...) for full column specifications.
+Parsed with column specification:
+cols(
+  .default = col_integer(),
+  AANEURDY = col_character(),
+  AANEURSRC = col_character(),
+  ADISSECTDY = col_character(),
+  ADISSECTSRC = col_character(),
+  AFIBRDY = col_character(),
+  AFIBRSRC = col_character(),
+  HEARTVALVEDY = col_character(),
+  HEARTVALVESRC = col_character(),
+  SINUSDY = col_character(),
+  SINUSSRC = col_character(),
+  APPENDIXDY = col_character(),
+  APPENDIXSRC = col_character(),
+  BASETONGUEDY = col_character(),
+  BASETONGUESRC = col_character(),
+  BONELIMBDY = col_character(),
+  BONELIMBSRC = col_character(),
+  BONENONDY = col_character(),
+  BONENONSRC = col_character(),
+  CNSCADY = col_character(),
+  CNSCASRC = col_character()
+  # ... with 72 more columns
+)
+See spec(...) for full column specifications.
+Joining, by = c("study", "subjID")
+Joining, by = c("study", "subjID")
+
+real	0m16.474s
+user	0m15.761s
+sys	0m0.515s

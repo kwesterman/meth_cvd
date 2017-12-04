@@ -1,0 +1,8 @@
+[1] "PCA on 50k most variable probes..."
+Warning messages:
+1: Column `sampleKey` joining character vector and factor, coercing into character vector 
+2: Column `sampleKey` joining character vector and factor, coercing into character vector 
+
+real	82m22.669s
+user	81m43.401s
+sys	0m19.554s

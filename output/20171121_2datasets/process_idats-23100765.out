@@ -1,0 +1,8 @@
+[1] "Reading .idat files..."
+Error in unserialize(socklist[[n]]) : error reading from connection
+Calls: %dopar% ... recvOneData -> recvOneData.SOCKcluster -> unserialize
+Execution halted
+
+real	31m0.725s
+user	0m13.209s
+sys	0m6.828s

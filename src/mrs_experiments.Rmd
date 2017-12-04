@@ -101,7 +101,7 @@ fhsSet <- which(nonMethData$study=="fhs")
 
 # EWAS for incident CVD
 
-Performed in WHI
+Performed in WHI. For reference, Tsai & Bell (2015) estimate that approximately 200 case-control pairs are required to have 80% power to identify a 7% methylation difference. 
 
 ```{r ewas-prep}
 myTry <- function(expr, CpG) {
@@ -161,7 +161,7 @@ ewasResDF_fullAdjustment <- do.call(rbind, ewasRes_fullAdjustment) %>%
   arrange(p)
 ```
 
-```{r ewas-inflation, fig.show="hold", out.width="50%"}
+```{r ewas-inflation, cache=F, fig.show="hold", out.width="50%"}
 make_qqplot <- function(pVec, plotTitle="Title") {
   pVec <- pVec[!is.na(pVec)]
   qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle, xlab="Expected (-logP)", ylab="Observed (-logP)")
@@ -291,7 +291,7 @@ cvdModel <- trainTestMRS(cpacor_adj_model, nonMethData, betas[rownames(betas) %i
 cvdRes <- cvdModel$res
 ```
 
-```{r display-cpg-set-comparison, dependson=c("ewas-mrs","variance-thresholds","cvd-snp-mrs"), out.width="80%"}
+```{r display-cpg-set-comparison, cache=F, dependson=c("ewas-mrs","variance-thresholds","cvd-snp-mrs"), out.width="80%"}
 
 kable(mutate(ewasMrsWeightedSumDF, p=as.character(format(p,digits=3))), caption="Using direct weights from EWAS")
 # ggplot(ewasMrsWeightedSumDF, aes(x=numberOfCpGsUsed, y=HR_per_SD)) + 
@@ -324,7 +324,7 @@ The direct weighted sum from EWAS shows the highest estimated HRs, but the signi
 
 (Using the 75th quantile variance threshold CpG set elastic net model)
 
-```{r evaluation}
+```{r evaluation, cache=F}
 source("helpers.R")
 
 run_mrs_lr <- function(dat, mrs_values) {
@@ -353,7 +353,7 @@ legend("bottomright", legend=paste0(c("MRS: auc=","FRS: auc=","MRS+FRS: auc="),
                                     col=c("blue","red","green"), lty=1, lwd=3, cex=1.3)
 ```
 
-For efficient comparison to the Frmaingham Risk Score, the evaluation here is based on a binary classification of whether an incident event did or did not occur. The basic MRS shows a reasonable c-statistic (ROC area under the curve) of 0.66, comparable to that of my implementation of the FRS algorithm. There seems to be a bit of synergy between the two risk scores, as performance increases slightly when using them together. One important caveat is that the FRS is generally estimated to show a c-statistic closer to 0.75, so it is possible that FHS Offspring is not an optimal test cohort (because cholesterol is not predictive of CVD risk in this population??) or that there is some error in my coding of the FRS.
+For appropriate comparison to the Framingham Risk Score, the evaluation here is based on a binary classification of whether an incident event did or did not occur. The basic MRS shows a reasonable c-statistic (ROC area under the curve) of 0.66, comparable to that of my implementation of the FRS algorithm. There seems to be a bit of synergy between the two risk scores, as performance increases slightly when using them together. One important caveat is that the FRS is generally estimated to show a c-statistic closer to 0.75, so it is possible that FHS Offspring is not an optimal test cohort (because cholesterol is not predictive of CVD risk in this population?) or that there is some error in my coding of the FRS.
 
 ## Are the patterns identified specific to a population subset?
 
@@ -489,7 +489,7 @@ Performance of the full training and testing procedure using M-values does not s
 
 A random forest model trained on the same set of CpGs and a binary event outcome shows a comparably high OR, but the p-value doesn't indicate notable predictive ability -- what is going on here? To investigate, here are the distributions of the probabilities output by the random forest algorithm (used here as the MRS).
 
-```{r rf-mrs-distributions, fig.show="hold", out.width="50%"}
+```{r rf-mrs-distributions, cache=F, fig.show="hold", out.width="50%"}
 hist(rfModel$values[whiSet], main="RF prob. distribution (training set)")
 hist(rfModel$values[fhsSet], main="RF prob. distribution (test set)")
 hist(varRes.list[[3]]$values[whiSet], main="Regression-based MRS distribution in training \nset, for comparison ")
@@ -548,7 +548,7 @@ kable(sep_vs_combined_rf, caption="Random forest")
 
 ### Evaluation of cross-cohort trained models
 
-```{r evaluate-combined-models, out.width="50%"}
+```{r evaluate-combined-models, cache=F, out.width="50%"}
 library(pROC)
 
 enetROC <- roc(nonMethData$event[testset], enetCombined$values[testset])
@@ -601,14 +601,14 @@ Though ideally there would be a fully independent validation set available, the 
 
 ## Biological covariates
 
-The intent to this point was to determine the "maximum predictive power" of microarray-based methylation data in predicting CVD events. However, known associations of methylation with age, white blood cell proportions, etc. may explain a substantial fraction of this predictive power. 
+The intent to this point was to determine the "maximum predictive power" of microarray-based methylation data in predicting CVD events. However, known associations of methylation with sex, age, white blood cell proportions, etc. may explain a substantial fraction of this predictive power. 
 
-```{r biological-significance}
+```{r biological-significance, cache=F}
 wbcCounts <- dplyr::select(nonMethData, CD4T, CD8T, Bcell, NK, Mono, Gran)
 nonMethData$wbcPC1 <- prcomp(wbcCounts, scale.=T)$x[,1]
 nonMethData$wbcPC2 <- prcomp(wbcCounts, scale.=T)$x[,2]
 
-singleCovs <- c("age","bmi","wbcPC1","wbcPC2","smk_now","ht_med","lipid_med","dm_med")
+singleCovs <- c("sex","age","bmi","wbcPC1","wbcPC2","smk_now","ht_med","lipid_med","dm_med")
 covs <- c("none", singleCovs, paste0(singleCovs, collapse="+"))
 names(covs) <- c(covs[1:(length(covs)-1)], "all")
 negLogPs <- lapply(covs, function (covSet) {
@@ -662,7 +662,28 @@ componentsDF <- tibble(CpG=names(components), weight=components) %>%
 kable(componentsDF, caption="MRS components CpGs and associated genes")
 ```
 
-# Alternate prediction strategies
+## ...the catch, or "Batch effects: 1, Kenny: 0"
+
+```{r 2enet-combined, eval=F}
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+cpacor_adj_model_withStudy <- paste0(cpacor_adj_model, "+study")
+TwoenetCombined <- trainTestMRS(cpacor_adj_model_withStudy, nonMethData, 
+                              betas[beta_variances_trainset>quantile(beta_variances_trainset,0.75),],
+                              trainset, testset, parallel=T)
+stopCluster(cl)
+
+TwoenetCombined_binTest <- test_mrs_binary(nonMethData, TwoenetCombined$values, testset)
+```
+
+```{r study-adjust}
+mrsStudyResids <- lm(mrs~study, data=nonMethData)$residuals
+studyAdjROC <- roc(nonMethData$event[testset], mrsStudyResids[testset])
+```
+
+It seems that I eventually got bitten by the class imbalance between FHS (mostly controls) and WHI (half cases) -- MRS residuals after adjustment for study lose much of their predictive power (AUC = `r studyAdjROC$auc`).
+
+<!---# Alternate prediction strategies--->
 
 ```{r gene-set-activations, cache.vars=c("msigdb","sig_to_cpgs","pca_from_cpgSet","geneSetLoadings","geneSetActivationsMat")}
 msigdb_file <- file("../data/misc/gsea/c2.cp.v6.0.symbols.gmt")  # MSigDB file from http://software.broadinstitute.org/gsea/msigdb/collections.jsp#C2
@@ -701,7 +722,7 @@ geneSetActivationsMat <- do.call(cbind, geneSetActivations)
 colnames(geneSetActivationsMat) <- names(geneSetActivations)
 ```
 
-```{r gene-set-mrs}
+```{r gene-set-mrs, include=F}
 stopifnot(all(rownames(geneSetActivationsMat)==nonMethData$sampleKey))
 design_mat <- geneSetActivationsMat
 cvd_surv <- Surv(time=nonMethData$time, event=nonMethData$event)
@@ -714,7 +735,7 @@ mrs.test <- test_mrs_binary(nonMethData, geneset_mrs_calc, testset)
 print(mrs.test)
 ```
 
-```{r gene-set-rf}
+```{r gene-set-rf, include=F}
 cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
 rfGeneSetModel <- testTrain_RF(cpacor_adj_model, nonMethData, t(geneSetActivationsMat), 
