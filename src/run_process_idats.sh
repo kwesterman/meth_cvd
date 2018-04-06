@@ -3,8 +3,8 @@
 #SBATCH -p batch,largemem
 #SBATCH -n 16
 #SBATCH --mem 120G
-#SBATCH -t 05:00:00
+#SBATCH -t 3:00:00
 #SBATCH -o "process_idats-%A.out"
 
 module load R/3.3.2
-time Rscript process_idats.R
+time Rscript process_idats.R whi fhs

@@ -12,10 +12,11 @@ sampleData_fhs <- bind_rows(sampleData_fhs_c1, sampleData_fhs_c2) %>%
          slide=gsub("_[[:alnum:]]*", "", LABID),
          arrayPos=gsub("[0-9]*_", "", LABID),
          sentrixRow=substr(arrayPos, 1, 3),
-         sentrixCol=substr(arrayPos, 4, 6)) %>%
+         sentrixCol=substr(arrayPos, 4, 6),
+         center=ifelse(grepl("^IL",Plate), "JHU", "UofMinn")) %>%
   rename(sampleKey=LABID,
          plate=Plate) %>%
-  select(subjID, sampleKey, sentrixRow, sentrixCol, plate)
+  select(subjID, sampleKey, sentrixRow, sentrixCol, plate, center)
   
 sampleData_whi_c1 <- read_tsv("../data/whi/meth/sample_attributes_c1.txt", skip=10)
 sampleData_whi_c2 <- read_tsv("../data/whi/meth/sample_attributes_c2.txt", skip=10)
@@ -24,8 +25,9 @@ sampleData_whi <- bind_rows(sampleData_whi_c1, sampleData_whi_c2) %>%
          sampleKey=paste(Methyl_Array, Array_pos, sep="_"),
          sentrixRow=substr(Array_pos, 1, 3),
          sentrixCol=substr(Array_pos, 4, 6)) %>%
-  rename(plate=Plate) %>%
-  select(subjID, sampleKey, sentrixRow, sentrixCol, plate)
+  rename(plate=Plate,
+         dnaPull=BA23_Pull_ID_DNA) %>%
+  select(subjID, sampleKey, sentrixRow, sentrixCol, plate, dnaPull)
 
 sampleData <- bind_rows(sampleData_fhs, sampleData_whi, .id="study") %>%
   mutate(study=case_when(study==1~"fhs", study==2~"whi"))
@@ -37,15 +39,32 @@ phenos_fhs_c1 <- read_tsv("../data/fhs/phen/phenos_fhs_c1.txt", skip=10)
 phenos_fhs_c2 <- read_tsv("../data/fhs/phen/phenos_fhs_c2.txt", skip=10)
 phenos_fhs <- bind_rows(phenos_fhs_c1, phenos_fhs_c2) %>%
   filter(shareid %in% sampleData_fhs$subjID) %>%
-  rename(subjID=shareid, sex=SEX, age=AGE8, bmi=BMI8, smk_now=CURRSMK8, sbp=SBP8,
-         glu=FASTING_BG8, chol=TC8, ldl=CALC_LDL8, hdl=HDL8, tg=TRIG8,
+  rename(subjID=shareid, sex=SEX, age=AGE8, bmi=BMI8, 
+         smk_now=CURRSMK8, cig_per_day=CPD8,  
+         sbp=SBP8, glu=FASTING_BG8, chol=TC8, ldl=CALC_LDL8, hdl=HDL8, tg=TRIG8,
          ht_med=HRX8, lipid_med=LIPRX8, dm_med=DMRX8) %>%
   mutate(sex=ifelse(sex==1, "M", "F"),
-         race="white") %>%
+         race="white",
+         pack_years=) %>%
   mutate_at(c("ht_med","lipid_med","dm_med"), as.logical) %>%
-  select(subjID, sex, age, race, bmi, smk_now, sbp, glu, chol, ldl, hdl, tg, ht_med, lipid_med, dm_med)
+  select(subjID, sex, age, race, bmi, smk_now, cig_per_day, 
+         sbp, glu, chol, ldl, hdl, tg, ht_med, lipid_med, dm_med)
 
-phenoData_fhs <- phenos_fhs
+crp_fhs_c1 <- read_tsv("../data/fhs/phen/crp_c1.txt", skip=10)
+crp_fhs_c2 <- read_tsv("../data/fhs/phen/crp_c2.txt", skip=10)
+crp_fhs <- bind_rows(crp_fhs_c1, crp_fhs_c2) %>%
+  rename(subjID=shareid, hscrp=crp)
+
+questionnaire_fhs_c1 <- read_tsv("../data/fhs/phen/exam8Data_fhs_c1.txt", skip=10)
+questionnaire_fhs_c2 <- read_tsv("../data/fhs/phen/exam8Data_fhs_c2.txt", skip=10)
+questionnaire_fhs <- bind_rows(questionnaire_fhs_c1, questionnaire_fhs_c2) %>%
+  rename(subjID=shareid, cig_start_age=H065) %>%
+  select(subjID, cig_start_age)
+
+phenoData_fhs <- phenos_fhs %>%
+  left_join(crp_fhs, by="subjID") %>%
+  left_join(questionnaire_fhs, by="subjID") %>%
+  mutate(smk_py=ifelse(smk_now, cig_per_day/20*(age-cig_start_age), 0))  # Very rough -- assumes no one has quit
 
 ## WHI
 basicData_whi_c1 <- read_tsv("../data/whi/phen/basic_whi_c1.txt", skip=10)
@@ -53,7 +72,7 @@ basicData_whi_c2 <- read_tsv("../data/whi/phen/basic_whi_c2.txt", skip=10)
 basicData_whi <- bind_rows(basicData_whi_c1, basicData_whi_c2) %>%
   filter(SUBJID %in% sampleData_whi$subjID) %>%
   rename(subjID=SUBJID, age=AGE, race=RACE) %>%
-  mutate(sex="f",
+  mutate(sex="F",
          race=c("1"="amind","2"="asian","3"="black","4"="hispanic","5"="white","8"="other")[race]) %>%
   select(subjID, sex, age, race)
 
@@ -74,13 +93,36 @@ examData_whi <- bind_rows(examData_whi_c1, examData_whi_c2) %>%
   ungroup() %>% 
   select(subjID, sbp, bmi, daysSinceEnrollment)
 
-labData_whi_c1 <- read_tsv("../data/whi/phen/labs_c1.txt", skip=10)
-labData_whi_c2 <- read_tsv("../data/whi/phen/labs_c2.txt", skip=10)
-labData_whi <- bind_rows(labData_whi_c1, labData_whi_c2) %>%
+labData1_whi_c1 <- read_tsv("../data/whi/phen/labs_c1.txt", skip=10)
+labData1_whi_c2 <- read_tsv("../data/whi/phen/labs_c2.txt", skip=10)
+labData1_whi <- bind_rows(labData1_whi_c1, labData1_whi_c2) %>%
   filter(SUBJID %in% sampleData_whi$subjID,
          COREVTYP==1) %>%  # Only care about blood samples from first year 
   rename(subjID=SUBJID, glu=COREGLUC, chol=CORETCHO, ldl=CORELDLC, hdl=COREHDLC, tg=CORETRI) %>%
   select(subjID, glu, chol, ldl, hdl, tg)
+
+drawData2_whi_c1 <- read_tsv("../data/whi/phen/draws2_c1.txt", skip=10) %>%
+  select(DRAWID, DRAWVTYP)
+drawData2_whi_c2 <- read_tsv("../data/whi/phen/draws2_c2.txt", skip=10) %>%
+  select(DRAWID, DRAWVTYP)
+drawData2_whi <- bind_rows(drawData2_whi_c1, drawData2_whi_c2) %>%
+  filter(DRAWVTYP==1) %>%  # Only care about blood samples from first year 
+  select(DRAWID)
+labData2_whi_c1 <- read_tsv("../data/whi/phen/labs2_c1.txt", skip=10)
+labData2_whi_c2 <- read_tsv("../data/whi/phen/labs2_c2.txt", skip=10)
+labData2_whi <- bind_rows(labData2_whi_c1, labData2_whi_c2) %>%
+  filter(SUBJID %in% sampleData_whi$subjID,
+         SPECTYPE=="Serum",
+         TESTABBR %in% c("LDLC","HDLC","TCHO","TRI","GLUC","CRP","INSU")) %>%
+  inner_join(drawData2_whi, by="DRAWID") %>%
+  group_by(SUBJID, TESTABBR) %>%
+  summarise(TESTVAL=mean(TESTVAL, na.rm=T)) %>%
+  spread(key=TESTABBR, value=TESTVAL) %>%
+  rename(subjID=SUBJID, chol=TCHO, ldl=LDLC, hdl=HDLC, tg=TRI, glu=GLUC, hscrp=CRP, ins=INSU)
+
+labData_whi <- bind_rows(labData1_whi, labData2_whi) %>%
+  group_by(subjID) %>%
+  summarise_all(mean, na.rm=T)  # Take mean when there are duplicate individuals from CORE and non-CORE
 
 medsData_whi_c1 <- read_tsv("../data/whi/phen/medications_c1.txt", skip=10)
 medsData_whi_c2 <- read_tsv("../data/whi/phen/medications_c2.txt", skip=10)
@@ -123,15 +165,22 @@ soe2015_fhs <- bind_rows(soe2015_fhs_c1, soe2015_fhs_c2)
 soe2015_fhs_clean <- inner_join(soe2015_fhs, exam_dates_fhs, by="shareid") %>%
   filter(!is.na(date8),  # Had a visit during Exam 8 
          EVENT %in% c(1:29)) %>%  # CVD events (my definition) and all death
-  mutate(eventType=ifelse(EVENT %in% 1:26, "cvd", "death"),  # 27-29 codes are non-CVD deaths
+  mutate(eventType=case_when(EVENT %in% c(1:9,21:24) ~ "chd",  # MI variants, AP, CHD deaths
+                             EVENT %in% c(10:19,25) ~ "stroke",  # CVA variants, ABI, TIA, embolism, hemorrhage
+                             EVENT == 26 ~ "death_otherCVD",
+                             EVENT %in% 27:29 ~ "death_nonCVD"),
+         cvd=eventType %in% c("chd","stroke","death_otherCVD"),
          time=DATE-date8) %>%
   group_by(shareid) %>%
-  summarise(pastEvent=any(eventType=="cvd" & time<=0),  # Note if subject had an event before Exam 8
-            event=any(eventType=="cvd" & time>0),  # Future event if occurred after Exam 8
-            timeToEvent=ifelse(any(eventType=="cvd" & time>0), min(time[time>0]), NA),  # Earliest post-Exam 8 event time
-            death=any(eventType=="death"),  # Did the person die?
-            timeToDeath=ifelse(any(eventType=="death"), time[eventType=="death"], NA),  # If they died, get time to death
-            dateExam9=median(date9))  # Carry through for censorship times
+  summarise(pastEvent=any(cvd==T & time<=0),  # Note if subject had an event before Exam 8
+            event=any(cvd==T & time>0),  # Future event if occurred after Exam 8
+            timeToEvent=ifelse(any(cvd==T & time>0), min(time[cvd==T & time>0]), NA),  # Earliest post-Exam 8 event time
+            eventType=ifelse(any(cvd==T & time>0), eventType[which.min(time[cvd==T & time>0])], as.character(NA)),
+            death=any(EVENT %in% 21:29),  # Did the person die?
+            timeToDeath=ifelse(any(death), time[EVENT %in% 21:29], NA),  # If they died, get time to death
+            incCHD=any(eventType=="chd" & time>0),
+            incStroke=any(eventType=="stroke" & time>0),
+            timeToExam9=median(date9-date8))  # Carry through for censorship times
 
 surv2014_fhs_c1 <- read_tsv("../data/fhs/phen/survcvd2014_fhs_c1.txt", skip=10)
 surv2014_fhs_c2 <- read_tsv("../data/fhs/phen/survcvd2014_fhs_c2.txt", skip=10)
@@ -143,15 +192,16 @@ outcomeData_fhs <- left_join(surv2014_fhs, soe2015_fhs_clean, by="shareid") %>%
   mutate(time=case_when(event==T ~ timeToEvent,  # Experienced an event after Exam 8 -> use that follow-up time
                         death==T ~ timeToDeath,  # Didn't experience an event but died -> censor at death
                         cvd==0 ~ cvddate,  # No event and no CVD in surv file -> censoring time from surv file
-                        TRUE ~ as.integer(dateExam9))) %>%  # No event and CVD in surv file -> use exam 9 date for censor time
+                        TRUE ~ as.integer(timeToExam9))) %>%  # No event and CVD in surv file -> use exam 9 date for censor time
   filter(!is.na(time)) %>%  # Remove those individuals with no Exam 9 date and thus no known censorship time
   rename(subjID=shareid) %>%
-  select(subjID, pastEvent, event, time)
+  select(subjID, pastEvent, event, eventType, time, incCHD, incStroke)
 ## NOTE: THE APPROACH ABOVE LEAVES A NUMBER OF SUBJECTS (114) WHO HAD A PAST EVENT, NO FUTURE EVENT,
 ## AND NO AVAILABLE EXAM 9 DATE WITH MISSING "TIME" VALUES AND THEY ARE THUS EXCLUDED
 ## THIS IS POTENTIALLY REASONABLE HERE BECAUSE NONE REPRESENT CASES (THE MORE CRITICAL SAMPLES TO KEEP)
 
-whi_event_names <- c("CAROTID","CHD","MI","CREVASC","DSMI","STROKE","STRKHEMO","STRKISCH","MITOTAL")
+## WHI
+whi_event_names <- c("CHD","CREVASC","STROKE")
 whi_event_days <- paste0(whi_event_names, "DY")
 outcomeData_whi_c1 <- read_tsv("../data/whi/phen/outcomes_ctos_c1.txt", skip=10) %>%
   select(SUBJID, whi_event_names, whi_event_days, ENDFOLLOWDY)
@@ -161,9 +211,15 @@ outcomeData_whi <- bind_rows(outcomeData_whi_c1, outcomeData_whi_c2) %>%
   filter(SUBJID %in% sampleData_whi$subjID) %>%
   mutate(event=rowSums(.[,whi_event_names], na.rm=T)>0,
          time=do.call(pmin, c(.[,c(whi_event_days,"ENDFOLLOWDY")], na.rm=T)),  # Event time or censoring time
+         eventType=case_when(time==CHDDY ~ "chd",
+                             time==CREVASCDY ~ "crevasc",
+                             time==STROKEDY ~ "stroke",
+                             TRUE ~ as.character(NA)),
+         incCHD=CHD==1,
+         incStroke=STROKE==1,
          pastEvent=F) %>%  
   rename(subjID=SUBJID) %>%
-  select(subjID, pastEvent, event, time)
+  select(subjID, pastEvent, event, eventType, time, incCHD, incStroke)
 
 outcomeData <- bind_rows(outcomeData_fhs, outcomeData_whi, .id="study") %>%
   mutate(study=case_when(study==1~"fhs", study==2~"whi"))

@@ -1,0 +1,258 @@
+---
+title: EWAS for Incident CVD Events
+output:
+  pdf_document:
+    latex_engine: pdflatex
+---
+
+```{r prereqs, include=F}
+library(knitr)
+opts_chunk$set(echo=F, fig.path="../output/figures/", cache.path="../cache/incident_ewas222/")
+suppressMessages(silent <- lapply(c("tidyverse","survival","glmnet","minfi","caret","doParallel","itertools",
+                                    "randomForest","pROC","kableExtra"), library, character.only=T))
+```
+
+```{r load-data}
+# Load methylation data
+betas_whi <- readRDS("../int/betas.qc.norm.filt_whi.rds")
+betas_fhs <- readRDS("../int/betas.qc.norm.filt_fhs.rds")
+
+# Load metadata
+metaData <- readRDS("../int/metaData.rds")
+
+# Load estimated cell counts
+estCellCounts_whi <- readRDS("../int/estCellCounts_whi.rds")
+estCellCounts_fhs <- readRDS("../int/estCellCounts_fhs.rds")
+
+# Load CPACOR principal component adjustment factors
+load("../int/CPACOR_whi.RData")
+CP_PCs_whi <- CP_PCs
+load("../int/CPACOR_fhs.RData")
+CP_PCs_fhs <- CP_PCs
+
+# Load PCA results
+load("../int/PCA.fit_whi.RData")
+PCs_whi <- PCs
+load("../int/PCA.fit_fhs.RData")
+PCs_fhs <- PCs
+
+# Load Illumina 450k annotation
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+anno450k <- data.frame(getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19), stringsAsFactors=F)
+```
+
+```{r clean-data, warning=F}
+estCellCounts <- bind_rows(estCellCounts_whi, estCellCounts_fhs)
+CP_PCs <- bind_rows(CP_PCs_whi, CP_PCs_fhs)
+PCs <- bind_rows(PCs_whi, PCs_fhs)
+
+### Create master covariate/event data frame
+nonMethData <- Reduce(function(x,y) inner_join(x, y, by="sampleKey"), 
+                          list(metaData, estCellCounts, CP_PCs, PCs)) %>%
+  distinct(subjID, .keep_all=T)  # Hacky...better way of deciding which biological replicates to keep?
+nonMethData <- replace_na(nonMethData, 
+                          list(bmi=median(nonMethData$bmi, na.rm=T),
+                               smk_now=0, smk_py=0, ht_med=0, lipid_med=0, dm_med=0))
+
+betas_whi <- betas_whi[,match(nonMethData$sampleKey[nonMethData$study=="whi"], colnames(betas_whi))]
+betas_fhs <- betas_fhs[,match(nonMethData$sampleKey[nonMethData$study=="fhs"], colnames(betas_fhs))]
+stopifnot(all(colnames(betas_whi)==nonMethData$sampleKey[nonMethData$study=="whi"]),
+          all(colnames(betas_fhs)==nonMethData$sampleKey[nonMethData$study=="fhs"]))  # Ensure identical number and order of samples for methylation and covariate data
+```
+
+# EWAS
+
+## Discovery in WHI
+
+* Cox proportional hazards regression
+* Covariates: age, race, BMI, current smoking status, pack-years, WBC count estimates, 10 control-probe PCs
+
+```{r ewas-prep}
+myTry <- function(expr, CpG) {
+  # Captures model failures and returns successful result or vector of NAs
+  tryCatch(expr,
+           error = function(e) {print(e); return(c(CpG, rep(NA, 2)))},
+           warning = function(w) {print(w); return(c(CpG, rep(NA, 2)))})
+}
+
+run_coxModel <- function(probeData, covarData, model_spec) {
+  # Given a row of the M-value matrix (corresponding to a CpG site), bind that methylation
+  # data to the covariate data and run Cox proportional hazards regression
+  CpG <- rownames(probeData)
+  modelData <- cbind(covarData, meth=as.numeric(probeData))
+                     # survObj=Surv(time=covarData$time, event=covarData$event))
+  probeDataResids <- lm(as.formula(model_spec), data=modelData)$residuals
+  outlierTF <- probeDataResids<quantile(probeDataResids,0.25)-5*IQR(probeDataResids) | 
+    probeDataResids>quantile(probeDataResids,0.75)+5*IQR(probeDataResids)
+  myTry({
+    # cox.fit <- coxph(as.formula(model_spec), data=modelData)
+    bart.fit <- bartlett.test(probeDataResids~event, data=modelData, subset=!outlierTF)
+    # c(CpG=CpG, summary(cox.fit)$coef['meth',c('coef','z','Pr(>|z|)')])
+    caseHigher <- var(probeDataResids[!outlierTF & modelData$event==1]) > 
+      var(probeDataResids[!outlierTF & modelData$event==0])
+    c(CpG=CpG, caseHigherVar=caseHigher, p=bart.fit$p.value)
+  }, CpG)
+}
+```
+
+```{r ewas-discovery, cache=1}
+ewasModel_whi <- paste0("meth~age+race+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+",
+                        paste0("cpPC",1:10,collapse="+"))
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+whiResList <- foreach(meth=iter(betas_whi, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth, nonMethData[nonMethData$study=="whi",], ewasModel_whi)
+
+stopCluster(cl)
+
+whiRes <- do.call(rbind, whiResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  # dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at("p", as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r ewas-discovery-inflation, out.width="70%"}
+make_qqplot <- function(pVec, plotTitle="Title") {
+  pVec <- pVec[!is.na(pVec)]
+  qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle, xlab="Expected (-logP)", ylab="Observed (-logP)")
+  abline(0,1,col="red")
+}
+gControl <- function(pVals) {
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(pVals, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
+round(lambda, 2)
+}
+
+make_qqplot(whiRes$p, plotTitle=paste0("lambda = ", gControl(whiRes$p)))
+```
+
+```{r ewas-discovery-investigation}
+bonferroniThresh <- 0.05/nrow(betas_whi)
+bonferroniCpGs <- filter(whiRes, p<bonferroniThresh, !is.na(p))
+
+kable(left_join(bonferroniCpGs, select(anno450k, Name, UCSC_RefGene_Name), by=c("CpG"="Name")))
+```
+
+`r nrow(bonferroniCpGs)` CpG sites were significant after Bonferroni correction.
+
+## Replication in FHS
+
+```{r ewas-replication, cache=1}
+ewasModel_fhs <- paste0("meth~sex+age+bmi+smk_now+smk_py+pastEvent+CD4T+CD8T+Bcell+NK+Mono+Gran+",
+                        paste0("cpPC",1:10,collapse="+"))
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(meth=iter(betas_fhs, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth, nonMethData[nonMethData$study=="fhs",], ewasModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  # dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at("p", as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r ewas-replication-inflation, out.width="70%"}
+make_qqplot <- function(pVec, plotTitle="Title") {
+  pVec <- pVec[!is.na(pVec)]
+  qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle, xlab="Expected (-logP)", ylab="Observed (-logP)")
+  abline(0,1,col="red")
+}
+gControl <- function(pVals) {
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(pVals, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
+round(lambda, 2)
+}
+
+make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+```
+
+```{r ewas-replication-investigation}
+bonferroniThresh <- 1e-7
+bonferroniCpGs_fhs <- filter(fhsRes, p<bonferroniThresh, !is.na(p))
+
+kable(left_join(bonferroniCpGs_fhs, select(anno450k, Name, UCSC_RefGene_Name), by=c("CpG"="Name")))
+```
+
+### Do any of the Bonferroni-significant CpGs from the discovery set replicate?
+
+```{r replication-analysis}
+replicatedSitesRes <- fhsRes[fhsRes$CpG %in% bonferroniCpGs$CpG,]
+
+kable(left_join(select(bonferroniCpGs, CpG, caseHigherVar, p), select(replicatedSitesRes, CpG, caseHigherVar, p), 
+          by="CpG", suffix=c(".whi",".fhs")))
+
+# hist(-log10(replicatedSitesRes$p))
+```
+
+# Interpretation
+
+## Specific CpGs
+
+Look at specific CpGs of interest and their biology/location
+
+## Distribution across the genome
+
+There were `r sum(whiRes$fdr<0.1, na.rm=T)` CpGs found at FDR < 0.1.
+
+```{r genome-distribution, fig.show="hold", out.width="50%", eval=F}
+topCpGs <- whiRes$CpG[whiRes$fdr<0.1]
+
+summarise_annotation <- function(group, df) {
+  # Takes in a set of annotations and returns the proportions of a given field (e.g. gene name)
+  df %>%
+    select(one_of("Name", group)) %>%
+    separate_rows(group, sep=";") %>%
+    distinct() %>%
+    filter_at(group, all_vars(.!="")) %>%
+    group_by_at(group) %>%
+    summarise(n=n()) %>%
+    mutate(frac=n/sum(n))
+}
+
+annot_plot <- function(cpgSet, group_var) {
+  # Given a specific field, plot proportion of CpGs in a specific subset next to those of the full set
+  my_groups <- summarise_annotation(group_var, filter(anno450k, Name %in% cpgSet))
+  all_groups <- summarise_annotation(group_var, anno450k)
+  merge_groups <- inner_join(my_groups, all_groups, by=group_var, suffix=c(".subset",".all")) %>%
+    gather(key=group, value=frac, contains("frac")) %>%
+    mutate(group=factor(group, levels=c("frac.all","frac.subset"), labels=c("All CpGs","EWAS hits")))
+  ggplot(merge_groups, aes_string(x=group_var, y="frac", fill="group")) +
+    geom_bar(stat="identity", position="dodge") +
+    theme(axis.title=element_blank(), axis.text.x=element_text(angle=30, hjust=1))
+}
+
+annot_plot(topCpGs, "UCSC_RefGene_Group")
+annot_plot(topCpGs, "Relation_to_Island")
+annot_plot(topCpGs, "Regulatory_Feature_Group")
+```
+
+## GSEA
+
+```{r gsea, warning=F, eval=F}
+library(missMethyl)
+
+topCpGs <- whiRes$CpG[whiRes$fdr<0.1]
+gsaTbl <- gometh(topCpGs, collection="GO")
+
+kable(arrange(filter(gsaTbl, FDR<0.1), FDR), format="latex") %>%
+  kable_styling(latex_options="scale_down")
+```
+
+# Outstanding questions
+
+* More lenience on covariate adjustment in discovery cohort?
+* Important to check proportional hazards assumption for every regression? Only for replication cohort?
+
+

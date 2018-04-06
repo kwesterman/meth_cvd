@@ -1,0 +1,337 @@
+---
+title: Evaluation of methylation data quality and potential confounders
+output: html_document
+---
+
+```{r prereqs, include=F, cache=F}
+library(knitr)
+opts_chunk$set(echo=F, message=F, warning=F, 
+              cache=T, cache.lazy=F, cache.path="../cache/meth_qc/", fig.path="../cache/meth_qc/")
+suppressMessages(silent <- lapply(c("tidyverse","car"), library, character.only=T))
+```
+
+Based on the scree plot, PCs 1-6 explain the majority of the overall variance in methylation beta values.
+
+## Biological confounders
+
+```{r biological-confounders, fig.align="center", out.width="75%"}
+nonMethData <- readRDS("../int/nonMethData.rds")
+
+wbcpca.fit <- prcomp(select(nonMethData, CD8T, CD4T, NK, Bcell, Mono, Gran), scale.=T)
+
+pcaData <- select(nonMethData, one_of(paste0("PC",1:6)), 
+                  study, event, pastEvent,
+                  age, sex, bmi, smk_now, ht_med, lipid_med, dm_med) %>%
+  mutate(sex=ifelse(sex=="M", 1, 2),
+         study=ifelse(study=="fhs", 1, 2),
+         WBC_PC1=wbcpca.fit$x[,"PC1"], WBC_PC2=wbcpca.fit$x[,"PC2"])
+cors <- cor(pcaData, use="pairwise.complete.obs")
+cors[cors==1] <- 0
+corsDF <- data.frame(cors) %>%
+  rownames_to_column(var="var1") %>%
+  gather(key=var2, value=correlation, -var1) %>%
+  mutate(var1=factor(var1, levels=names(pcaData)), var2=factor(var2, levels=rev(names(pcaData)))) %>%
+  filter(!grepl("^PC", var1), grepl("^PC|^event", var2))
+ggplot(corsDF, aes(x=var1, y=var2, fill=correlation)) +
+  geom_tile(color="white") +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+  scale_x_discrete(position="top") +
+  theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+
+# # # Naive F-values
+# # pcModelData <- cbind(pcaData, select(nonMethData, plate, sentrixRow, sentrixCol, paste0("PC",1:10,"_cp")))
+# # pcModels <- expand.grid(paste0("PC",1:6), c("study","plate","sentrixRow","sentrixCol","event","pastEvent",
+# #                                             "age","sex","bmi","smk_now","WBC_PC1","WBC_PC2"), stringsAsFactors=F) %>%
+# #   mutate(anovaFval=map2_dbl(Var1, Var2, function(pc, covar) anova(lm(as.formula(paste0(pc,"~",covar)), data=pcModelData))[covar,"F value"])) %>% mutate(logFval=log(anovaFval)) %>%
+# #   mutate(var1=factor(Var1, levels=names(pcaData)), var2=factor(Var2, levels=rev(names(pcaData))))
+# # ggplot(pcModels, aes(x=var2, y=var1, fill=anovaFval)) +
+# #   geom_tile(color="white") +
+# #   scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+# #   scale_x_discrete(position="top") +
+# #   theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+# 
+# # Adjusted for WBC_PC1
+# pcModelData <- cbind(pcaData, select(nonMethData, plate, sentrixRow, sentrixCol, paste0("PC",1:30,"_cp")))
+# pcModels <- expand.grid(c(paste0("PC",1:6),"event"), 
+#                         c("study","plate","sentrixRow","sentrixCol","event","pastEvent",
+#                           "age","sex","bmi","smk_now","WBC_PC1","WBC_PC2"), stringsAsFactors=F) %>%
+#   mutate(Var1=factor(Var1, levels=sort(unique(Var1), decreasing=T))) %>%
+#   mutate(Fval=map2_dbl(Var1, Var2, function(pc, covar) {
+#     anova(lm(as.formula(paste0(pc,"~",covar)), data=pcModelData))[covar,"F value"]
+#     }),
+#     Fval_cpacor=map2_dbl(Var1, Var2, function(pc, covar) {
+#       anova(lm(as.formula(paste0(pc,"~",covar,"+",paste0("PC",1:10,"_cp", collapse="+"))),
+#                data=pcModelData))[covar,"F value"]
+#     })) %>%
+#   mutate_at(.vars=c("Fval","Fval_cpacor"), funs(ifelse(.<1, 0, log(.))))
+# 
+# 
+# ggplot(pcModels, aes(x=Var2, y=Var1, fill=Fval)) +
+#   geom_tile(color="white") +
+#   scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+#   scale_x_discrete(position="top") +
+#   theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+# 
+# ggplot(pcModels, aes(x=Var2, y=Var1, fill=Fval_cpacor)) +
+#   geom_tile(color="white") +
+#   scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+#   scale_x_discrete(position="top") +
+#   theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+# 
+# # pcModelData <- cbind(pcaData, select(nonMethData, plate, sentrixRow, sentrixCol, paste0("PC",1:10,"_cp")))
+# # pcModels <- expand.grid(paste0("PC",1:6), c("study","plate","sentrixRow","sentrixCol","event","pastEvent",
+# #                                             "age","sex","bmi","smk_now","WBC_PC1","WBC_PC2"), stringsAsFactors=F) %>%
+# #   mutate(anovaFval=map2_dbl(Var1, Var2, function(pc, covar) 
+# #     anova(lm(as.formula(paste0(pc,"~",covar,"+",paste0("PC",1:6,"_cp",collapse="+"))), 
+# #              data=pcModelData))[covar,"F value"])) %>% 
+# #   mutate(logFval=log(anovaFval)) %>%
+# #   mutate(var1=factor(Var1, levels=names(pcaData)), var2=factor(Var2, levels=rev(names(pcaData))))
+# # ggplot(pcModels, aes(x=var2, y=var1, fill=anovaFval)) +
+# #   geom_tile(color="white") +
+# #   scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+# #   scale_x_discrete(position="top") +
+# #   theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+# 
+
+# 
+# ggplot(logPvals, aes(x=numCtrlProbePCs, y=logPval, color=model, shape=model)) +
+#   geom_point()
+#   geom_line(aes(y=study), color="blue") +
+#   geom_line(aes(y=plate), color="red") +
+#   geom_line(aes(y=row), color="green") +
+#   geom_line(aes(y=col), color="yellow")
+```
+
+PC1 and PC2 correlate strongly with WBC counts and study (likely driving the somewhat weaker sex and event correlations), while PC3 seems to additionally track age. Incident CVD correlates strongly with study/sex, as would be expected due to the case-heavy recruitment, and weakly with BMI, hypertension meds, and diabetes meds,but not with any other biological variable examined.
+
+## Confounding of event-PC relationship
+
+What really matters -- what covariates explain any large-scale associations between PCs and the binary outcome? In this analysis, PCs and control probe PCs were calculated separately for each cohort.
+
+```{r event-pc-analysis}
+nonMethData <- readRDS("../int/nonMethData.rds")
+metaData <- readRDS("../int/metaData.rds")
+fhsPCA <- readRDS("../int/fhsPCA.rds")
+fhsPCs <- setNames(cbind(nonMethData$sampleKey[nonMethData$study=="fhs"], data.frame(fhsPCA$vectors)),
+                     c("sampleKey", paste0("PC",1:ncol(fhsPCA$vectors),"_indiv")))
+whiPCA <- readRDS("../int/whiPCA.rds")
+whiPCs <- setNames(cbind(nonMethData$sampleKey[nonMethData$study=="whi"], data.frame(whiPCA$vectors)),
+                   c("sampleKey", paste0("PC",1:ncol(whiPCA$vectors),"_indiv")))
+allPCs <- rbind(fhsPCs, whiPCs)
+fhsCPACOR <- readRDS("../int/cpacor.fit.fhs.rds")
+fhsCPPCs <- setNames(cbind(metaData$sampleKey[metaData$study=="fhs"], data.frame(fhsCPACOR$x)),
+                     c("sampleKey", paste0("cp", colnames(fhsCPACOR$x),"_indiv")))
+whiCPACOR <- readRDS("../int/cpacor.fit.whi.rds")
+whiCPPCs <- setNames(cbind(metaData$sampleKey[metaData$study=="whi"], data.frame(whiCPACOR$x)),
+                     c("sampleKey", paste0("cp", colnames(whiCPACOR$x),"_indiv")))
+allCPPCs <- rbind(fhsCPPCs, whiCPPCs)
+
+nonMethData <- nonMethData %>% inner_join(allPCs, by="sampleKey") %>% inner_join(allCPPCs, by="sampleKey")
+
+nonMethData$WBC_PC1 <- prcomp(select(nonMethData, Mono, Gran, NK, Bcell, CD4T, CD8T), scale.=T)$x[,1]
+nonMethData$WBC_PC2 <- prcomp(select(nonMethData, Mono, Gran, NK, Bcell, CD4T, CD8T), scale.=T)$x[,2]
+nonMethData$WBC_PC3 <- prcomp(select(nonMethData, Mono, Gran, NK, Bcell, CD4T, CD8T), scale.=T)$x[,3]
+
+
+
+eventPCAssoc_studySpecific <- function(numPCs, covars) {
+  df <- nonMethData
+  if ("sex" %in% covars) df <- filter(df, study=="fhs")
+  dat <- df %>%
+    nest(-study) %>%
+    mutate(negLogP=map(data, function(d) {
+      sapply(paste0("PC",1:numPCs,"_indiv"), function(pc) {
+        -log10(coef(summary(lm(as.formula(paste0("event~",paste(covars,collapse="+"),"+",pc)),
+                            data=d)))[pc,"Pr(>|t|)"])
+      })
+    })) %>%
+    select(-data) %>%
+    unnest(negLogP) %>%
+    mutate(PC=rep(paste0("PC",1:10), times=length(unique(.$study))), PC=factor(PC, levels=rev(unique(PC))))
+  ggplot(dat, aes(x=study, y=PC, fill=negLogP)) + geom_tile(color="white") +
+    scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000')
+}
+
+print("Without adjusting for any covariates:")
+eventPCAssoc_studySpecific(10, "")
+print("Adjusting for 10 control probe PCs:")
+eventPCAssoc_studySpecific(10, paste0("cpPC",1:10,"_indiv"))
+print("Adjusting for plate:")
+eventPCAssoc_studySpecific(10, "plate")
+print("Adjusting for plate and age:")
+eventPCAssoc_studySpecific(10, c("plate","age"))
+print("Adjusting for plate, age, BMI, sex, smoking, WBC PC:")
+
+eventPCAssoc_studySpecific(10, c("age","sex","bmi","smk_now","WBC_PC1","WBC_PC2","WBC_PC3",paste0("cpPC",1:10,"_indiv")))
+
+```
+
+## Technical confounders
+
+```{r technical-confounders, eval=F}
+pcModelData <- cbind(pcaData, select(nonMethData, plate, sentrixRow, sentrixCol, paste0("PC",1:30,"_cp")))
+pcModels <- expand.grid(c(paste0("PC",1:6),"event"), 
+                        c("study","plate","sentrixRow","sentrixCol"), stringsAsFactors=F) %>%
+  mutate(anovaPval=map2_dbl(Var1, Var2, function(pc, covar) anova(lm(as.formula(paste0(pc,"~",covar)),
+                                                                     data=pcModelData))[covar,"Pr(>F)"])) %>%
+  mutate(negLogPval=-log(anovaPval)) %>%
+  mutate(yvar=factor(Var1, levels=c(paste0("PC",1:6),"event")), xvar=factor(Var2))
+
+pcModels_cpacorAdjust <- expand.grid(c(paste0("PC",1:6),"event"), 
+                        c("study","plate","sentrixRow","sentrixCol"), stringsAsFactors=F) %>%
+  mutate(anovaPval=map2_dbl(Var1, Var2, function(pc, covar) anova(lm(as.formula(paste0(pc,"~",covar,"+",paste0("PC",1:30,"_cp",collapse="+"))),
+                                                                     data=pcModelData))[covar,"Pr(>F)"])) %>%
+  mutate(negLogPval=-log(anovaPval)) %>%
+  mutate(yvar=factor(Var1, levels=c(paste0("PC",1:6),"event")), xvar=factor(Var2))
+
+cpacor_logPval_sequence <- function(outcome, covar) {
+  sapply(1:30, function(cpIdx) {
+    anova.fit <- Anova(lm(as.formula(paste0(outcome,"~",covar,"+",paste0("PC",seq(1,cpIdx),"_cp",collapse="+"))),
+             data=pcModelData), type=3)
+    -log(anova.fit[covar,"Pr(>F)"])
+  })
+}
+logPvals <- data.frame(numCtrlProbePCs=1:30,
+                       event_by_study=cpacor_logPval_sequence("event","study"),
+                       PC1_by_study=cpacor_logPval_sequence("PC1","study"),
+                       event_by_plate=cpacor_logPval_sequence("event","plate"),
+                       PC1_by_plate=cpacor_logPval_sequence("PC1","plate"),
+                       event_by_row=cpacor_logPval_sequence("event","sentrixRow"),
+                       PC1_by_row=cpacor_logPval_sequence("PC1","sentrixCol"),
+                       event_by_col=cpacor_logPval_sequence("event","sentrixCol"),
+                       PC1_by_col=cpacor_logPval_sequence("PC1","sentrixCol")) %>%
+  gather(key=model, value=logPval, event_by_study:PC1_by_col)
+```
+
+
+
+
+
+
+
+
+```{r, eval=F}
+ggplot(filter(pcModels, xvar=="study"), aes(x=xvar, y=yvar, fill=negLogPval)) +
+  geom_tile(color="white") +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+  scale_x_discrete(position="top") +
+  theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+ggplot(filter(pcModels, xvar=="plate"), aes(x=xvar, y=yvar, fill=negLogPval)) +
+  geom_tile(color="white") +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+  scale_x_discrete(position="top") +
+  theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+ggplot(filter(pcModels, xvar %in% c("sentrixRow","sentrixCol")), aes(x=xvar, y=yvar, fill=negLogPval)) +
+  geom_tile(color="white") +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+  scale_x_discrete(position="top") +
+  theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+```
+
+
+
+
+
+
+
+
+```{r cpacor-correlations, eval=F}
+run_lm <- function(dep, indep) {
+  -log(summary(lm(as.formula(paste0(dep,"~",indep)), data=nonMethData))$coef[2,4])
+}
+
+expand.grid(c("PC1_cp","PC2_cp"), c("study","plate","sentrixRow","sentrixCol")) %>%
+  mutate(negLogP=apply(., 1, function(r) run_lm(r[1],r[2])))
+
+pc1_study <- summary(lm(PC1_cp~study, data=nonMethData))$coef[2,4]
+pc2_study <- summary(lm(PC2_cp~study, data=nonMethData))$coef[2,4]
+pc1_plate <- summary(lm(PC1_cp~plate, data=nonMethData))$coef[2,4]
+pc1_plate <- summary(lm(PC1_cp~plate, data=nonMethData))$coef[2,4]
+
+
+pcaData <- nonMethData %>%
+  mutate(WBC_PC1=prcomp(.[,c("CD8T","CD4T","NK","Bcell","Mono","Gran")])$x[,"PC1"],
+         study=ifelse(study=="fhs", 1, 2)) %>%
+  mutate(sex=ifelse(sex=="M", 1, 2)) %>%
+  select(one_of(paste0("PC",1:6,"_cp")), study, WBC_PC1)
+cors <- cor(pcaData, use="pairwise.complete.obs")
+cors[cors==1] <- 0
+corsDF <- data.frame(cors) %>%
+  rownames_to_column(var="var1") %>%
+  gather(key=var2, value=correlation, -var1) %>%
+  mutate(var1=factor(var1, levels=names(pcaData)), var2=factor(var2, levels=rev(names(pcaData)))) %>%
+  filter(!grepl("^PC", var1), grepl("^PC", var2))
+ggplot(corsDF, aes(x=var1, y=var2, fill=correlation)) +
+  geom_tile(color="white") +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+  scale_x_discrete(position="top") +
+  theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+
+get_anova_pval <- function(pc, techVar) {
+  anova.fit <- anova(lm(as.formula(paste0(pc, "~", techVar)), data=nonMethData))
+  anova.fit$`Pr(>F)`[1]
+}
+
+basic_pcs <- paste0("PC",1:6)
+cpacor_pcs <- paste0("PC",1:6,"_cp")
+combat_pcs <- paste0("PC",1:6,"_combat")
+combatWO_pcs <- paste0("PC",1:6,"_combatWO")
+all_pcs <- c(basic_pcs, cpacor_pcs, combat_pcs, combatWO_pcs)
+
+study <- sapply(all_pcs, function(pc) get_anova_pval(pc, "study"))
+plate <- sapply(all_pcs, function(pc) get_anova_pval(pc, "plate"))
+Srow <- sapply(all_pcs, function(pc) get_anova_pval(pc, "sentrixRow"))
+Scol <- sapply(all_pcs, function(pc) get_anova_pval(pc, "sentrixCol"))
+allPC_correlates <- data.frame(PC=all_pcs, study=study, plate=plate, row=Srow, col=Scol)
+print(allPC_correlates)
+
+print("Now after adjustment for CP_PCs:")
+# nonMethData <- mutate_at(nonMethData, vars(one_of(paste0("PC",1:6,"_cp"))), )
+lapply(paste0("PC",1:6), function(pc) summary(lm(as.formula(paste0(pc,"~study+PC1_cp+PC2_cp")), data=nonMethData))$coef)
+```
+
+
+```{r pca-correlates, eval=F}
+nonMethData <- readRDS("../int/nonMethData.rds")
+
+make_pc_covar_plot <- function(covar, adjustVars) {
+  df <- mutate(nonMethData,
+               PC1=residuals(lm(as.formula(paste0("PC1~",paste(adjustVars,collapse="+"))), 
+                                data=nonMethData, na.action=na.exclude)),
+               PC2=residuals(lm(as.formula(paste0("PC2~",paste(adjustVars,collapse="+"))), 
+                                data=nonMethData, na.action=na.exclude)))
+  ggplot(data=df, aes(x=PC1, y=PC2)) + geom_point(aes_string(color=covar), alpha=0.4)
+}
+
+print("Sex, age, and BMI:")
+lapply(c("sex","age","race","bmi"), make_pc_covar_plot, nonMethData)
+
+make_pc_covar_plot("sex", "")
+
+print("Race, adjusted for sex:")
+make_pc_covar_plot("race", "sex")
+
+print("Technical covariates after adjusting PCs for sex:")
+lapply(c("study","plate","sentrixRow","sentrixCol"), make_pc_covar_plot, "sex")
+
+```
+
+## Control-probe PCA
+
+```{r cpacor-correlates, eval=F}
+make_pc_covar_plot <- function(covar, adjustVars) {
+  df <- mutate(nonMethData,
+               PC1_cp=residuals(lm(as.formula(paste0("PC1_cp~",paste(adjustVars,collapse="+"))),
+                                data=nonMethData, na.action=na.exclude)),
+               PC2_cp=residuals(lm(as.formula(paste0("PC2_cp~",paste(adjustVars,collapse="+"))),
+                                data=nonMethData, na.action=na.exclude)))
+  ggplot(data=df, aes(x=PC1_cp, y=PC2_cp)) + geom_point(aes_string(color=covar), alpha=0.4)
+}
+
+lapply(c("study","plate","sentrixRow","sentrixCol"), make_pc_covar_plot, "study")
+
+```
+
+
+
+

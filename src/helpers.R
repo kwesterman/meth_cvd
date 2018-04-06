@@ -233,24 +233,26 @@ calc_FRS <- function(pData) {
   # Calculation of Framingham risk score based on D'Agostino 2008 
   # doi: https://doi.org/10.1161/CIRCULATIONAHA.107.699579
   
-  FRS_coefs <- list(male=c(logAge=2.32888, logTC=1.20904, logHDL=-0.70833, logSBPnontreat=2.76157, 
-                           logSBPtreat=2.82263, smoking=0.52973, diabetes=0.69154),
-                    female=c(logAge=3.06117, logTC=1.12370, logHDL=-0.93263, logSBPnontreat=1.93303,
-                             logSBPtreat=1.99881, smoking=0.65451, diabetes=-0.57367))
-  
   FRS_data <- pData %>%
-    mutate(logAge=log(age),
+    mutate(age=pmin(pmax(age, 30), 74),  # Constrain continuous values to within specific ranges
+           chol=pmin(pmax(chol, 100), 405),
+           hdl=pmin(pmax(hdl, 10), 100),
+           sbp=pmin(pmax(sbp, 90), 200)) %>%
+    mutate(logAge=log(age),  # Take logs of continuous values
            logTC=log(chol),
            logHDL=log(hdl),
            logSBP=log(sbp),
            smoking=smk_now) %>%
     select(sex, logAge, logTC, logHDL, ht_med, logSBP, smoking, diabetes)
-  
-  ## negative for diabetes??
+
   with(FRS_data, {
-    frs <- ifelse(sex=="M",
-                  2.32888*logAge + 1.20904*logTC - 0.70833*logHDL + 2.76157*logSBP*(1-ht_med) + 2.82263*logSBP*(ht_med) + 0.52973*smoking + 0.69154*diabetes,
-                  3.06117*logAge + 1.12370*logTC - 0.93263*logHDL + 1.93303*logSBP*(1-ht_med) + 1.99881*logSBP*(ht_med) + 0.65451*smoking - 0.57367*diabetes)
+       weightedSum <- ifelse(sex=="M",
+              3.06117*logAge + 1.12370*logTC - 0.93263*logHDL + 1.93303*logSBP*(1-ht_med) + 1.99881*logSBP*(ht_med) + 0.65451*smoking + 0.57367*diabetes,
+              2.32888*logAge + 1.20904*logTC - 0.70833*logHDL + 2.76157*logSBP*(1-ht_med) + 2.82263*logSBP*(ht_med) + 0.52973*smoking + 0.69154*diabetes)
+       frs <- ifelse(sex=="M",
+                     1 - 0.88936^(exp(weightedSum-23.9802)),
+                     1 - 0.95012^(exp(weightedSum-26.1931)))
+       frs
   })
 }
 
