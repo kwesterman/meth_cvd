@@ -242,3 +242,51 @@ saveRDS(metaData, file="../int/metaData.rds")
 
 sampleSheet <- select(metaData, one_of(names(sampleData)), sex, age, pastEvent, event)
 saveRDS(sampleSheet, file="../int/sampleSheet.rds")
+
+
+
+### PAST EXAM DATA FROM FHS ###
+crp_ex2_c1 <- read_tsv("../data/fhs/phen/past_exams/crp_ex2_c1.txt", skip=10, col_types=cols(shareid="i"))
+crp_ex2_c2 <- read_tsv("../data/fhs/phen/past_exams/crp_ex2_c2.txt", skip=10, col_types=cols(shareid="i"))
+crp_ex2 <- bind_rows(crp_ex2_c1, crp_ex2_c2)
+crp_ex6_c1 <- read_tsv("../data/fhs/phen/past_exams/crp_ex6_c1.txt", skip=10, col_types=cols(shareid="i"))
+crp_ex6_c2 <- read_tsv("../data/fhs/phen/past_exams/crp_ex6_c2.txt", skip=10, col_types=cols(shareid="i"))
+crp_ex6 <- bind_rows(crp_ex6_c1, crp_ex6_c2)
+crp_ex7_c1 <- read_tsv("../data/fhs/phen/past_exams/crp_ex7_c1.txt", skip=10, col_types=cols(shareid="i"))
+crp_ex7_c2 <- read_tsv("../data/fhs/phen/past_exams/crp_ex7_c2.txt", skip=10, col_types=cols(shareid="i"))
+crp_ex7 <- bind_rows(crp_ex7_c1, crp_ex7_c2)
+past_crp_data <- bind_rows(list(exam2=crp_ex2, exam6=crp_ex6, exam7=crp_ex7), .id="exam") %>%
+  rename(hscrp=CRP,
+         subjID=shareid) %>%
+  select(subjID, hscrp, exam)
+
+fram_lipid_varNames <- data.frame(exam=1:7,
+                                  weight_lbs=c("A50","B15","C416","D401","E024","F007","G440"),
+                                  height_inches=c("A51","B16","C417","D402","E025","F008","G441"),
+                                  chol=c("A9","B352","C429","D448","E667","F726","G704"),
+                                  hdl=c("A10","B355","C431","D449","E668","F725","G703"),
+                                  ldl=c("A12","B357","C442",NA,NA,NA,NA),
+                                  tg=c("A13","B358","C433","D451","E670","F727","G706"),
+                                  glu=c("A31","B737","C434","D452","E671","F724","G705"),
+                                  sbp1=c("A55","B24","C184","D192","E485","F476","G271"),
+                                  sbp2=c("A57","B26","C286","D288","E581","F576","G354"))
+read_past_exam <- function(row) {
+  c1 <- read_tsv(paste0("../data/fhs/phen/past_exams/blood_ex", row["exam"], "_c1.txt"), 
+           skip=10, col_types=cols(shareid="i", A24="i", B369="i"))
+  c2 <- read_tsv(paste0("../data/fhs/phen/past_exams/blood_ex", row["exam"], "_c2.txt"), 
+           skip=10, col_types=cols(shareid="i", A24="i", B369="i"))
+  both <- bind_rows(c1, c2)
+  cols <- c(shareid="shareid", na.omit(row)[-1])
+  setNames(both[cols], names(cols))
+}
+past_exams_separate <- apply(fram_lipid_varNames, 1, read_past_exam)
+names(past_exams_separate) <- paste0("exam", 1:7)
+past_exam_data <- bind_rows(past_exams_separate, .id="exam") %>%
+  mutate(bmi=weight_lbs/height_inches^2*703,
+         sbp=rowMeans(.[,c("sbp1","sbp2")], na.rm=T),
+         nonHDL=chol-hdl) %>%
+  select(-one_of("weight_lbs","height_inches","sbp1","sbp2")) %>%
+  dplyr::rename(subjID=shareid)
+
+past_exam_data_withCrp <- full_join(past_exam_data, past_crp_data, by=c("exam","subjID"))
+saveRDS(past_exam_data_withCrp, "../int/pastExamData.rds")

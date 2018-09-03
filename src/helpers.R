@@ -7,8 +7,8 @@ run_CPA <- function(RGset) {
   
   # Type II probes
   TypeII.Name <- getProbeInfo(RGset, type = "II")$Name
-  TypeII.Green <- getGreen(RGset)[getProbeInfo(RGset, type = "II")$Address,]
-  TypeII.Red <- getRed(RGset)[getProbeInfo(RGset, type = "II")$Address,]
+  TypeII.Green <- getGreen(RGset)[getProbeInfo(RGset, type = "II")$AddressA,]
+  TypeII.Red <- getRed(RGset)[getProbeInfo(RGset, type = "II")$AddressA,]
   rownames(TypeII.Red) <- TypeII.Name
   colnames(TypeII.Red) <- sampleNames(RGset)
   rownames(TypeII.Green) <- TypeII.Name
