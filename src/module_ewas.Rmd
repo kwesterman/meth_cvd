@@ -1,0 +1,1488 @@
+---
+title: Methylation modules associate with incident cardiovascular disease and cumulative risk factor exposure
+output:
+  bookdown::pdf_document2:
+    fig_caption: true
+    keep_tex: true
+    toc: false
+    latex_engine: pdflatex
+bibliography: ../doc/module_ewas_refs.bib
+---
+
+```{r prereqs, include=F}
+library(knitr)
+opts_chunk$set(echo=F, fig.path="../doc/figures/", cache.path="../cache/incident_ewas-secondary/", fig.pos="h")
+suppressMessages(silent <- lapply(c("tidyverse","minfi","survival","doParallel","itertools","gridExtra","cowplot","readxl","flashpcaR"), library, character.only=T))
+library(kableExtra)
+```
+
+```{r load-data}
+# Load methylation data
+betas_whi <- readRDS("../int/betas.qc.norm.filt_whi.rds")
+betas_fhs <- readRDS("../int/betas.qc.norm.filt_fhs.rds")
+
+# Load metadata
+metaData <- readRDS("../int/metaData.rds")
+
+# Load estimated cell counts
+estCellCounts_whi <- readRDS("../int/estCellCounts_whi.rds")
+estCellCounts_fhs <- readRDS("../int/estCellCounts_fhs.rds")
+
+# Load CPACOR principal component adjustment factors
+load("../int/CPACOR_whi.RData")
+CP_PCs_whi <- CP_PCs
+load("../int/CPACOR_fhs.RData")
+CP_PCs_fhs <- CP_PCs
+
+# Load PCA results
+load("../int/PCA.fit_whi.RData")
+PCs_whi <- PCs
+load("../int/PCA.fit_fhs.RData")
+PCs_fhs <- PCs
+
+# Load Illumina 450k annotation
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+anno450k <- data.frame(getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19), stringsAsFactors=F)
+```
+
+```{r clean-data, warning=F}
+estCellCounts <- bind_rows(estCellCounts_whi, estCellCounts_fhs)
+CP_PCs <- bind_rows(CP_PCs_whi, CP_PCs_fhs)
+PCs <- bind_rows(PCs_whi, PCs_fhs)
+
+### Create master covariate/event data frame
+nonMethData <- Reduce(function(x,y) inner_join(x, y, by="sampleKey"),
+                          list(metaData, estCellCounts, CP_PCs, PCs)) %>%
+                          # list(metaData, estCellCounts, CP_PCs, PCs)) %>%
+  distinct(subjID, .keep_all=T)  # Hacky...better way of deciding which biological replicates to keep?
+nonMethData <- replace_na(nonMethData, 
+                          list(bmi=median(nonMethData$bmi, na.rm=T),
+                               smk_now=0, smk_py=0, ht_med=0, lipid_med=0, dm_med=0)) %>%
+  mutate(diabetes=dm_med | glu>125) %>%
+  mutate_at(c("chol","ldl","hdl","tg","sbp","glu","hscrp"), log10)
+nmd_whi <- filter(nonMethData, study=="whi")
+nmd_fhs <- filter(nonMethData, study=="fhs")
+
+betas_whi <- betas_whi[,match(nonMethData$sampleKey[nonMethData$study=="whi"], colnames(betas_whi))]
+betas_fhs <- betas_fhs[,match(nonMethData$sampleKey[nonMethData$study=="fhs"], colnames(betas_fhs))]
+stopifnot(all(colnames(betas_whi)==nonMethData$sampleKey[nonMethData$study=="whi"]),
+          all(colnames(betas_fhs)==nonMethData$sampleKey[nonMethData$study=="fhs"]))  # Ensure identical number and order of samples for methylation and covariate data
+```
+
+# Introduction
+
+Genetic approaches to cardiovascular disease (CVD) research have led to important breakthroughs in mechanistic understanding and therapeutic strategies. However, the mechanisms for gene variant-disease relationships are often difficult to determine, and their effects may often be mediated by epigenetic regulation [@Bonder2016]. DNA methylation is one such mechanism that can reflect both genetic variation and environmental exposures and potentially drive their effects on CVD outcomes [@Ordovas2010].
+
+A series of recent epigenome-wide association studies (EWAS) have examined relationships between DNA methylation at cytosine-phosphate-guanine (CpG) sites and various subtypes of CVD, including prior myocardial infarction [@Rask-Andersen2016], acute coronary syndrome [@Li2017], and atherosclerosis [@Nakatochi2017]. These discoveries may reveal important mechanistic insights, but are susceptible to reverse causation. Indeed, Mendelian randomization approaches have suggested that reverse causation (methylation being influenced by the phenotype of interest) is more common [@Dekkers2016;@Wahl2017]. One approach to this problem is to examine epigenetic associations with cardiovascular risk factors. Multiple investigations have explored these relationships genome-wide [@Pfeiffer2015;@Irvin2014], and have even uncovered prognostic CpG sites for incident coronary heart disease in the process [@Hedman2017;@Aslibekyan2018]. A few studies looking directly at incident CVD as a binary variable have found relationships with global DNA methylation (as approximated by LINE-1 methylation levels) and with a specific cluster of CpG sites in the ZBTB12 gene [@Baccarelli2010;@Guarrera2015].
+
+Most epigenetic investigations of CVD to-date have been performed in blood, based on the importance of immune-related processes in its pathogenesis [@Back2015] as well as its relative ease of collection in comparison to other relevant tissues (e.g. endothelium, myocardium). In addition, several groups have shown a moderate ability of blood-based methylomic signatures to reflect those in disease-relevant tissues [@Bacos2016;@Huang2016].
+
+To address the problem of reverse causation while incorporating time-to-event information, we set out to analyze relationships between methylation and incident CVD using time-to-event models in a series of two cohorts. Noting the previously-observed lack of replication in CVD-related CpG sites [@Fernandez-Sanles2017], we used module- and region-based techniques to improve detection and the robustness of findings. We sought context for two specific modules of interest using gene- and chromatin-based annotations, and compared module activations to past and current cardiovascular risk factor levels to better understand their potential biological mechanisms.
+
+# Results
+
+## Weighted correlation network approach finds CVD-related modules
+
+Population characteristics are described below. The discovery set, Women's Health Initiative (n=2023), had a median age of 65 and is entirely female, while being selected for an approximately equal ratio of subjects who did and did not experience an incident CVD event following the methylation measurement timepoint. The replication set, Framingham Heart Study Offspring Cohort (n=2587), had a median age of 66 and is approximately half female, with 305 subjects experiencing incident CVD events. Cardiovascular events were defined here as encompassing coronary heart disease, stroke, and death from CVD (see Methods section for further details).
+
+```{r population-description}
+popData <- nonMethData %>%
+  dplyr::select(study, sex, age, race, bmi, smk_now, pastEvent, event) %>%
+  group_by(study) %>%
+  summarise(n=n(),
+            perc_female=paste(round(sum(sex=="F")/n*100), " %"),
+            age_range=paste0(median(age), " (", paste(range(age),collapse="-"), ")"),
+            mixed_race=ifelse(length(unique(race))>1, "Yes", "No"),
+            bmi_range=paste0(round(median(bmi),1), " (", paste(round(range(bmi),1),collapse="-"), ")"),
+            perc_smoke=paste0(round(sum(smk_now)/n*100), " %"),
+            n_pastEvent=sum(pastEvent),
+            n_event=sum(event)) %>%
+  setNames(c("Dataset","Sample Size","% female","Age","Mixed race","BMI","% smoke",
+             "# prior CVD events","# incident CVD events")) %>%
+  t() %>%
+  data.frame() %>%
+  setNames(c("FHS","WHI"))
+kable(popData[-1,], caption="Population description", booktabs=T)
+```
+
+```{r wgcna-load}
+net <- readRDS("../int/wgcna/whiNet.rds")
+whiMEs <- readRDS("../int/wgcna/whiMEs.rds")
+mp <- readRDS("../int/wgcna/fhsMP.rds")
+
+# Helpful objects for downstream analysis -- module constituents, sizes, etc.
+wgcnaInputCpgs <- rownames(betas_whi)
+cpgToModule <- data.frame(CpG=wgcnaInputCpgs, module=net$colors, stringsAsFactors=F)
+modCpgs <- lapply(setNames(unique(net$colors),unique(net$colors)), function(m) wgcnaInputCpgs[net$colors==m])
+modSizes <- cpgToModule %>%
+  group_by(module) %>%
+  summarise(modSize=n())
+```
+
+We first set out to find biologically relevant modules in an unsupervised manner using the WGCNA algorithm for `r nrow(betas_whi)` CpGs in WHI passing quality control filters (study overview in Supp. Fig. 1). After weighted correlation network construction, topological overlap calculation, and subsequent clustering, `r length(modCpgs)` modules were uncovered, ranging in size from `r min(modSizes$modSize)` to `r sort(modSizes$modSize, decreasing=T)[2]` CpGs.
+
+```{r module-associations, include=F}
+whiModRes.ccAdj.list <- lapply(whiMEs$eigengenes, function(eg) {
+  cox.fit <- coxph(Surv(time,event)~eg+dnaPull+CD4T+CD8T+Bcell+Mono+NK+Gran, data=nmd_whi)
+  summary(cox.fit)$coef["eg",c("coef","z","Pr(>|z|)")]
+})
+whiModRes.ccAdj.df <- do.call(rbind, whiModRes.ccAdj.list) %>%
+  as.data.frame() %>%
+  rownames_to_column(var="module") %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate(module=gsub("^ME", "", module),
+         fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+topModules <- whiModRes.ccAdj.df$module[whiModRes.ccAdj.df$fdr<0.2]
+
+whiModRes.allAdj.list <- lapply(whiMEs$eigengenes, function(eg) {
+  cox.fit <- coxph(Surv(time,event)~eg+dnaPull+CD4T+CD8T+Bcell+Mono+NK+Gran+age+race+bmi+smk_now+smk_py, data=nmd_whi)
+  summary(cox.fit)$coef["eg",c("coef","z","Pr(>|z|)")]
+})
+whiModRes.allAdj.df <- do.call(rbind, whiModRes.allAdj.list) %>%
+  as.data.frame() %>%
+  rownames_to_column(var="module") %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate(module=gsub("^ME", "", module),
+         fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r cpgModuleMembership, eval=F}
+cpgModuleMembership <- as.data.frame(cor(t(betas_whi[modCpgs$brown4,]), whiECs$brown4))
+MMPvalue = as.data.frame(WGCNA::corPvalueStudent(as.matrix(cpgModuleMembership), nrow(nmd_whi)));
+```
+
+```{r module-enrichments, cache=1, include=F}
+moduleGoEnrichments <- lapply(setNames(topModules, topModules), function(mod) {
+  cpgSet <- modCpgs[[mod]]
+  suppressWarnings(gsaTbl <- missMethyl::gometh(cpgSet, collection="GO"))
+  gsaTopResTbl <- arrange(filter(gsaTbl, FDR<0.25), FDR)
+})
+```
+
+```{r modules-ecs, cache=1, include=F}
+whiECs <- list()
+whiEC2s <- list()
+fhsECs <- list()
+fhsEC2s <- list()
+ecRes <- lapply(setNames(topModules,topModules), function(mod) {
+  pca.fit <- flashpca(scale(t(betas_whi[modCpgs[[mod]],])), stand="sd", do_loadings=T)
+  pc1rots <- setNames(pca.fit$loadings[,1], modCpgs[[mod]])
+  pc1rots <- pc1rots * sign(lm(event~pca.fit$vectors[,1]+CD4T+CD8T+Bcell+NK+Mono+Gran, data=nmd_whi)$coef[2])  # Aligns PC1 w/ CVD risk
+  pc2rots <- setNames(pca.fit$loadings[,2], modCpgs[[mod]])
+  pc2rots <- pc2rots * sign(lm(event~pca.fit$vectors[,2]+CD4T+CD8T+Bcell+NK+Mono+Gran, data=nmd_whi)$coef[2])  # Aligns PC2 w/ CVD risk
+  fhsCommonCpgs <- intersect(rownames(betas_fhs), names(pc1rots))
+  list(whiEC1=as.vector(scale(t(betas_whi[names(pc1rots),])) %*% pc1rots), whiEC1_varExpl=var(pca.fit$projection[,1]),
+       whiEC2=as.vector(scale(t(betas_whi[names(pc2rots),])) %*% pc2rots), whiEC2_varExpl=var(pca.fit$projection[,2]),
+       whiEVs=pca.fit$values,
+       fhsEC1=as.vector(scale(t(betas_fhs[fhsCommonCpgs,])) %*% pc1rots[fhsCommonCpgs]),
+       fhsEC2=as.vector(scale(t(betas_fhs[fhsCommonCpgs,])) %*% pc2rots[fhsCommonCpgs]))
+})
+whiECs <- map(ecRes, "whiEC1")
+fhsECs <- map(ecRes, "fhsEC1")
+whiEC2s <- map(ecRes, "whiEC2")
+fhsEC2s <- map(ecRes, "fhsEC2")
+whiScreeplots <- map(ecRes, "whiScree")
+```
+
+```{r genome-distribution, cache=1, include=F}
+summarise_annotation <- function(group, df) {
+  # Takes in a set of annotations and returns the proportions of a given field (e.g. gene name)
+  df %>%
+    select(one_of("Name", group)) %>%
+    separate_rows(group, sep=";") %>%
+    distinct() %>%
+    filter_at(group, all_vars(.!="")) %>%
+    group_by_at(group) %>%
+    summarise(n=n()) %>%
+    mutate(frac=n/sum(n))
+}
+
+calc_enrichment_p <- function(modCpgs, bgCpgs, type, group, lowerTail=F) {
+  rtiSummaryMod <- summarise_annotation(type, filter(anno450k, Name %in% modCpgs))
+  rtiSummaryAll <- summarise_annotation(type, filter(anno450k, Name %in% bgCpgs))
+  n_hitsInGroup <- sum(rtiSummaryMod$n[rtiSummaryMod[[type]] %in% group])
+  n_availInGroup <- sum(rtiSummaryAll$n[rtiSummaryAll[[type]] %in% group])
+  2*phyper(n_hitsInGroup, n_availInGroup, length(wgcnaInputCpgs)-n_availInGroup, length(modCpgs), lower.tail=lowerTail)
+}
+
+geneGroups <- unique(unlist(strsplit(anno450k$UCSC_RefGene_Group, split=";")))
+islandGroups <- unique(unlist(strsplit(anno450k$Relation_to_Island, split=";")))
+locEnrichments <- rbind(cbind(expand.grid(module=topModules, group=geneGroups, type="UCSC_RefGene_Group")),
+                        cbind(expand.grid(module=topModules, group=islandGroups, type="Relation_to_Island")))
+locEnrichments$p <- apply(locEnrichments, 1, function(r) calc_enrichment_p(modCpgs[[r[['module']]]], wgcnaInputCpgs, r[['type']], r[['group']]))
+```
+
+```{r fhs-rep, include=F}
+Zsummary.pres <- mp$preservation$Z$ref.whi$inColumnsAlsoPresentIn.fhs[topModules,"Zsummary.pres"]
+
+fhsModRes.list <- lapply(fhsECs, function(eg) {
+  cox.fit <- coxph(Surv(time,event)~eg+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7+CD4T+CD8T+Bcell+Mono+NK+Gran, data=nmd_fhs)
+  summary(cox.fit)$coef["eg",c("coef","z","Pr(>|z|)")]
+})
+fhsModRes.df <- do.call(rbind, fhsModRes.list) %>%
+  as.data.frame() %>%
+  rownames_to_column(var="module") %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate(module=gsub("^ME", "", module),
+         fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+# fhsModRep <- fhsSMod.df$module[whiModRes.ccAdj.df$fdr<0.2]
+
+fhsModRes.allAdj.list <- lapply(fhsECs, function(eg) {
+  cox.fit <- coxph(Surv(time,event)~eg+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7+CD4T+CD8T+Bcell+Mono+NK+Gran+age+sex+bmi+smk_now+smk_py, data=nmd_fhs)
+  summary(cox.fit)$coef["eg",c("coef","z","Pr(>|z|)")]
+})
+fhsModRes.allAdj.df <- do.call(rbind, fhsModRes.allAdj.list) %>%
+  as.data.frame() %>%
+  rownames_to_column(var="module") %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate(module=gsub("^ME", "", module),
+         fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+
+fhsModRes.peAdj.list <- lapply(fhsECs, function(eg) {
+  cox.fit <- coxph(Surv(time,event)~eg+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7+CD4T+CD8T+Bcell+Mono+NK+Gran+pastEvent, data=nmd_fhs)
+  summary(cox.fit)$coef["eg",c("coef","z","Pr(>|z|)")]
+})
+fhsModRes.peAdj.df <- do.call(rbind, fhsModRes.peAdj.list) %>%
+  as.data.frame() %>%
+  rownames_to_column(var="module") %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate(module=gsub("^ME", "", module),
+         fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+
+fhsModRes.sexInt.list <- lapply(fhsECs, function(eg) {
+  cox.fit <- coxph(Surv(time,event)~eg*sex+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7+CD4T+CD8T+Bcell+Mono+NK+Gran, data=nmd_fhs)
+  summary(cox.fit)$coef["eg:sexM",c("coef","z","Pr(>|z|)")]
+})
+
+whiModRes.raceInt.list <- lapply(whiECs, function(eg) {
+  cox.fit <- coxph(Surv(time,event)~eg*race+dnaPull+CD4T+CD8T+Bcell+Mono+NK+Gran, 
+                   data=nmd_whi)
+  summary(cox.fit)$coef[c("eg:racehispanic","eg:racewhite"),c("coef","z","Pr(>|z|)")]
+})
+```
+
+Principal component eigenvectors for each module were calculated in order to examine the characteristics of these modules as a whole. The first principal component of each module tended to explain approximately half of the total variance, while the rest contributed only small fractions (see Supp. Fig. 2 for Scree plots). Thus, these first eigenvectors, or "eigenCpGs", were subsequently used to describe module behavior. Cox proportional hazards models were used to assess the relationships between these module eigenCpGs and incident CVD. In partially-adjusted models (adjusted for technical factors and estimated white blood cell proportions), three modules were found to be associated at multiple test-corrected FDR<0.2 (Table 2). Adjustment for biological covariates (age, BMI, sex/race, and smoking behavior) attenuated these relationships to nominal statistical significance (0.01 < p < 0.1). These modules showed enrichment for different sets of GO terms, ranging from immune activation (myeloid or T cell) to developmental processes.
+
+```{r sig-module-table, warning=F}
+goEnrichments <- data.frame(module=topModules,
+                            `GO terms`=c("Development","Immune activation","T cell activation"))
+
+sigLocEnrichments <- data.frame(module=topModules, 
+                                islandLocEnrich=c("N_shore","Open sea","Open sea"), 
+                                geneLocEnrich=c("1stExon/TSS/5' UTR","","Body"), stringsAsFactors=F)
+
+moduleVarExpl <- whiMEs$varExplained %>%
+  setNames(gsub("^ME", "", names(whiMEs$eigengenes))) %>%
+  gather(key=module, value=varExpl)
+modTbl <- modSizes %>%
+  inner_join(moduleVarExpl, by="module") %>%
+  inner_join(select(whiModRes.ccAdj.df, module, p), by="module") %>%
+  inner_join(goEnrichments, by="module") %>%
+  inner_join(sigLocEnrichments, by="module") %>%
+  mutate(varExpl=100*varExpl,
+         p=format.pval(p,2), varExpl=round(varExpl,2)) %>%
+  arrange(p)
+  
+kable(setNames(modTbl, c("module","size","Var. expl. (%)","p","GO terms","CpG Islands","Gene-based")), booktabs=T,
+      caption="Modules associated with incident CVD at FDR < 0.2") %>%
+  add_header_above(c("", "", "EigenCpG"=2, "Enrichment analysis"=3))
+```
+
+All three modules showed very strong preservation in FHS (all $Z_{summary}$ statistics > 50, where 10 is a typical threshold for strong preservation). Of these, two associations with incident CVD (blue and brown4) replicated strongly in FHS, while lavenderblush3 showed nominal replication (p=`r format.pval(fhsModRes.df$p[3],3)`) in partially-adjusted models (Supp. Table 1). Though the existence of past CVD events (experienced prior to sample collection for DNA methylation measurement) could represent a confounder in the FHS dataset, sensitivity analyses adjusting for past events did not appreciably reduce the strength of these module-trait relationships. Also of potential relevance to this replication is the demographic heterogeneity between the two cohorts. To address this possibility, we performed additional analyses including interaction terms between eigenCpGs for each module and either sex (in FHS) or race (in WHI). None of these analyses produced significant interaction terms at p < 0.05. 
+
+```{r ica, eval=F}
+brown4betas_whi <- betas_whi[modCpgs$brown4,]
+ica.fit <- fastICA(t(brown4betas_whi), n.comp=10)
+
+icaRes_whi <- lapply(1:10, function(i) {
+  ic <- ica.fit$S[,i]
+  cox.fit <- coxph(Surv(time,event)~ic+dnaPull+CD4T+CD8T+Bcell+NK+Mono+Gran+age+bmi+smk_now+smk_py+race, data=nmd_whi)
+  summary(cox.fit)$coef["ic",c("coef","z","Pr(>|z|)")]
+})
+
+icaRes_fhs <- lapply(1:10, function(i) {
+  weights <- ica.fit$A[i,]
+  ic <- t(betas_fhs[modCpgs$brown4,]) %*% weights
+  cox.fit <- coxph(Surv(time,event)~ic+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7+CD4T+CD8T+Bcell+Mono+NK+Gran+sex+age+bmi+smk_now+smk_py, data=nmd_fhs)
+  summary(cox.fit)$coef["ic",c("coef","z","Pr(>|z|)")]
+})
+
+icaRes <- data.frame(whi=map_dbl(icaRes_whi, 3), fhs=map_dbl(icaRes_fhs, 3))
+```
+
+```{r module-annot-table, eval=F}
+goEnrichmentStrings <- c(blue="development", brown="immune+development",
+                         lightgreen="development", brown4="immune",
+                         blue2="none", lavenderblush3="immune (T cell-specific)",
+                         darkolivegreen4="development", salmon="immune",
+                         plum1="development")
+
+moduleAnnotTbl <- ewasModuleEnrichments %>%
+  filter(module %in% topModules) %>%
+  mutate(GO_annot=goEnrichmentStrings[module],
+         pEnrich=format.pval(pEnrich)) %>%
+  arrange(desc(obsOverExp)) %>%
+  select(module, numHits, modSize, obsOverExp, pEnrich, GO_annot)
+kable(moduleAnnotTbl, booktabs=T, caption="EWAS-enriched module annotation")
+``` 
+
+## Genome-wide associations between DNA methylation and incident CVD events
+
+```{r qc, warning=F}
+make_variation_plot <- function(cohort) {
+  nmd <- filter(nonMethData, study==cohort)
+  
+  wbcpca.fit <- prcomp(select(nmd, CD8T, CD4T, NK, Bcell, Mono, Gran), scale.=T)
+  nmd$WBC_PC1 <- wbcpca.fit$x[,"PC1"]
+  nmd$WBC_PC2 <- wbcpca.fit$x[,"PC2"]
+  
+  covs <- c("sex","age","race","bmi","smk_now","smk_py","WBC_PC1","WBC_PC2",
+            "plate","center","dnaPull","sentrixRow","sentrixCol","event","pastEvent")
+  comparisonDF <- expand.grid(pc=c(paste0("PC", 1:6),"cpPC1","cpPC2","event"), covar=covs)
+  
+  comparisonDF$negLogP <- apply(comparisonDF, 1, function(row) {
+    pc <- row["pc"]
+    covar <- row["covar"]
+    nlp <- tryCatch({
+      lm.fit <- lm(as.formula(paste0(pc, "~", covar)), data=nmd)
+      pVal <- anova(lm.fit)[covar,"Pr(>F)"]
+      -log10(pVal)
+    }, error=function(e) 0)
+    if(is.na(nlp)) 0 else min(nlp, 20)
+  })
+  
+  ggplot(comparisonDF, aes(x=pc, y=forcats::fct_rev(covar), fill=negLogP)) +
+    geom_tile(color="white") +
+    scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+    scale_x_discrete(position="top") +
+    labs(title=toupper(cohort),
+         caption="Note: -log(p-values) capped at 20 to aid visualization.") +
+    theme(axis.title=element_blank())
+}
+
+whiVarPlt <- make_variation_plot("whi")
+fhsVarPlt <- make_variation_plot("fhs")
+```
+
+```{r ewas-prep}
+myTry <- function(expr, CpG) {
+  # Captures model failures and returns successful result or vector of NAs
+  tryCatch(expr,
+           error = function(e) {print(e); return(c(CpG, rep(NA, 3)))})
+}
+
+run_coxModel <- function(probeData, covarData, model_spec) {
+  # Given a row of the M-value matrix (corresponding to a CpG site), bind that methylation
+  # data to the covariate data and run Cox proportional hazards regression
+  CpG <- rownames(probeData)
+  probeData <- as.vector(probeData)
+  outlierTF <- probeData<quantile(probeData,0.25)-3*IQR(probeData) | 
+    probeData>quantile(probeData,0.75)+3*IQR(probeData)
+  modelData <- cbind(covarData, meth=as.numeric(probeData),
+                     survObj=Surv(time=covarData$time, event=covarData$event))
+  myTry({
+    cox.fit <- coxph(as.formula(model_spec), data=modelData, subset=!outlierTF)
+    c(CpG=CpG, summary(cox.fit)$coef[c('meth'),c('coef','z','Pr(>|z|)')])
+  }, CpG)
+}
+
+assess_ph <- function(probeData, covarData, model_spec) {
+  # Given a row of the M-value matrix (corresponding to a CpG site), bind that methylation
+  # data to the covariate data and use cox.zph function to evalute the proportional hazards assumption
+  CpG <- rownames(probeData)
+  probeData <- as.vector(probeData)
+  outlierTF <- probeData<quantile(probeData,0.25)-3*IQR(probeData) | 
+    probeData>quantile(probeData,0.75)+3*IQR(probeData)
+  modelData <- cbind(covarData, meth=as.numeric(probeData),
+                     survObj=Surv(time=covarData$time, event=covarData$event))
+  myTry({
+    cox.fit <- coxph(as.formula(model_spec), data=modelData, subset=!outlierTF)
+    cox.zph(cox.fit)$table["meth","p"]
+    # c(CpG=CpG, summary(cox.fit)$coef[c('meth'),c('coef','z','Pr(>|z|)')])
+  }, CpG)
+}
+```
+
+```{r ewas-discovery, cache=1}
+ewasModel_whi <- paste0("survObj~meth+age+race+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+dnaPull")
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+whiResList <- foreach(meth=iter(betas_whi, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth, nonMethData[nonMethData$study=="whi",], ewasModel_whi)
+
+stopCluster(cl)
+
+whiRes <- do.call(rbind, whiResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r ewas-replication, cache=1}
+ewasModel_fhs <- paste0("survObj~meth+sex+age+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+center+",
+                        paste0("cpPC",1:7,collapse="+"))
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(meth=iter(betas_fhs, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth, nonMethData[nonMethData$study=="fhs",], ewasModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r ewas-inflation}
+make_qqplot <- function(pVec, plotTitle="Title") {
+  pVec <- pVec[!is.na(pVec)]
+  qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle, xlab="Expected (-logP)", ylab="Observed (-logP)")
+  abline(0,1,col="red")
+}
+gControl <- function(pVals) {
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(pVals, df=1, lower.tail=F), na.rm=T)/qchisq(0.5, df=1)
+round(lambda, 2)
+}
+
+# whiQQ <- make_qqplot(whiRes$p, plotTitle=paste0("lambda = ", gControl(whiRes$p)))
+# fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+```
+
+```{r ewas-discovery-investigation, warning=F}
+qqmanInput_whi <- whiRes %>%
+  inner_join(select(anno450k, Name, chr, pos), by=c("CpG"="Name")) %>%
+  mutate(CHR=as.numeric(gsub("chr","",chr)), BP=as.numeric(pos), P=as.numeric(p)) %>%
+  na.omit()
+
+suppressMessages(whiPhChecks <- foreach(meth=iter(betas_whi[whiRes$CpG[1:100],], by="row"), .packages="survival") %do%
+  assess_ph(meth, nonMethData[nonMethData$study=="whi",], ewasModel_whi))
+```
+
+```{r top-hits, include=F}
+bonferroniThreshold <- 0.05/nrow(whiRes)
+whiToFhsReplication <- whiRes %>%
+  filter(p<bonferroniThreshold, !is.na(p)) %>%
+  left_join(fhsRes, by="CpG", suffix=c(".whi",".fhs"))
+bonferroniTbl <- whiToFhsReplication %>%
+  select(-contains("z"), -contains("fdr"))
+# kable(bonferroniTbl, caption="Bonferroni-significant CpGs in the discovery set")
+fdrTbl <- whiRes %>%
+  filter(fdr<0.05) %>%
+  mutate(direction=ifelse(sign(coef)==1, "+", "-"),
+         p=as.character(signif(p,3))) %>%
+  inner_join(select(anno450k, Name, chr, UCSC_RefGene_Group, UCSC_RefGene_Name), by=c("CpG"="Name")) %>%
+  select(CpG, chr, direction, p, UCSC_RefGene_Group, UCSC_RefGene_Name)
+```
+
+To investigate more specific epigenetic signals, we performed an epigenome-wide association study (EWAS) for incident CVD. Of single sites from the EWAS, `r nrow(whiToFhsReplication)` reached a genome-wide Bonferroni threshold, but none replicated strongly in FHS (Supp. Table 2). In order to improve statistical power, we focused on differentially methylated regions (DMRs). Single-site EWAS p-values were used as input to the Comb-p algorithm, which seeks regions enriched for low p-values while accounting for autocorrelation based on genomic distance. Comb-p was applied separately to EWAS results from WHI and FHS.
+`
+```{r combp-prep}
+res_to_bed <- function(resDF) {
+  resDF %>%
+    inner_join(anno450k, by=c("CpG"="Name")) %>%
+    mutate(chrom=chr, chromStart=pos-1, chromEnd=pos, name=CpG) %>%  # Start at provided genomic coordinate - 1 (based on a script from Github)
+    dplyr::select(chrom, chromStart, chromEnd, p, name) %>%
+    filter(!is.na(p)) %>%
+    arrange(chrom, chromStart)  # Order by chromosome/position
+}
+
+write_tsv(res_to_bed(whiRes), "../int/whiRes.bed")
+write_tsv(res_to_bed(fhsRes), "../int/fhsRes.bed")
+```
+
+```{r combp-results, message=F}
+combp_res_whi <- read_tsv("../int/regions.sig_whi.bed", col_names=F) %>%
+  setNames(c("chr","start","end","lowest_p","num_cpgs","p_region_slk","p_adj_region_sidak")) %>%
+  mutate(p_adj_region=signif(pmin(p_region_slk*(nrow(whiRes)/num_cpgs), 1), 3)) %>%
+  arrange(p_adj_region_sidak) %>%
+  filter(p_adj_region_sidak<0.05, num_cpgs>=2)
+combp_ranges_whi <- GRanges(combp_res_whi$chr, IRanges(combp_res_whi$start, combp_res_whi$end))
+combp_res_fhs <- read_tsv("../int/regions.sig_fhs.bed", col_names=F) %>%
+  setNames(c("chr","start","end","lowest_p","num_cpgs","p_region_slk","p_adj_region_sidak")) %>%
+  mutate(p_adj_region=signif(pmin(p_region_slk*(nrow(fhsRes)/num_cpgs), 1), 3)) %>%
+  arrange(p_adj_region)
+combp_ranges_fhs <- GRanges(combp_res_fhs$chr, IRanges(combp_res_fhs$start, combp_res_fhs$end))
+
+region_to_cpgs <- function(dmrChr, start, end) {
+  filter(anno450k, chr==dmrChr, pos>=as.numeric(start), pos<=as.numeric(end))$Name
+}
+
+# whiHits <- filter(combp_res_whi, p_adj_region_sidak<0.05)
+allDmrCpgs <- apply(combp_res_whi, 1, function(r) region_to_cpgs(r["chr"], r["start"], r["end"]))
+allDmrModules <- lapply(allDmrCpgs, function(cpgSet) unique(cpgToModule$module[cpgToModule$CpG %in% cpgSet]))
+moduleRepresentationInDmrs <- combp_res_whi %>%
+  mutate(modules=allDmrModules) %>%
+  select(modules) %>%
+  unnest(modules) %>%
+  group_by(modules) %>%
+  summarise(n=n()) %>%
+  inner_join(modSizes, by=c("modules"="module")) %>%
+  mutate(frac=n/modSize) %>%
+  arrange(desc(frac))
+
+overlap_ranges <- findOverlaps(combp_ranges_whi, combp_ranges_fhs)
+combpRep <- combp_res_whi %>%
+  dplyr::slice(from(overlap_ranges)) %>%
+  dplyr::select(chr, start, end, p_region_slk, p_adj_region_sidak) %>%
+  cbind(p_region_slk_fhs=combp_res_fhs$p_region_slk[to(overlap_ranges)],
+        p_adj_region_fhs=combp_res_fhs$p_adj_region_sidak[to(overlap_ranges)]) %>%
+  filter(p_adj_region_sidak<0.05,
+         p_region_slk_fhs<0.05/nrow(combp_res_whi))
+allRepDmrCpgs <- apply(combpRep, 1, function(r) region_to_cpgs(r["chr"], r["start"], r["end"]))
+allRepDmrModules <- lapply(allRepDmrCpgs, function(cpgSet) cpgToModule$module[cpgToModule$CpG %in% cpgSet])
+
+# combp_res_whi_inSig <- combp_res_whi %>%
+#   mutate(modules=allDmrModules,
+#          inSig=map_lgl(modules, function(m) any(m %in% c("blue","brown4","lavenderblush3")))) %>%
+#   filter(inSig)
+# combp_ranges_whi_inSig <- GRanges(combp_res_whi_inSig$chr, IRanges(combp_res_whi_inSig$start, combp_res_whi_inSig$end))
+# overlap_ranges_inSig <- findOverlaps(combp_ranges_whi_inSig, combp_ranges_fhs)
+# combpRep_inSig <- combp_res_whi_inSig %>%
+#   dplyr::slice(from(overlap_ranges_inSig)) %>%
+#   dplyr::select(chr, start, end, p_region_slk, p_adj_region_sidak) %>%
+#   cbind(p_region_slk_fhs=combp_res_fhs$p_region_slk[to(overlap_ranges_inSig)]) %>%
+#   filter(p_adj_region_sidak<0.05,
+#          p_region_slk_fhs<0.05/nrow(combp_res_whi_inSig))
+
+
+find_genes_byRegion <- function(locDF) {
+  apply(locDF, 1, function(row) {
+    regionAnnot <- filter(anno450k, chr==row["chr"], 
+                          pos>as.numeric(row["start"]), pos<=as.numeric(row["end"]))
+    gsub(";.*", "", regionAnnot$UCSC_RefGene_Name[1])
+  })
+}
+
+combpResTbl <- combpRep %>%
+  mutate(annot_gene=find_genes_byRegion(.),
+         num_cpgs=lengths(allRepDmrCpgs)) %>%
+  mutate(loc=paste0(chr, ":", start, "-", end),
+         gene_loc=c("Body","CpG shelf near TSS","CpG island in 5' UTR")) %>%
+         # gene_loc=c("CpG island at TSS","CpG island in body","Body","CpG island")) %>%
+  mutate_at(vars(contains("p_")), function(p) as.character(signif(p,3))) %>%
+  select(chr, start, end, loc, num_cpgs, annot_gene, gene_loc, p_region_slk, p_adj_region_sidak, p_region_slk_fhs)
+
+# combpResTbl$my_annot <- c("Found in BMI EWAS","smoking during pregnancy, serum CRP","","predicts mortality, related to blood pressure","DM in aorta w/ atherosclerosis","","aberrant methylation in cancer, DM in coronary artery disease")
+combpResTblPretty <- combpResTbl %>%
+  mutate_at(c("p_region_slk","p_adj_region_sidak","p_region_slk_fhs"), function(p) format.pval(as.numeric(p), digits=3)) %>%
+  select(loc, num_cpgs, annot_gene, gene_loc, p_region_slk, p_adj_region_sidak, p_region_slk_fhs) %>%
+  setNames(c("Location","# CpGs","Annotated gene","Genomic region","P","Adj. P","P"))
+kable(combpResTblPretty, booktabs=T, caption="Comb-p regions with multiple test-corrected p<0.05 in WHI and Bonferroni p<0.05 in FHS") %>%
+  add_header_above(c("", "", "", "", "Discovery"=2, "Replication"))
+```
+
+206 DMRs were found in WHI after Sidak multiple testing correction for each DMR based on its length. Of these, 3 were both found in FHS and replicated at a Bonferroni level (Table 3; Fig. 1). These regions were annotated to two cellular transport genes (SLC9A1 and SLC1A5) and TNRC6C, which codes for a scaffolding protein involved in miRNA-mediated translational repression. Of the three WGCNA modules identified above, brown4 CpG sites consituted part of 2 DMRs (at SLC9A1 & SLC1A5), while a single CpG from the blue module was also a member of the SLC9A1 DMR.
+
+```{r combp-plots, warning=F, fig.asp=1.2, fig.cap="DMRs identified by Comb-p in WHI and validated in FHS at the (a) SLC9A1 and (b) SLC1A5 loci. Negative logarithms of EWAS p-values are shown as a function of the genomic coordinate. EWAS p-values from WHI are in red and FHS in green. Dotted lines demarcate the DMR boundaries."}
+make_bed <- function(resDF) {
+  annoResDF <- resDF %>%
+    inner_join(anno450k, by=c("CpG"="Name")) %>%
+    mutate(start=as.numeric(pos), 
+           end=as.numeric(pos),
+           negLogP=-log10(p)) %>%
+    dplyr::select(chr, start, end, negLogP, CpG)
+}
+
+resAnnoWhi <- make_bed(whiRes)
+resAnnoFhs <- make_bed(fhsRes)
+
+# ## ApoB locus
+# dmr <- c(combpResTbl$start[1], combpResTbl$end[1])
+# chrom <- combpResTbl$chr[1]
+# chromstart <- dmr[1]-2000
+# chromend <- dmr[2]+5000
+# resAnnoRegionWhi <- filter(resAnnoWhi, chr==chrom, start>=chromstart, end<=chromend)
+# resAnnoRegionFhs <- filter(resAnnoFhs, chr==chrom, start>=chromstart, end<=chromend)
+# resAnnoRegionFhsAdj <- mutate(resAnnoRegionFhs, negLogP=-log10(run_fhs_adjusted(CpG)$p))
+# plotDF <- bind_rows(list(resAnnoRegionWhi, resAnnoRegionFhs, resAnnoRegionFhsAdj), .id="Dataset") %>%
+#   mutate(Dataset=case_when(Dataset==1~"WHI", Dataset==2~"FHS", Dataset==3~"FHS (RF-adj)"),
+#          Dataset=factor(Dataset, levels=unique(Dataset)))
+# apobPlt <- ggplot(plotDF, aes(x=start/1000, y=negLogP, color=Dataset)) + 
+#   geom_point() +
+#   geom_vline(xintercept=dmr[1]/1000, linetype="dashed") +
+#   geom_vline(xintercept=dmr[2]/1000, linetype="dashed") +
+#   xlab("Position on chr. 2 (kb)") +
+#   ggtitle("ApoB locus")
+# 
+## SLC9A1 locus
+dmr <- c(combpResTbl$start[1], combpResTbl$end[1])
+chrom <- combpResTbl$chr[1]
+chromstart <- dmr[1]-5000
+chromend <- dmr[2]+5000
+resAnnoRegionWhi <- filter(resAnnoWhi, chr==chrom, start>=chromstart, end<=chromend)
+resAnnoRegionFhs <- filter(resAnnoFhs, chr==chrom, start>=chromstart, end<=chromend)
+plotDF <- bind_rows(list(resAnnoRegionWhi, resAnnoRegionFhs), .id="Dataset") %>%
+  mutate(Dataset=case_when(Dataset==1~"WHI", Dataset==2~"FHS"),
+         Dataset=factor(Dataset, levels=unique(Dataset)))
+slc9a1Plt <- ggplot(plotDF, aes(x=start/1000, y=negLogP, color=Dataset)) +
+  geom_point(size=2) +
+  geom_vline(xintercept=dmr[1]/1000, linetype="dashed") +
+  geom_vline(xintercept=dmr[2]/1000, linetype="dashed") +
+  xlab("Position on chr. 1 (kb)") +
+  ggtitle("SLC9A1 locus")
+
+## SLC1A5 locus
+dmr <- c(combpResTbl$start[2], combpResTbl$end[2])
+chrom <- combpResTbl$chr[2]
+chromstart <- dmr[1]-5000
+chromend <- dmr[2]+5000
+resAnnoRegionWhi <- filter(resAnnoWhi, chr==chrom, start>=chromstart, end<=chromend)
+resAnnoRegionFhs <- filter(resAnnoFhs, chr==chrom, start>=chromstart, end<=chromend)
+# resAnnoRegionFhsAdj <- mutate(resAnnoRegionFhs, negLogP=-log10(run_fhs_adjusted(CpG)$p))
+plotDF <- bind_rows(list(resAnnoRegionWhi, resAnnoRegionFhs), .id="Dataset") %>%
+  mutate(Dataset=case_when(Dataset==1~"WHI", Dataset==2~"FHS"),
+         Dataset=factor(Dataset, levels=unique(Dataset)))
+slc1a5Plt <- ggplot(plotDF, aes(x=start/1000, y=negLogP, color=Dataset)) + 
+  geom_point(size=2) +
+  geom_vline(xintercept=dmr[1]/1000, linetype="dashed") +
+  geom_vline(xintercept=dmr[2]/1000, linetype="dashed") +
+  xlab("Position on chr. 19 (kb)") +
+  ggtitle("SLC1A5 locus")
+
+## TNRC6C locus
+dmr <- c(combpResTbl$start[3], combpResTbl$end[3])
+chrom <- combpResTbl$chr[3]
+chromstart <- dmr[1]-5000
+chromend <- dmr[2]+5000
+resAnnoRegionWhi <- filter(resAnnoWhi, chr==chrom, start>=chromstart, end<=chromend)
+resAnnoRegionFhs <- filter(resAnnoFhs, chr==chrom, start>=chromstart, end<=chromend)
+# resAnnoRegionFhsAdj <- mutate(resAnnoRegionFhs, negLogP=-log10(run_fhs_adjusted(CpG)$p))
+plotDF <- bind_rows(list(resAnnoRegionWhi, resAnnoRegionFhs), .id="Dataset") %>%
+  mutate(Dataset=case_when(Dataset==1~"WHI", Dataset==2~"FHS"),
+         Dataset=factor(Dataset, levels=unique(Dataset)))
+tnrc6cPlt <- ggplot(plotDF, aes(x=start/1000, y=negLogP, color=Dataset)) + 
+  geom_point(size=2) +
+  geom_vline(xintercept=dmr[1]/1000, linetype="dashed") +
+  geom_vline(xintercept=dmr[2]/1000, linetype="dashed") +
+  xlab("Position on chr. 17 (kb)") +
+  ggtitle("TNRC6C locus")
+
+plot_grid(slc9a1Plt, slc1a5Plt, tnrc6cPlt, nrow=3)
+```
+
+## Exploration of the brown4 and blue modules
+
+```{r brown4-enrichments, warning=F}
+whiCpgsAnnot <- anno450k %>%
+  mutate(Enhancer=ifelse(Enhancer==T, T, F)) %>%
+  filter(Name %in% rownames(betas_whi))
+
+annot_plot <- function(cpgSet, bgCpgSet, group_var) {
+  # Given a specific field, plot proportion of CpGs in a specific subset next to those of the full set
+  my_groups <- summarise_annotation(group_var, filter(anno450k, Name %in% cpgSet))
+  all_groups <- summarise_annotation(group_var, filter(anno450k, Name %in% bgCpgSet))
+  merge_groups <- inner_join(my_groups, all_groups, by=group_var, suffix=c(".subset",".all")) %>%
+    gather(key=group, value=frac, contains("frac")) %>%
+    mutate(group=factor(group, levels=c("frac.all","frac.subset"), labels=c("All CpGs","Module CpGs")))
+  ggplot(merge_groups, aes_string(x=group_var, y="frac", fill="group")) +
+    geom_bar(stat="identity", position="dodge") +
+    theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=30, hjust=1))
+}
+
+brown4GeneGroupEnrichmentPlot <- annot_plot(modCpgs$brown4, whiCpgsAnnot$Name, "UCSC_RefGene_Group")
+brown4CpgIslandEnrichmentPlot <- annot_plot(modCpgs$brown4, whiCpgsAnnot$Name, "Relation_to_Island")
+
+pBody <- calc_enrichment_p(modCpgs$brown4, whiCpgsAnnot$Name, "UCSC_RefGene_Group", "Body", lowerTail=F)
+pOpenSea <- calc_enrichment_p(modCpgs$brown4, whiCpgsAnnot$Name, "Relation_to_Island", "OpenSea", lowerTail=F)
+
+numInEnh <- sum(whiCpgsAnnot$Enhancer[whiCpgsAnnot$Name %in% modCpgs$brown4]==T)
+numEnhTot <- sum(whiCpgsAnnot$Enhancer==T)
+pEnhancers <- 2*phyper(numInEnh, numEnhTot, nrow(whiCpgsAnnot)-numEnhTot, length(modCpgs$brown4), lower.tail=F)
+
+separateGeneAnno <- anno450k %>%
+  select(Name, UCSC_RefGene_Name) %>%
+  separate_rows(UCSC_RefGene_Name, sep=";")
+
+numGenesBrown4 <- length(unique(filter(separateGeneAnno, Name %in% modCpgs$brown4)$UCSC_RefGene_Name))
+```
+
+```{r blue-enrichments, warning=F}
+blueGeneGroupEnrichmentPlot <- annot_plot(modCpgs$blue, whiCpgsAnnot$Name, "UCSC_RefGene_Group")
+blueCpgIslandEnrichmentPlot <- annot_plot(modCpgs$blue, whiCpgsAnnot$Name, "Relation_to_Island")
+
+# pTSS <- calc_enrichment_p(modCpgs$blue, whiCpgsAnnot$Name, "UCSC_RefGene_Group", "Body", lowerTail=F)
+pIsland <- calc_enrichment_p(modCpgs$blue, whiCpgsAnnot$Name, "Relation_to_Island", "Island", lowerTail=F)
+
+numGenesBlue <- length(unique(filter(separateGeneAnno, Name %in% modCpgs$blue)$UCSC_RefGene_Name))
+```
+
+Based on the results from the module- and region-centric analyses, we investigated the brown4 and blue modules further for biological significance. The brown4 module was associated with immune-related genes as noted above, and was enriched strongly for "open sea" sites (p=1.1e-42) and annotated enhancers (p=1.7e-33). In contrast, the blue module was associated with development-related genes, and was enriched moderately for sites near genic transcription start sites and strongly for CpG islands (p < 2.2e-16) (Fig. 2a,b).
+
+Given these observations, we examined relative enrichments of enhancer- and promoter-associated histone marks across different blood cell subtypes to better understand the cell type specificity of this signal. Epigenetic peaks were annotated using data from the Roadmap Epigenomics Project [@KundajeAnshulMeuleman2015] and relative enrichments were calculated as the fraction of module CpGs found in peaks divided by the fraction of all CpGs found in peaks. The eFORGE tool is designed to run a similar cell type specificity analysis, but is currently unable to process CpG sets the size of the blue module.
+
+```{r module-cell-type-corrs, eval=F}
+modCellTypeCorrs <- expand.grid(module=topModules, cellType=c("CD4T","CD8T","Bcell","Mono","NK","Gran"), stringsAsFactors=F) %>%
+  mutate(corr=map2_dbl(module, cellType, function(m,c) cor.test(whiECs[[m]], nmd_whi[[c]])$estimate))
+modCellTypeCorrsWide <- modCellTypeCorrs %>%
+  spread(key=module, value=corr)
+modClust <- hclust(dist(t(modCellTypeCorrsWide[-1])))
+modOrder <- modClust$labels[modClust$order]
+
+cellTypeCorrPlt <- ggplot(filter(modCellTypeCorrs, module=="brown4"), aes(x=module, y=cellType, fill=corr)) +
+  geom_tile() +
+  scale_fill_gradient2()
+
+cellTypeCorrPlt
+```
+
+```{r eforge-prep, message=F}
+silent <- lapply(topModules, function(m) write(modCpgs[[m]], file=paste0("../int/", m, "_cpgs.txt")))
+```
+
+```{r eforge-res, message=F}
+eforgeResDHS <- read_tsv("../int/eforge_brown4_dhs.tsv")
+eforgeResHistones <- read_tsv("../int/eforge_brown4_histones.tsv")
+eforgeRes <- bind_rows(eforgeResDHS, eforgeResHistones) %>%
+  filter(Tissue=="Blood") %>%
+  dplyr::select(Cell, Datatype, Pvalue) %>%
+  mutate(negLogP=-log10(Pvalue)) %>%
+  filter(!grepl("cord", Cell)) %>%
+  mutate(Cell=case_when(grepl("E050", Cell) ~ "E050 Primary hematopoietic stem cells G-CSF-mobilized Female",
+                        grepl("E051", Cell) ~ "E050 Primary hematopoietic stem cells G-CSF-mobilized Male",
+                        TRUE ~ Cell)) %>%
+  filter(Datatype %in% c("DHS","H3K4me1","H3K4me3")) %>%
+  arrange(desc(negLogP)) %>%
+  mutate(Cell=factor(Cell, levels=unique(Cell)))
+
+eforgePlt <- ggplot(eforgeRes, aes(x=Datatype, y=Cell, fill=negLogP)) +
+  geom_tile() +
+  scale_fill_gradient2() +
+  theme(axis.title=element_blank(), axis.text.x=element_text(angle=30))
+
+eforgeCellCodes <- filter(eforgeResDHS, Tissue=="Blood", !grepl("cord", Cell, ignore.case=T))$Accession
+```
+
+```{r my-roadmap-prep, cache=1, warning=F}
+whiAnno450k <- filter(anno450k, Name %in% wgcnaInputCpgs)
+whiAnno450kRanges <- GRanges(whiAnno450k$chr, IRanges(start=whiAnno450k$pos, end=whiAnno450k$pos))
+
+read_epiAnno <- function(broadPeaksFile) {
+  # Given a path to a broadPeaks annotation file, read in the set of regions and output a GRanges object
+  epiAnno.df <- suppressMessages(read_tsv(broadPeaksFile, col_names=F, progress=F)) %>%
+    select(1, 2, 3, ncol(.)) %>%
+    setNames(c("chr","start","end","negLogQ")) %>%
+    filter(negLogQ>2)
+  GRanges(seqnames=epiAnno.df$chr, IRanges(start=epiAnno.df$start, end=epiAnno.df$end))
+}
+
+test_epiAnno <- function(epiAnno.gr, module) {
+  # Given a set of peak calls/regions of interest for an epigenomic annotation of interest (as GRanges 
+  # object), return the -log(p) testing whether a set of EWAS results are associated with the annotation
+  if(length(epiAnno.gr)==0) return(NA)
+  cpgsInAnno <- findOverlaps(whiAnno450kRanges, epiAnno.gr)
+  annoWithMembershipAndMods <- mutate(whiAnno450k, 
+                               member=1:nrow(whiAnno450k) %in% queryHits(cpgsInAnno),
+                               inModule=Name %in% modCpgs[[module]])
+  # annoWithMembershipAndPvals <- inner_join(ewasRes, annoWithMembership, by=c("CpG"="Name"))
+  phyperInputs <- list(sum(annoWithMembershipAndMods$member & annoWithMembershipAndMods$inModule),
+                       sum(annoWithMembershipAndMods$member),  # Number of sites in peaks
+                       sum(!annoWithMembershipAndMods$member),  # Number of sites not in peaks
+                       sum(annoWithMembershipAndMods$inModule))
+  # print(phyperInputs)
+  # print(phyperInputs[[1]]/phyperInputs[[4]]/(phyperInputs[[2]]/nrow(whiAnno450k)))
+  # tryCatch({
+  #   -log10(min(do.call(phyper, c(phyperInputs, lower.tail=F)), do.call(phyper, c(phyperInputs, lower.tail=T))))
+  # },
+  # error=function(e) NA)
+  
+  tryCatch({
+    memberAndModule <- sum(annoWithMembershipAndMods$member & annoWithMembershipAndMods$inModule)
+    inModule <- sum(annoWithMembershipAndMods$inModule)
+    member <- sum(annoWithMembershipAndMods$member)
+    overall <- nrow(whiRes)
+    log2((memberAndModule/inModule)/(member/overall))
+  },
+  error=function(e) NA)
+}
+
+assemble_epiAnno <- function(annoType, cellType, module) {
+  # Given an epigenomic annotation type (e.g. H3K4me1), output a named list of GRanges objects
+  annoDir <- paste0("../data/literature/roadmap/", annoType)
+  annoFile <- grep(cellType, list.files(annoDir, full.names=T), value=T)
+  epiAnno.gr <- {if (length(annoFile)==0) GRanges() else epiAnno.gr <- read_epiAnno(annoFile)}
+  tStat <- test_epiAnno(epiAnno.gr, module)
+  data.frame(module=module, epiFeature=annoType, cellTypeCode=cellType, negLogP=as.numeric(tStat))
+}
+
+epiFeatures <- list.files("../data/literature/roadmap/", pattern="^[DH].*")
+roadmapMeta <- read_csv("../data/literature/roadmap/jul2013.roadmapData.qc\ -\ Consolidated_EpigenomeIDs_QC.csv", col_types=cols()) %>%
+  dplyr::rename(cellType=`Standardised epigenome name`) %>%
+  select(EID, cellType) %>%
+  distinct()
+cellTypeCodes <- unique(gsub("^.*/|-.*", "", list.files("../data/literature/roadmap/", recursive=T)))
+featureCellGrid <- expand.grid(epiFeature=epiFeatures, cellTypeCode=cellTypeCodes, module=topModules, stringsAsFactors=F) %>%
+  inner_join(roadmapMeta, by=c("cellTypeCode"="EID")) %>%
+  # filter(grepl("^Primary.*peripheral|H1 Cell Line|H9 Cell Line|Ovary|Liver|Small Intestine|Spleen|^Thymus$", cellType, ignore.case=T),
+  #        !grepl("Neuron", cellType, ignore.case=T)) %>%
+  # filter(grepl("^Primary.*peripheral|^Primary hematopoietic|Liver|Spleen|^Thymus|Small Intestine", cellType, ignore.case=T)) %>%
+  filter(cellTypeCode %in% eforgeCellCodes) %>%
+  filter(epiFeature %in% c("DNase","H3K4me1","H3K4me3"), module %in% c("brown4","blue","lavenderblush3"))
+
+# cl <- makePSOCKcluster(detectCores())
+# registerDoParallel(cl)
+cellTypeNLPs <- foreach(anno=iter(featureCellGrid, by="row"), .combine=rbind,
+                        .packages=c("tidyverse","GenomicRanges")) %do% 
+  assemble_epiAnno(anno$epiFeature, anno$cellTypeCode, anno$module)
+# stopCluster(cl)
+```
+
+```{r my-roadmap-plots, warning=F, fig.cap="Cell type-specific enrichments based on Roadmap Epigenomics datasets. Shown are relative enrichments of peaks for a given epigenetic mark across many blood cell types, for each of the modules of interest."}
+epiAnnoPltData <- cellTypeNLPs %>%
+  na.omit() %>%
+  left_join(roadmapMeta, by=c("cellTypeCode"="EID")) %>%
+  filter(module %in% c("brown4","blue")) %>%
+  group_by(cellType, module) %>%
+  mutate(cellTypeAbsMean=mean(abs(negLogP), na.rm=T)) %>%
+  ungroup() %>%
+  arrange(desc(cellTypeAbsMean)) %>%
+  mutate(cellType=factor(cellType, levels=unique(cellType)))
+roadmapPlt <- ggplot(epiAnnoPltData, aes(x=epiFeature, y=forcats::fct_rev(cellType), fill=negLogP)) +
+  geom_tile(color="gray") +
+  scale_fill_gradient2(low="blue", mid="white", high="red", name="log2(rel. enrichment)") +
+  theme(axis.title.y=element_blank(), axis.text.y=element_text(size=9), axis.ticks.y=element_blank(),
+        axis.title.x=element_blank(), axis.text.x=element_text(angle=20),
+        axis.line=element_blank(),
+        legend.position="top", legend.text=element_text(size=9), panel.background=element_blank()) +
+  facet_wrap(~forcats::fct_rev(module))
+```
+
+We observed the greatest enrichment of brown4 CpGs in enhancer-associated DNase hypersensitivity sites (DHS) and H3K4me1 histone peaks from monocytes compared to other blood cell subtypes (Fig. 2c). This could point towards monocyte-related biology and inflammatory processes as an important shared mechanism for cardiovascular risk between the two cohorts examined here. In contrast, blue CpGs were enriched for DHS and promoter-associated H3K4me3 histone peaks from hematopoietic stem cells (HSCs), providing a possible link between developmental exposures and persistent phenotypic consequences in later life.
+
+```{r brown-and-blue-plots, fig.asp=1.8, warning=F}
+geneEnrichPlots <- plot_grid(brown4GeneGroupEnrichmentPlot + scale_y_continuous(limits=c(0,0.5)) + 
+                               theme(legend.position="none") + labs(y="Brown4 CpG fractions"), 
+                             blueGeneGroupEnrichmentPlot + scale_y_continuous(limits=c(0,0.5)) + 
+                               theme(legend.title=element_blank()) + labs(y="Blue Cpg fractions"), 
+                             ncol=2, rel_widths=c(2,3))
+cpgiEnrichPlots <- plot_grid(brown4CpgIslandEnrichmentPlot + scale_y_continuous(limits=c(0,0.65)) + 
+                               theme(legend.position="none") + labs(y="Brown4 CpG fractions"), 
+                             blueCpgIslandEnrichmentPlot + scale_y_continuous(limits=c(0,0.65)) + 
+                               theme(legend.title=element_blank()) + labs(y="Blue CpG fractions"), 
+                             ncol=2, rel_widths=c(2,3))
+roadmapPlt_axisSwitch <- roadmapPlt + scale_y_discrete(position="right")
+plot_grid(geneEnrichPlots, cpgiEnrichPlots, roadmapPlt_axisSwitch,
+          labels=c("a","b","c"), nrow=3, rel_heights=c(1,1,2))
+```
+
+```{r causal-mediation, eval=F}
+library(mediation)
+
+test_mediation <- function(exposure, mediator, covars=character(0), sims=200, cVal=0, tVal=1) {
+  cumData$m <- mediator
+  medFormula.char <- paste0("m ~ ", exposure)
+  if (length(covars)>0) medFormula.char <- paste(medFormula.char, "+", paste(covars, collapse="+"))
+  medModel <- lm(as.formula(medFormula.char), data=cumData)
+  outcomeFormula.char <- paste0("event ~ m + ", exposure)
+  if (length(covars)>0) outcomeFormula.char <- paste(outcomeFormula.char, "+", paste(covars, collapse="+"))
+  outcomeModel <- glm(as.formula(outcomeFormula.char), data=cumData, family=binomial)
+  med.fit <- mediate(medModel, outcomeModel, treat=exposure, mediator="m", sims=sims, control.value=cVal, treat.value=tVal)
+  print(paste0(exposure, ": prop = ", summary(med.fit)$n0, ", p = ", format.pval(summary(med.fit)$n0.p, digits=2)))
+  summary(med.fit)
+}
+
+silent <- apply(betas_fhs[a$CpG,], 1, function(r) test_mediation("hscrp.cum", r, covars=c("CD4T","CD8T","NK","Bcell","Mono","Gran","age","center"), sims=100, cVal=2, tVal=2.15))
+
+silent <- test_brown4_mediation("ldl.cum", fhsECs$brown4, covars=c("CD4T","CD8T","NK","Bcell","Mono","Gran","age"), sims=100, cVal=2, tVal=2.15)
+
+# brown4 mediating age
+silent <- test_brown4_mediation("age", fhsECs$brown4, covars=c("center","CD4T","CD8T","NK","Bcell","Mono","Gran"), sims=100, cVal=55, tVal=70)
+
+# brown4 mediating cumulative ldl
+silent <- test_brown4_mediation("ldl.cum", fhsECs$brown4, covars=c("center","CD4T","CD8T","NK","Bcell","Mono","Gran","age"), sims=100, cVal=2, tVal=2.15)
+
+# brown4 mediating cumulative ldl
+silent <- test_brown4_mediation("hscrp.cum", fhsECs$brown4, covars=c("center","CD4T","CD8T","NK","Bcell","Mono","Gran","age"), sims=100, cVal=-0.1, tVal=0.5)
+
+silent <- lapply(riskFactors[2], test_brown4_mediation, fhsECs$brown4, covars=c("center","CD4T","CD8T","NK","Bcell","Mono","Gran"), sims=100, cVal=55, tVal=70)
+```
+
+```{r horvath-overlap}
+suppressMessages({
+  dnamAgeDF <- read_csv("../data/literature/horvath_dnamAge_cpgs.csv", skip=2)
+  phenoAgeDF <- read_csv("../data/literature/phenoAge.csv")
+  hannumDF <- readxl::read_excel("../data/literature/hannum_cpgs.xlsx", sheet=1)
+})
+dnamAgeCpgs <- dnamAgeDF$CpGmarker[-1]
+phenoAgeCpgs <- phenoAgeDF$CpG
+hannumCpgs <- hannumDF$Marker
+
+ageMetricEnrichPs_brown4 <- sapply(list(horvath=dnamAgeCpgs, phenoAge=phenoAgeCpgs, hannum=hannumCpgs), function(cpgSet) {
+  numInSet <- length(intersect(cpgSet, modCpgs$brown4))
+  phyper(numInSet, length(cpgSet), nrow(whiRes)-length(cpgSet), length(modCpgs$brown4), lower.tail=F)
+})
+ageMetricEnrichPs_blue <- sapply(list(horvath=dnamAgeCpgs, phenoAge=phenoAgeCpgs, hannum=hannumCpgs), function(cpgSet) {
+  numInSet <- length(intersect(cpgSet, modCpgs$blue))
+  phyper(numInSet, length(cpgSet), nrow(whiRes)-length(cpgSet), length(modCpgs$blue), lower.tail=F)
+})
+
+horvathOverlap <- intersect(dnamAgeCpgs, modCpgs$blue)
+horvathPositive <- dnamAgeDF$CpGmarker[dnamAgeDF$CoefficientTraining>0]
+```
+
+The module CpG sets were also compared to two existing methylation-based age predictors from Horvath and Hannum et al., as well as the recent morbidity-directed phenoAge[@Horvath2013;@Hannum2013;@Levine2018]. While enrichments for brown4 CpGs were moderate to nonexistent, blue CpGs were strongly enriched for all three of these sets, most highly for the original DNAm age developed by Horvath (34/353; p=1.7e-5; hypergeometric test), despite the fact that this model was developed based on only ~21,000 CpGs shared between multiple versions of the Illumina methylation microarray platform. Furthermore, 28 of these 34 CpGs had associated positive coefficients in the DNAm age predictor. This subset has been observed to contain a disproportionate amount of Polycomb-group target genes, which are known to associate with both developmental and to be generally hypermethylated with age[@Dozmorov2015]. Surprisingly, the blue eigenCpG showed only a modest (though statistically significant) correlation with age (r=0.09).
+
+```{r brown4-cvd-associations, eval=F}
+# in WHI
+brown4.cox.fit.whi <- coxph(Surv(time,event)~whiECs$brown4+CD4T+CD8T+Bcell+NK+Mono+Gran, data=nmd_whi)
+
+# first, without adjustment for covariates
+brown4.cox.fit.unadj <- coxph(
+  as.formula(paste0("Surv(time,event)~fhsECs$brown4+CD4T+CD8T+Bcell+NK+Mono+Gran+center+", 
+                    paste0("cpPC",1:7,collapse="+"))), data=nmd_fhs)
+# next, with adjustment
+brown4.cox.fit.adj <- coxph(
+  as.formula(paste0("Surv(time,event)~fhsECs$brown4+sex+age+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+center+",
+                    paste0("cpPC",1:7,collapse="+"))), data=nmd_fhs)
+
+```
+
+<!--We note that the brown4 eigenCpG associates strongly with incident CVD in FHS (p= format.pval(summary(brown4.cox.fit.unadj)$coef[1,5]) with adjustment for cell counts and technical factors only), but that this relationship is attenuated after additional adjustment for biological and behavioral covariates as in the EWAS (p= format.pval(summary(brown4.cox.fit.adj)$coef[1,5]) when including sex, age, BMI, and smoking behavior).-->
+
+```{r monocyte-hypotheses, eval=F}
+separateGeneAnno <- anno450k %>%
+  select(Name, UCSC_RefGene_Name) %>%
+  separate_rows(UCSC_RefGene_Name, sep=";")
+gene_to_cpgs <- function(gene) {
+  return(separateGeneAnno$Name[separateGeneAnno$UCSC_RefGene_Name==gene])
+}
+```
+
+```{r blue-development-genes, message=F}
+blueCpgsAnnot <- filter(whiCpgsAnnot, Name %in% modCpgs$blue)
+blueGenes <- unlist(strsplit(blueCpgsAnnot$UCSC_RefGene_Name, ";"))
+
+#hm450kGenes <- unlist(strsplit(anno450k$UCSC_RefGene_Name, ";"))
+adGenes <- scan("../data/literature/anatomical_development_genes.txt", what=character())
+sdGenes <- scan("../data/literature/system_development_genes.txt", what=character())
+modGenes <- scan("../data/literature/multicellular_organism_development_genes.txt", what=character())
+
+blueDevGenes <- intersect(blueGenes, unique(c(adGenes, sdGenes, modGenes)))
+  # Genes that correspond to blue CpGs and are in the top 3 enriched GO categories (development-related)
+
+# allCpgPerGene <- anno450k %>%
+#   separate_rows(UCSC_RefGene_Name, sep=";") %>%
+#   group_by(UCSC_RefGene_Name) %>%
+#   summarise(nTot=n())
+# blueCpgPerGene <- blueCpgsAnnot %>%
+#   separate_rows(UCSC_RefGene_Name, sep=";") %>%
+#   group_by(UCSC_RefGene_Name) %>%
+#   summarise(n=n()) %>%
+#   inner_join(allCpgPerGene, by="UCSC_RefGene_Name") %>%
+#   mutate(frac=n/nTot) %>%
+#   arrange(desc(frac))
+# topBlueRepGenes <- blueCpgPerGene$UCSC_RefGene_Name[]
+#   # Genes with the greatest proportion of their CpGs being a part of the blue module
+
+bluepca.fit <- flashpca(scale(t(betas_whi[modCpgs$blue,])), stand="sd", do_loadings=T)
+blueLoadings <- setNames(bluepca.fit$loadings[,1], modCpgs$blue)
+topBlueCpgs <- modCpgs$blue[abs(blueLoadings) > quantile(abs(blueLoadings), 0.9)]
+rowSepAnno <- separate_rows(anno450k, UCSC_RefGene_Name, sep=";")
+topBlueEcGenes <- unique(rowSepAnno$UCSC_RefGene_Name[rowSepAnno$Name %in% topBlueCpgs])
+  # Genes corresponding to the CpGs with the strongest loadings in blue PC1
+
+devMeRegions <- read_excel("../data/literature/aat2624_Tables_S1_to_S5.xlsx", sheet=2, skip=1)
+devMeCpgs <- unlist(apply(devMeRegions, 1, function(row) region_to_cpgs(
+  row[["Chromosome"]], row[["ME start"]], row[["ME end"]])))
+devMeGenes <- unique(rowSepAnno$UCSC_RefGene_Name[rowSepAnno$Name %in% devMeCpgs])
+
+
+bluePriorityGenes <- Reduce(intersect,
+                            list(blueDevGenes, topBlueEcGenes, devMeGenes))
+  # This intersection consists of genes annotated to blue module CpGs with high module 
+  # importance statistics, in the top 3 dev-related GO terms, and annotated to environmentally
+  # sensitive methylation states during development in Kessler et al. 2018
+
+
+## blue annotated df
+## overlap between blue-annotated genes and AD genes
+## most significant "kappa" statistic (module importance) by some threshold
+## genes most represented (highest ratio of (# CpGs in module annotated to that gene) to (# CpGs in that gene overall))
+## use all of these filters to find a concensus set of most interesting genes to prioritize for investigation
+```
+
+To find specific genes that may be relevant to the link between blue module methylation and CVD, a set of genes was assembled constituting the intersection between 1) genes in one of the top 3 enriched Gene Ontology terms for the blue module (anatomical development, system development, and multicellular organism development), 2) genes annotated to CpGs whose weights in the blue eigenCpG were in the top 10%, and  3) genes annotated to environmentally sensitive regions of DNA methylation in the human embryo as determined by a recent investigation [@Kessler2018]. Exactly one gene, PDE3A, belongs to all three categories. PDE3A codes for Phosphodiesterase 3A, and as a known gene related to cardiovascular risk and sensitive to early-life exposures, may represent one avenue by which the blue module is related to disease risk in adult life.
+
+## Module-risk factor relationships
+
+```{r cumulative}
+allExams <- readRDS("../int/pastExamData.rds") %>%
+  mutate_at(setdiff(names(.), c("exam","subjID","bmi")), log10)
+
+riskFactors <- rev(c("sbp", "chol", "ldl", "hdl", "tg", "hscrp", "glu", "bmi", "smk_now", "smk_py", "age"))
+
+pastData <- lapply(paste0("exam",1:7), function(ex) filter(allExams, exam==ex))
+names(pastData) <- paste0("exam", 1:7)
+pastData$cumulative <- allExams %>%
+  select(-exam) %>%
+  group_by(subjID) %>%
+  summarise_all(mean, na.rm=T)
+pastData$current <- select(nmd_fhs, subjID, riskFactors)
+
+cumData <- left_join(nmd_fhs, pastData$cumulative, by="subjID", suffix=c(".curr",".cum"))
+```
+
+```{r risk-factor-correlations, warning=F}
+modRfCorrs.whi <- expand.grid(module=topModules, rf=riskFactors, stringsAsFactors=F) %>%
+  mutate(corr=map2_dbl(module, rf, function(m,r) {
+    nmd_whi$ec <- whiECs[[m]]
+    ecResids <- lm(ec~dnaPull, data=nmd_whi)$residuals
+    cor.test(ecResids, nmd_whi[[r]])$estimate
+  })) %>%
+  filter(module %in% c("brown4","blue","lavenderblush3"))
+
+findCorrsFhs <- function(examData, markers) {
+  corrData <- left_join(select(nmd_fhs, subjID, center), examData, by="subjID")
+  expand.grid(module=topModules, rf=markers, stringsAsFactors=F) %>%
+    mutate(corr=map2_dbl(module, rf, function(m,r) {
+      corrData$ec <- fhsECs[[m]]
+      ecResids <- lm(ec~center, data=corrData)$residuals
+      tryCatch(cor.test(ecResids, corrData[[r]])$estimate,
+               error=function(e) NA)
+    }))
+}
+
+pastCorrs <- bind_rows(lapply(pastData, findCorrsFhs, riskFactors), .id="whichPast") %>%
+  mutate(whichPast=factor(whichPast, levels=c(paste0("exam",1:7), "cumulative", "current")),
+         rf=factor(rf, levels=riskFactors)) %>%
+  filter(module %in% c("brown4","blue","lavenderblush3"))
+```
+
+<!--We also examined associations between the module "eigenCpGs" from principal components analysis (aligned in the directed of positive correlation with CVD risk) and traditional cardiovascular risk factors. The first eigenCpG explained  round(ecRes$brown4$whiEC1_varExpl*100)% of the overall variance, suggesting that is a reasonable proxy for module behavior as a whole. We saw the strongest associations in WHI with age (r= round(modRfCorrs$corr[modRfCorrs$rf=="age"],2)) and hsCRP (r= round(modRfCorrs$corr[modRfCorrs$rf=="hscrp"],2)). FHS allowed a somewhat unique analysis based on retrieval of blood risk factor values from prior exams. We assessed correlations of the same brown4 module with risk factors for each year, and for the mean across all seven exams prior to Exam 8 ("cumulative"), in order to understand whether the module methylation was in any sense representing an "epigenetic memory" of past risk factor exposure.-->
+
+```{r risk-factor-correlation-plots, fig.cap="Risk factor-module relationships. (a) Pearson correlations between a series of traditional cardiovascular risk factors and module eigenCpGs (blue and brown4) are shown in each study population. (b) Pearson correlations between historical risk factor levels in FHS (across previous exams, x-axis) and current brown4 module activation are shown. Grey panels indicate that the risk factor in question was not available for the corresponding exam.", warning=F}
+corr_limits <- range(c(modRfCorrs.whi$corr, pastCorrs$corr), na.rm=T)
+
+current_corrs <- pastCorrs %>%
+  filter(whichPast=="current") %>%
+  select(-whichPast) %>%
+  bind_rows(modRfCorrs.whi, .id="study") %>%
+  mutate(study=ifelse(study==1, "FHS", "WHI"),
+         rf=factor(rf, levels=riskFactors)) %>%
+  filter(module %in% c("brown4","blue"))
+
+rfCorrPlt <- ggplot(current_corrs, aes(x=study, y=rf, fill=corr)) +
+  geom_tile() +
+  scale_fill_gradient2(name="Correlation", limits=corr_limits, guide=F) +
+  theme(axis.title=element_blank(), axis.line=element_blank()) +
+  facet_wrap(~module)
+
+fhsRfCorrPlt <- ggplot(filter(pastCorrs, module=="brown4"), aes(x=whichPast, y=rf, fill=corr)) +
+  geom_tile() +
+  scale_fill_gradient2(name="Correlation", limits=corr_limits) +
+  theme(axis.title=element_blank(), axis.text.x=element_text(angle=30), 
+        axis.text.y=element_blank(), axis.ticks.y=element_blank(),
+        axis.line=element_blank()) +
+  facet_wrap(~module)
+
+cowplot::plot_grid(rfCorrPlt, fhsRfCorrPlt, nrow=1, rel_widths=c(2,3), align="h", axis="bt", labels=c("a","b"))
+
+# modRfCorrs <- expand.grid(module=topModules, rf=c("age","bmi","ldl","hdl","tg","glu","hscrp","sbp"), stringsAsFactors=F) %>%
+#   mutate(corr=map2_dbl(module, rf, function(m,c) cor.test(whiECs[[m]], nmd_whi[[c]])$estimate)) %>%
+#   filter(module=="brown4")
+# modRfCorrsWithPast <- expand.grid(module=topModules, 
+#                                   rf=c("age", "bmi", "chol", "ldl", "hdl", "tg", "glu", "hscrp", "sbp", 
+#                                        "chol_recent", "hdl_recent", "tg_recent", "glu_recent", "bmi_recent", "sysBP_recent",
+#                                        "chol_cum", "hdl_cum", "ldl_cum", "nonHDL_cum", "sysBP_cum", "glu_cum", "bmi_cum", "tg_cum"),
+#                                   stringsAsFactors=F) %>%
+#   mutate(corr=map2_dbl(module, rf, function(m,c) {
+#     nmd_fhs$ec <- fhsECs[[m]]
+#     ecResids <- lm(ec~center, data=nmd_fhs)$residuals
+#     cor.test(ecResids[nmd_fhs$lipid_med==0], nmd_fhs_withPast[[c]][nmd_fhs$lipid_med==0])$estimate
+#     })) %>%
+#   mutate(time=case_when(grepl("cum", rf) ~ "exams 1-7",
+#                         grepl("recent", rf) ~ "exams 5-7",
+#                         TRUE ~ "exam 8"),
+#          rf=gsub("_.*", "", rf)) %>%
+#   filter(module=="blue2")
+# ggplot(modRfCorrsWithPast, aes(x=time, y=rf, fill=corr)) + geom_tile() + scale_fill_gradient2()
+```
+
+Next, we examined correlations between these module eigenCpGs and traditional cardiovascular risk factors. Though no extremely strong module-risk factor correlations were observed (all |r|<0.25), they tended to be stronger for the brown4 module, especially in FHS (Fig. 3a). Age showed the greatest association, while lipid and glycemic parameters also showed moderate associations. To further probe relationships between brown4 module and risk factors in FHS, we retrieved historical risk factors measured in previous Offspring Cohort exams. Based on visual inspection, there seemed to be a notably stronger correlation between the module eigenCpG and cumulative (mean of all previous exams) compared to current risk factor exposure. This pattern applied for systolic blood pressure (strongly), triglycerides, glucose, BMI, and LDL (which correlated in the "expected" direction cumulatively, but non-intuitively at Exam 8) (Fig. 3b). <!--Interestingly, this pattern did not hold for hsCRP, the most direct marker of inflammation in this group of risk factors.-->
+
+To better investigate this phenomenon, we tested associations between the brown4 module and each of the cumulative risk factors after adjustment for potential confounders. Specifically, for each risk factor, linear models were used to predict the brown4 eigenCpG value from either the current or cumulative risk factor level while adjusting for the full set of EWAS covariates other than BMI (age/sex/smoking/cell counts/study center/7 ctrl-probe PCs). Only for the brown4 module did cumulative risk factor exposure show strong associations, which were generally equal to or stronger than those of the current risk factors, most notably for BMI, hsCRP, and triglycerides (Table 3). Though more recent medication use could possibly explain discrepancies between biological relationships with current and past risk factors, adjustment for hypertension and lipid medications did not notably affect the results of these models.
+
+```{r cumulative-adjusted}
+format_pvalues_epi <- function(p) ifelse(p<0.001, "<0.001", ifelse(p<0.1, round(p, 3), round(p, 2)))
+# format_pvalues_genomics <- function(p) ifelse(p<0.001, )
+
+rfWithPast <- riskFactors[!(riskFactors %in% c("age","smk_now","smk_py"))]
+cumAdjBrown4 <- sapply(setNames(rfWithPast, rfWithPast), function(crf) {
+  cumData$cumRf <- scale(cumData[[paste0(crf,".cum")]])
+  cumData$currRf <- scale(cumData[[paste0(crf,".curr")]])
+  cumData$brown4 <- scale(fhsECs$brown4)
+  lmCurr.fit <- lm(brown4 ~ currRf+age+sex+smk_now+smk_py+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+                  data=cumData)
+  lmCum.fit <- lm(brown4 ~ cumRf+age+sex+smk_now+smk_py+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+                  data=cumData)
+  unname(c(summary(lmCurr.fit)$coef["currRf",c(1,4)], summary(lmCum.fit)$coef["cumRf",c(1,4)]))
+  # summary(lm.fit)$coef[c("cumRf","currRf"),]
+})
+
+cumAdjBlue <- sapply(setNames(rfWithPast, rfWithPast), function(crf) {
+  cumData$cumRf <- scale(cumData[[paste0(crf,".cum")]])
+  cumData$currRf <- scale(cumData[[paste0(crf,".curr")]])
+  cumData$blue <- scale(fhsECs$blue)
+  lmCurr.fit <- lm(blue ~ currRf+age+sex+smk_now+smk_py+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+                   data=cumData)
+  lmCum.fit <- lm(blue ~ cumRf+age+sex+smk_now+smk_py+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+                  data=cumData)
+  unname(c(summary(lmCurr.fit)$coef["currRf",c(1,4)], summary(lmCum.fit)$coef["cumRf",c(1,4)]))
+  # summary(lm.fit)$coef[c("cumRf","currRf"),]
+})
+
+format_cumulative_table <- function(res) {
+  t(res) %>%
+    data.frame() %>%
+    rownames_to_column() %>%
+    setNames(c("Risk factor", "beta_current", "p_current", "beta_cum", "p_cum")) %>%
+    mutate(current=paste0(signif(beta_current,2), " (", signif(p_current,2), ")"),
+           cumulative=paste0(signif(beta_cum,2), " (", signif(p_cum,2), ")")) %>%
+    dplyr::select(`Risk factor`, current, cumulative)
+}
+
+# modCumTbl <- data.frame(cbind(t(cumAdjBrown4), t(cumAdjBlue))) %>%
+#   rownames_to_column(var="Risk factor") %>%
+#   mutate_at(vars(-`Risk factor`), function(p) format_pvalues(p)) %>%
+#   setNames(c("Risk factor", "p_current", "p_cumulative", "p_current", "p_cumulative"))
+
+modCumTbl <- cbind(format_cumulative_table(cumAdjBrown4),
+                   format_cumulative_table(cumAdjBlue)[-1])
+
+# kable(data.frame(riskFactor=rfWithPast,
+#                  # "p_current"=format.pval(map_dbl(cumAdjBrown4, function(x) x[2,4]), digits=2),
+#                  # "p_cumulative"=format.pval(map_dbl(cumAdjBrown4, function(x) x[1,4]), digits=2),
+#                  # "p_current"=format.pval(map_dbl(cumAdjBlue, function(x) x[2,4]), digits=2),
+#                  # "p_cumulative"=format.pval(map_dbl(cumAdjBlue, function(x) x[1,4]), digits=2),
+#                  
+#                  check.names=F),
+kable(modCumTbl, booktabs=T, longtable=T,
+      caption="Module-risk factor relationships (current and cumulative) after adjustment for covariates") %>%
+  kable_styling(full_width=T) %>%
+  add_header_above(c("", "brown4"=2, "blue"=2)) %>%
+  footnote(number=c("Regression results are presented as: beta (p-value).",
+                    "Models are adjusted for age, sex, smoking status and pack-years, estimated cell counts, study center, and 7 control probe principal components."), threeparttable=T)
+
+# cumAdjLB3 <- lapply(setNames(riskFactors[-1],riskFactors[-1]), function(crf) {
+#   cumData$cumRf <- cumData[[paste0(crf,".cum")]]
+#   cumData$currRf <- cumData[[paste0(crf,".curr")]]
+#   lm.fit <- lm(fhsECs$lavenderblush3 ~ cumRf+currRf+age+sex+smk_now+smk_py+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+#      data=cumData)
+#   summary(lm.fit)$coef[c("cumRf","currRf"),]
+# })
+# 
+# kable(data.frame(riskFactor=riskFactors[-1], 
+#                  "p for current level"=format.pval(map_dbl(cumAdjLB3, function(x) x[2,4]), digits=2),
+#                  "p for cumulative"=format.pval(map_dbl(cumAdjLB3, function(x) x[1,4]), digits=2)))
+```
+
+<!-- We observed strong evidence for an independent association of cumulative risk factor exposure with the brown4 module for 3 risk factors (BMI, triglycerides, and hsCRP), while cholesterol, glucose, and systolic blood pressure also showed nominal relationships.-->
+
+Finally, to assess relationships between cumulative risk factor exposure and brown4 module activation in predicting cardiovascular risk, we adopting a causal modeling approach using a series of Cox models in FHS for these three most strongly-associated risk factors (BMI, hsCRP, and triglycerides). Covariates in all models included technical factors, estimated cell counts, age, and sex. Table 5 presents p-values arising from models incorporating 1) current and cumulative risk factors only, 2) current risk factors and module eigenCpGs only, and 3) all 3 quantities together. As only subjects with current risk factor values were included in each model, sample sizes were largely identical across models. In general, the significance of the module relationships with CVD tended to decrease in the presence of cumulative risk factor values. This fits with a model in which, rather than mediating cardiovascular risk, module activation acts as a biomarker for the actions of cumulative risk factor exposures by some other mechanism.
+
+```{r module-mediation, message=F}
+rfWithPast <- riskFactors[!(riskFactors %in% c("age","smk_now","smk_py"))]
+
+rfOnly <- sapply(setNames(rfWithPast, rfWithPast), function(crf) {
+  cumData$cumRf <- cumData[[paste0(crf,".cum")]]
+  cumData$currRf <- cumData[[paste0(crf,".curr")]]
+  cox.fit <- coxph(Surv(time, event) ~ cumRf+currRf+age+sex+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+                   data=cumData)
+  unname(c(summary(cox.fit)$coef["currRf",c("coef","Pr(>|z|)")], summary(cox.fit)$coef["cumRf",c("coef","Pr(>|z|)")]))
+})
+
+modAlone <- sapply(setNames(rfWithPast, rfWithPast), function(crf) {
+  cumData$mod <- fhsECs$brown4
+  cumData$currRf <- cumData[[paste0(crf,".curr")]]
+  cox.fit <- coxph(Surv(time, event) ~ mod+currRf+age+sex+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+                   data=cumData)
+  format_pvalues_epi(summary(cox.fit)$coef["mod",c("coef","Pr(>|z|)")])
+})
+
+cumWithMod <- sapply(setNames(rfWithPast, rfWithPast), function(crf) {
+  cumData$cumRf <- cumData[[paste0(crf,".cum")]]
+  cumData$currRf <- cumData[[paste0(crf,".curr")]]
+  cumData$mod <- fhsECs$brown4
+  cox.fit <- coxph(Surv(time, event) ~ mod+cumRf+currRf+age+sex+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+                   data=cumData)
+  unname(c(summary(cox.fit)$coef["cumRf",c("coef","Pr(>|z|)")], summary(cox.fit)$coef["mod",c("coef","Pr(>|z|)")]))
+})
+
+format_modRfCvd_table <- function(res) {
+  t(res) %>%
+    data.frame(stringsAsFactors = F) %>%
+    rownames_to_column() %>%
+    setNames(c("Risk factor", "beta", "p")) %>%
+    mutate(beta_p=paste0(signif(beta,2), " (", format_pvalues_epi(p), ")")) %>%
+    dplyr::select(`Risk factor`, beta_p)
+}
+
+modRfCvdTbl <- cbind(format_modRfCvd_table(rfOnly[1:2,]),
+                     format_modRfCvd_table(rfOnly[3:4,])[-1],
+                     format_modRfCvd_table(modAlone)[-1],
+                     format_modRfCvd_table(cumWithMod[1:2,])[-1],
+                     format_modRfCvd_table(cumWithMod[3:4,])[-1]) %>%
+  set_tidy_names() %>%
+  filter(`Risk factor` %in% c("bmi","tg","hscrp")) %>%
+  setNames(c("Risk factor","current","cumulative","module","cumulative","module"))
+
+# mediationTbl <- data.frame(cbind(t(rfOnly), modAlone, t(cumWithMod))) %>%
+#   setNames(c("curr_rf","cum_rf","brown4","cum_rf","brown4")) %>%
+#   rownames_to_column("Risk factor")
+
+kable(modRfCvdTbl, booktabs=T,
+      caption="CVD risk models using cumulative risk factor exposure and brown4 module activation") %>%
+  add_header_above(c("", "Risk factors only"=2, "Brown4 only", "Full model"=2)) %>%
+  footnote(number="Regression results are presented as: beta (p-value).")
+
+# kable(data.frame(`Risk factor`=rfWithPast, cumAlone, modAlone, cumWithMod, modWithCum)) %>%
+#   add_header_above("", "Risk factor model", "")
+
+# cumAdjBrown4 <- lapply(setNames(rfWithPast, rfWithPast), function(crf) {
+#   cumData$cumRf <- cumData[[paste0(crf,".cum")]]
+#   cumData$currRf <- cumData[[paste0(crf,".curr")]]
+#   lm.fit <- lm(fhsECs$brown4 ~ cumRf+currRf+age+sex+smk_now+smk_py+CD4T+CD8T+NK+Bcell+Mono+Gran+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7,
+#      data=cumData)
+#   summary(lm.fit)$coef[c("cumRf","currRf"),]
+# })
+```
+
+# Discussion
+
+Two of the most important problems facing traditional epigenome-wide association studies are reverse causation and a lack of reproducibility of signals at specific loci [@Birney2016]. Here, we addressed these obstacles by performing a primarily module-based analysis of incident cardiovascular events in order to find prospective biomarkers and uncover novel mechanisms contributing to disease risk.
+
+We began by constructing correlation-based clusters in the methylation data from WHI using the WGCNA algorithm. This network-based feature clustering approach can potentially improve the signal-to-noise ratio of high-dimensional DNA methylation data while facilitating more clear biological interpretation of results[@Langfelder2008]. As WGCNA does not consider class labels (i.e. incident CVD status), the `r length(modCpgs)` modules uncovered were not *a priori* expected to be related to CVD and rather reflected unbiased patterns in the data. After correction for multiple testing, the first principal components (eigenCpGs) of three of these modules were found to be related to incident cardiovascular events. A gene ontology-based enrichment analysis of the genes annotated to these modules found strong enrichment for either immune-related or development-related processes. The finding of immune-related processes is intuitive given that DNA from blood measures primarily immune cells, while the development-related enrichment could possibly reflect influences during early life [@Hao2018]. Notably, these two module "types" (immune and development) have been uncovered in a prior network-based DNA methylation analysis related to asthma [@Busch2016], suggesting that similar module types are a potentially general feature of blood-based methylation patterns and that these patterns may not be fully cardiovascular-specific, reflecting instead a predisposition toward general inflammatory disease processes. Both in WHI and in replication in FHS, two modules (blue and brown4) showed strong relationships with incident CVD that were attenuated after adjustment for age.
+
+We examined the set of module eigenvector loadings as a proxy for the relative importance of their component CpGs, in a similar approach to the standard calculation of gene-module correlations (or "kME" statistics) in WGCNA analyses. As we did not observe any obvious peaks distinguishing particularly important groups of CpGs, we undertook an epigenome-wide association study (EWAS) in order to identify potentially stronger locus-specific signals. Though we did not find any single sites replicating in FHS after stringent correction for multiple tests, a subsequent region-based analysis using the Comb-p algorithm revealed three regions replicating strongly across the two cohorts examined here. One was found on chromosome 1 in the body of the SLC9A1 (also known as NHE-1) gene, which codes for an integral membrane ion transporter involved in intracellular pH maintenance. It has been shown to be required for the increased adhesion, migration, and phagocytosis of oxidized LDL seen in monocytes in response to stimuli including leptin, adrenaline, and hyperglycemia. Another region discovered was on chromosome 19 near the transcription start site (TSS) of SLC1A5, which codes for a neutral amino acid transporter. Though strong evidence does not yet exist linking SLC1A5 to cardiovascular mechanisms, we note that its companion amino acid transporter, SLC7A5, is known to regulate metabolic and inflammatory reprogramming of monocytes in response to stimulation by lipopolysaccharide (LPS). Notably, CpG sites in both SLC9A1 and SLC1A5 were discovered and replicated in a recent EWAS for BMI (including the FHS cohort) [Mendelson2017], though that specific SLC9A1 site was not one of the three constituent CpGs in the region found here. These two SLC transporter DMRs contained CpGs belonging to blue (1 in SLC9A1) and brown4 (1 in SLC9A1, 5 in SLC1A5) modules. The third region was found near the TSS of TNRC6C on chromosome 17. This gene codes for a component of the miRNA-mediated translational repression cascade, has shown up in a genome-wide association study (GWAS) for heart failure (not one of the phenotypes included in our CVD definition here)[@Villard2011], and was identified as a potential target gene in the monocyte-to-macrophage transition upon exposure to CSF-1[@Wallner2016]. Common to these three DMRs is a potential involvement in monocyte biology specific to a stimulus response. This concept of "priming" for subsequent response to stimulus has been observed with respect to both monocyte activity in CVD [@Short2017] and DNA methylation in general [@Lam2012].
+
+Based on the module- and region-level replication in FHS, we further explored the characteristics of the brown4 and blue modules. Enrichment analyses of gene-based and locus-based annotations demonstrated that these two modules occupy distinct biological niches. Broadly, the brown4 module is enriched for enhancers and other non-proximal regions near immune-related genes, while the blue module is enriched for CpG islands near the TSS of development-related genes. One could speculate that these modules also represent different mechanisms of cardiovascular risk: one related to inflammatory burden and the other to long-term effects of early-life exposures, both of which are well-established as contributing to cardiovascular risk [@Nahrendorf2018;@Hao2018]. Analyses based on cross-tissue epigenome annotations added an additional dimension to these insights by suggesting differential importance of blood cell sub-types for these modules. Our custom cell type specificity analysis, based on the eFORGE algorithm [@Breeze2016], revealed the enrichment of monocyte-specific regions of open chromatin (DNase hypersensitivity sites and H3K4me1 peaks) in the brown4 module. This observation reinforces the idea of monocyte-specific activity suggested by the replicated DMRs as well as that of "monocyte priming" [@Short2017]. Based on the tendency of blue module CpGs to be proximal to gene TSS, we focused on enrichment for a promoter-associated marker, H3K4me3, and found a distinct signal related to hematopoietic stem cells. This finding supports a potential mechanisms linking early-life exposure to consequences in adult life [@Farlik2016;@Laiosa2015].
+
+In seeking a specific example of the mechanism by which the development-related blue module may by related to CVD risk, we found a single gene, PDE3A, which is in the blue module's top GO terms, is annotated to highly-weighted sites in the blue eigenCpG, and is near to a metastable epiallele found by Kessler et al. to be environmentally sensitive in developing embryos [@Kessler2018]. PDE3A, encoding for an isoform of phosphodiesterase 3, has been linked to cardiovascular disease through its role in regulating vascular smooth muscle cell contraction. Six missense variants located in PDE3A have been previously identified as responsible for Mendelian hypertension, and murine models have suggested that increases in PDE3 activity may mediate some of the accelerated atherosclerosis observed in diabetes [@Maass2015;@Nagaoka1998]. Interestingly, PDE3A downregulation is potentially related specifically to heart failure, an outcome that was not included in our definition of CVD for this study[@Yan2007].
+
+It is not clear whether these methylation modules associate with cardiovascular risk upstream, downstream, or independently of traditional cardiovascular risk factors (including age, blood pressure, BMI, smoking, and lipid levels). To explore these relationships, we began by calculating correlations between risk factor levels and blue and brown4 module activations. Blue correlations were largely weak, while brown4 correlations were somewhat stronger, following the hypothesis that the blue module is more relevant to early-life, rather than adult, exposures as compared to brown4. However, as a semi-stable biological quantity, methylation may have the ability to act as a "molecular recorder" of past exposures, ranging from heavy metals to stress[@Wright2010;@Matosin2017]. We thus retrieved risk factor measurements from seven prior exams in FHS to compare "cumulative" (calculated as the mean of past exam values) versus current correlations with brown4 activation. Surprisingly, we observed stronger correlations with cumulative values across almost all risk factors. To address the possibility of confounding in these relationships, we tested linear models predicting brown4 eigenCpG values from current or cumulative risk factors adjusting for the full set of EWAS covariates. Here, we again observed multiple instances of stronger cumulative relationships, especially for BMI, hsCRP, and triglycerides. Though such a finding could be partially explained by the greater stability in a mean over seven values compared to one, we note that we did not observe this same pattern with respect to the blue module, where associations with current risk factors tended to be stronger. Our observation agrees with a conceptual model in which known risk factors, such as the three noted here, act partially through their cumulative impact over time on immune cell DNA methylation and thus inflammatory processes known to be related to CVD pathogenesis. To more directly test this proposal, we used a causal modeling approach in which we sequentially tested the relationships between cumulative risk factor levels, brown4 eigenCpG values, and both factors together in predicting incident CVD. Though neither factor exerted a strong effect on the relationship of the other, module activation associations were more weakened after adjustment for cumulative risk factors than the converse. Thus, our models replicate previous findings that cumulative risk factor exposure correlates with CVD risk [@Reinikainen2015] while suggesting that brown4 methylation module activation may be sensing, rather than mediating, this effect.
+
+A few limitations should be acknowledged in intepreting the results of this study. First, the observational nature made it impossible to clearly determine causality of the relationships between methylation and cardiovascular risk. While the examination of incident CVD reduced concerns about reverse causation, the discovered associations may only be markers of other disease-causing processes (such as cumulative risk factor exposure, as discussed above). Second, assessment of methylation in blood samples prevented the understanding of potentially causal epigenetic effects in other CVD-relevant tissues. Although some studies report promising findings with respect to blood as a proxy tissue[@Bacos2016], and although development-related epialleles may persist across tissues, there is a certain gap in our ability to discover non-blood-related epigenetic patterns in this analysis. Finally, longitudinal methylation measurements were not available in these datasets, preventing an analysis of the intra-individual stability of methylation sites and modules that may be predictive of CVD risk.
+
+The modules and regions discovered in this investigation provide insights into the complex relationships between DNA methylation and cardiovascular disease risk. We show that epigenetic modules track with diverse biological sources of CVD risk, ranging from development- to immune-related processes, and may provide a molecular readout of past exposure to cardiovascular risk factors. We further discover specific differentially methylated regions that may be related to monocyte activation in response to biological stimuli. This work opens the door to further investigation of the epigenetic basis of CVD risk as well as the ability of DNA methylation to act as a biomarker of prior exposures that may be important for disease-relevant prognosis and interventions.
+    
+# Methods
+    
+## Study participants and phenotype collection
+
+Data for the discovery set came from a combined case-control and pseudo case-cohort sampling of 2129 women from the Women's Health Initiative study, a larger prospective cohort beginning in 1993 that included over 160,000 postmenopausal women from across the United States[@Anderson1998]. Included subjects had no self-reported CVD at baseline, and cases were chosen based on incident centrally adjudicated angina, revascularization, or CHD event during follow-up. Inclusion criteria for methylation measurement resulted in an oversampling of African American and Hispanic participants. Blood samples used for measurement of DNA methylation and clinical biochemistry were taken at Exam 1. Data are available in the dbGaP public repository (accession: phs000200.v11.p3).
+
+Data for the validation set came from a substudy of the Framingham Heart Study that measured DNA methylation in 2726 subjects from the Offspring Cohort. The Framingham Offspring Cohort was originally established in 1971 to follow 5209 children of the original Framingham Heart Study participants and their spouses[@Kannel1979]. Fasting blood samples for both methylation and clinical biochemistry were collected from participants at Exam 8, which took place from 2005-8. Blood samples were also provided for clinical biochemistry measurements in previous exams, constituting the "past exposures" examined here. Data are available in the dbGaP public repository (accession: phs000007.v29.p10). Adjudicated cardiovascular event data was collected through 2015, and events were defined here as any of: myocardial infarction, angina pectoris, stroke, or death from CHD (Framingham event codes 1-29).
+
+## DNA methylation data processing
+
+In both cohorts, DNA methylation data were collected using the Illumina HumanMethylation450 microarray platform[@Bibikova2011]. Preprocessing was performed using the *minfi* and *wateRmelon* packages for R[@Aryee2014;@Pidsley2013]. As a quality control step, samples were removed if they showed weak overall signal based on visual inspection of an intensity plot, if they had more than 10% of probes undetected at a detection threshold of p<1e-16, or if the reported sex did not match the predicted sex based on methylation patterns. Probes were removed if they met any of the following criteria: more than 10% of samples undetected at a detection threshold of p<1e-16, location in the X or Y chromosomes, non-CpG probes, cross-hybridizing probes, probes measuring SNPs, and probes with an annotated SNP at the CpG site or in the single-base extension region. Samples were normalized using the Noob method for background correction and dye-bias normalization, followed by the BMIQ method for probe type correction[@Fortin2016;@Teschendorff2013]. For each dataset, principal components analysis was performed on the set of control probes using code adapted from the CPACOR method of Lehne et al. to account for technical variation[@Lehne2015]. Blood cell counts for 6 blood cell types (CD4+ T-cells, CD8+ T-cells, B-cells, natural killer cells, monocytes, and granulocytes) were estimated using a common reference-based method[@Houseman2012]. After quality control and filtering steps, `r nrow(betas_whi)` (WHI) and `r nrow(betas_fhs)` (FHS) CpG sites remained for downstream analysis, formatted as beta values (ratio of methylated signal to total microarray signal). 
+
+<!--Visualization of the associations between top principal components for each dataset and major biological and technical variables was examined using heatmaps (Supp. Fig. \@ref(fig:supp-var-plots)). Based on these assessments as well as examination of Scree plots for CPACOR principal components, ___________________-->
+
+## Weighted gene correlation network analysis
+
+Weighted gene correlation network analysis (WGCNA) was used to find highly correlated modules of CpG sites[@Zhang2005]. The full set of `r length(wgcnaInputCpgs)` CpGs passing quality control from WHI were used as input. For computational tractability, blockwise module detection was performed, which treats blocks of features separately for network creation and module detection, followed by eventual merging of highly similar modules. To allow for reasonable computation time, the initial pre-clustering analysis (used to inform the choice of blocks) was performed in a random subset of 100 subjects. A block size of 20,000 was used, and a soft-thresholding power of 8 was chosen to balance approximately scale-free network properties with network connectivity, Unsigned networks were used, based on the fact that the biological consequences of an increase vs. decrease in DNA methylation are much less clear than those of gene transcripts. Whole-module behavior was assessed using the first component from a principal components analysis, performed separately for each module. Scree plots were used to inform the variance explained by each module as well as to justify the use of a single eigenvector as a proxy for module behavior. Module preservation assessment in was completed in FHS, resulting in $Z_{summary}$ statistics to confirm cross-dataset robustness of module connectivity[@Langfelder2011]. EigenCpGs were then calculated (according to the principal component weights from WHI), followed by assessment of associations with incident CVD.
+
+Module associations with cardiovascular disease were assessed using Cox proportional hazards regressions, with eigenCpGs as the independent variable and time-to-event measures for incident CVD as the dependent variable. Minimal models adjusted for estimated blood cell counts as well as technical covariates (DNA pull batch in WHI; analysis center + 7 control-probe principal components in FHS -- see EWAS section for details). Fully-adjusted models adjusted additionally for biological covariates (age, bmi, smoking status, and pack-years of smoking; sex in FHS; race in WHI).
+
+## Epigenome-wide associations of DNA methylation with incident CVD events
+
+For the EWAS analysis, each CpG site was assessed using the the same regression framework as in the module-based models, separately in both WHI and FHS. Methylation beta-values replaced eigenCpGs as the independent variable, and the full set of technical and biological covariates was used. To remove the influence of beta-value outliers, samples were excluded for each CpG if their beta value was outside of the "outer fence" (< 25%ile - $3*IQR$ or > 75%ile + $3*IQR$). QQ plots and calculation of the genomic inflation factor $\lambda$ revealed that genomic inflation was not adequately controlled in FHS, so 7 CPACOR principal components (chosen based on a Scree plot assessment of CPACOR results) were additionally adjusted for in FHS. CPACOR uses principal components analysis on the set of control probes from the methylation array in order to estimate and control for potential batch effects without disturbing biological signal [@Lehne2015]. Proportional hazards checks were implemented (cox.zph function in R) for the top EWAS hits in WHI, and no systematic departure from the Cox regression assumptions were detected.
+
+Comb-p, implemented as a Python module, was used to call differentially methylated regions (DMRs). The algorithm takes as input p-values from the EWAS, removing the requirement for additional covariate adjustment. Comb-p first calculates an autocorrelation function (ACF), for which a maximum distance of 1kb and a step size of 50 bases were used. Next, it uses the ACF to adjust each p-value using a Stouffer-Liptak-Kechris correction, followed by identification of contiguous regions of sites with adjusted p-values below some threshold (here, p<0.1 with no more than 500 bases between neighboring sites in a region). Finally, the ACF is recalculated out to the maximum region size (a step size of 50 was used here as well) and regional p-values are calculated using the Stouffer-Liptak test. For multiple testing correction of DMRs, Comb-p calculates the number of effective tests separately for each DMR as the number of loci tested divided by the size of the region (typically ~1kb).
+
+## Module enrichment analyses
+
+Gene ontology-based enrichment analysis of DMPs was performed using the gometh function from the *missMethyl* package for R. In this procedure, gene annotations for CpG sites are retrieved, and enrichment analysis is performed while accounting for the bias in number of CpG probes per gene on the microarray. 
+
+Locus-based enrichment analyses were performed using basic two-tailed hypergeometric tests for overlap between module membership and annotation category membership. CpG annotations with respect to both CpG islands (Island, North shore, Open sea, etc.) and genes (TSS1500, 3' UTR, Body, etc.) were retrieved from the standard Illumina HumanMethylation450 microarray annotation.
+
+## Inference of cell type specificity
+
+Epigenomic annotations were used to test for relative enrichment of module CpGs in cell type-specific regulatory regions. Annotations for broad peaks in DNase sensitivity as well as ChIP-seq signal for H3K4me1 and H3K4me3 were obtained for 6 blood cell types (monocytes, natural killer cells, T-cells, B-cells, and hematopoietic stems cells from males and females) from the NIH Roadmap Epigenomics Project database [@KundajeAnshulMeuleman2015]. For each combination of epigenomic feature and cell type, CpGs from the HumanMethylation450 array were classified as to their membership in a peak region. Relative enrichments of in-peak CpGs for modules were then calculated as the ratio of $\frac{\#CpG_{in-peak}}{\#CpG_{total}}_{module}$ to $\frac{\#CpG_{in-peak}}{\#CpG_{total}}_{all}$ and presented as $log_2$(relative enrichment) for ease of visualization. Cell type specificity of different modules can then be compared by examining relative enrichments across cell types, especially with respect to highly-represented regulatory annotation types (e.g. DNase hypersensitivity sites for a module enriched in enhancers). We note that this method borrows from the permutation-based eFORGE tool methodology [@Breeze2016], which could not be used here due to the size of the blue module.
+
+## Risk factor integration
+
+Risk factors were incorporated into the module-based analysis in a series of steps. First, Pearson correlations between risk factor levels and module eigenCpGs were calculated to provide a high-level understanding of the strength of their relationship. Risk factors in WHI were all measured at Exam 1 (concurrently with the methylation measurement), while risk factors in FHS were collected for all exams prior to and including Exam 8 (the time of the methylation measurement). In FHS, correlations with past risk factor levels as well as a "cumulative" exposure level (equal to the mean of each set of risk factor levels from Exam 1-7) were also calculated.
+
+Next, linear models were used to assess these same module-risk factor correlations in FHS while adjusting for potential confounding variables. These models predicted module eigenCpGs using either cumulative (Exams 1-7) or current (Exam 8) risk factors, while adjusting for the same set of technical and biological covariates as in the EWAS (described above). In this step, both eigenCpGs and risk factors were standardized before modeling in order to facilitate effect size comparisons across risk factors and across modules.
+
+Finally, the relationship between cumulative risk factors, the brown4 module, and incident CVD was examined using the same Cox regression setup as in the EWAS. This component involved three subsequent models, all adjusting for the full set of technical and biological covariates as well as the "current" level of the risk factor in question: the first using only cumulative risk factors, the second using only the brown4 eigenCpG, and the third using both simultaneously.
+
+
+\newpage
+
+# Supplementary
+
+\newcommand{\beginsupplement}{
+  \setcounter{table}{0}  
+  \renewcommand{\thetable}{S\arabic{table}} 
+  \setcounter{figure}{0} 
+  \renewcommand{\thefigure}{S\arabic{figure}}
+}
+
+\beginsupplement
+
+```{r workflow, fig.cap="Study overview, including module- and region-based analyses as well as follow-up."}
+include_graphics("../doc/figures/workflow.pdf")
+```
+
+```{r print-scree-plots, fig.asp=0.5, fig.cap="Scree plots for PCA on the set of CpGs corresponding to each of the top modules."}
+plot_scree <- function(EVs, mod) {
+  qplot(x=1:10, y=EVs[1:10]) +
+    geom_line() +
+    labs(x="", y="Eigenvalues", title=mod) +
+    scale_x_continuous(breaks=1:10)
+}
+
+screeplots <- lapply(names(ecRes), function(mod) plot_scree(ecRes[[mod]]$whiEVs, mod))
+do.call(plot_grid, c(screeplots, ncol=3))
+```
+
+```{r module-rep-table}
+formattedAssocRes <- lapply(list(whiModRes.ccAdj.df, whiModRes.allAdj.df, fhsModRes.df, fhsModRes.allAdj.df),
+                         function(df) select(df, module, p))
+modRepTbl <- Reduce(function(x,y) inner_join(x, y, by="module"), formattedAssocRes) %>%
+  mutate_at(vars(contains("^p")), format.pval(3)) %>%
+  setNames(c("Module","Partially adjusted","Fully adjusted","Partially adjusted","Fully adjusted"))
+kable(modRepTbl, booktabs=T, longtable=T,
+      caption="P-values for module associations with incident CVD in discovery and replication.") %>%
+  add_header_above(c("", "WHI (discovery)"=2, "FHS (replication)"=2)) %>%
+  footnote(number=c("Partially-adjusted models are adjusted for technical covariates (DNA pull batch in WHI and study center + 7 control probe PCs in FHS) and estimated cell counts. Fully-adjusted models are additionally adjusted for age, sex, smoking status and smoking pack-years."), threeparttable=T)
+```
+
+```{r ewas-cpgs}
+topEwasRes <- fdrTbl %>%
+  inner_join(select(fhsRes, CpG, p), by="CpG") %>% 
+  mutate_at(vars(direction, UCSC_RefGene_Group, UCSC_RefGene_Name), function(x) gsub(";.*", "", x)) %>%
+  mutate(p.y=format.pval(p.y, 3)) %>%
+  setNames(c("CpG","Chromosome","Dir. of Assoc.","P-value","Location","Annotated Gene","Replication P-value"))
+kable(topEwasRes, booktabs=T, caption="CpGs with FDR<0.05 in the discovery set (Bonferroni threshold = 1.18e-7)")
+```
+
+```{r print-eforge-plots, fig.cap="eFORGE cell type-specificity plot for the brown4 module."}
+eforgePlt + theme(axis.text.y=element_text(size=9))
+```
+
+```{r rf-comparison, eval=F}
+# dmrEigencpgs <- apply(combpResTbl, 1, function(row) {
+#   cpgs <- anno450k$Name[anno450k$chr==row$chr, anno450k$pos>=row$start, anno450k$pos<=row$end]
+#   prcomp(t(betas_fhs[cpgs,]), scale.=T)$x[,"PC1"]
+# })
+# sigFeatures <- cbind(betas_fhs[bothSuggestive,], do.call(cbind, c(dmrEigencpgs)))
+sigFeatures <- topCpgs
+sigByRF <- expand.grid(cpg=sigFeatures, rf=c("chol","hdl","tg","sbp","pastEvent"))
+sigByRF$cor <- apply(sigByRF, 1, function(row) {
+  cor.test(betas_fhs[row["cpg"],], as.numeric(nmd_fhs[[row["rf"]]]))$estimate
+})
+sigByRF$cpgLabel=factor(sigByRF$cpg, levels=topCpgs, labels=names(topCpgs))
+
+dmpRfPlt <- ggplot(sigByRF, aes(x=rf, y=cpgLabel, fill=cor)) +
+  geom_tile(color="white") +
+  scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+  ggtitle("Correlations of DMPs with traditional risk factors") +
+  theme(legend.title=element_blank(), axis.title=element_blank())
+dmpRfPlt
+```
+
+```{r bayesian-network, message=F, eval=F}
+library(bnlearn)
+
+sbp_cpgs <- c(PHGDH="cg14476101", TXNIP="cg19693031")
+hdl_cpgs <- c(DHCR24="cg17901584", ABCG1="cg06500161")
+tg_cpgs <- c(CPT1A_1="cg00574958", CPT1A_2="cg17058475")
+tc_cpgs <- c(SQLE="cg00285394", NLRC5="cg07839457")
+
+sbp_cpgs <- c(PHGDH="cg14476101")
+hdl_cpgs <- c(ABCG1="cg06500161")
+tg_cpgs <- c(CPT1A_1="cg00574958")
+tc_cpgs <- c(SQLE="cg00285394")
+acs_cpgs <- c(RUNX3="cg21217270", DGKQ="cg12226453", RGS3="cg14049634", ANKRD11="cg27513667")
+cvdSR_cpgs <- c(GRIP1="cg09414535", KCNJ14="cg10222534", PKD2="cg26215428", AIM2="cg10636246",
+                HRH2="cg14345676", NGEF="cg19485804", TNS1="cg18752854")
+
+rfs <- c("sbp","chol","hdl","tg")
+
+bnInputData <- cbind(select(nmd_fhs, age, sex, bmi, one_of(rfs), event, pastEvent), 
+           t(betas_fhs[unique(c(topCpgs, sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs)),])) %>%
+  na.omit() %>%
+  mutate_at(vars(one_of(rfs)), as.numeric) %>%
+  mutate(sex=factor(sex), event=factor(event), pastEvent=factor(pastEvent), age=as.numeric(age))
+
+ewasCpgs <- fhsRes$CpG[fhsRes$CpG %in% topCpgs][1:5]
+ofInterest <- c(age="age", bmi="bmi", pastEvent="pastEvent", rfs, sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs)
+
+bn <- bnlearn::rsmax2(select(bnInputData, one_of("age", "bmi", "pastEvent",
+                                                 # sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs,
+                                                 ewasCpgs,
+                                                 # topCpgs[grepl("dmr",names(topCpgs))],
+                                                 c("chol","hdl","tg","sbp"))))
+bnPlt <- plot(bn, 
+              highlight=ewasCpgs,
+              # highlight=topCpgs[grepl("dmr",names(topCpgs))],
+              main="Bayesian network of our CpGs, RF-related CpGs, and RFs")
+bnPlt
+```
+
+```{r partial-correlation-network, message=F, eval=F}
+library(qgraph)
+
+# sbp_cpgs <- c(PHGDH="cg14476101", TXNIP="cg19693031")
+# hdl_cpgs <- c(DHCR24="cg17901584")#, ABCG1="cg06500161")
+# tg_cpgs <- c(CPT1A_1="cg00574958", CPT1A_2="cg17058475")
+# tc_cpgs <- c(SQLE="cg00285394", NLRC5="cg07839457")
+
+sbp_cpgs <- c(PHGDH="cg14476101")
+hdl_cpgs <- c(DHCR24="cg17901584")
+tg_cpgs <- c(CPT1A_1="cg00574958")
+tc_cpgs <- c(SQLE="cg00285394")
+
+acs_cpgs <- c(RUNX3="cg21217270", DGKQ="cg12226453", RGS3="cg14049634", ANKRD11="cg27513667")
+cvdSR_cpgs <- c(GRIP1="cg09414535", KCNJ14="cg10222534", PKD2="cg26215428", AIM2="cg10636246",
+                HRH2="cg14345676", NGEF="cg19485804", TNS1="cg18752854")
+
+allRFs <- c("age","sex","bmi","diabetes","chol","ldl","hdl","tg","sbp","glu","hscrp")
+allCpgs <- c(sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs, acs_cpgs, cvdSR_cpgs, topCpgs)
+
+includeRFs <- c("age","bmi","diabetes","ldl","hdl","tg","sbp","glu","hscrp")
+includeLitCpgs <- c()
+includeEwasCpgs <- topCpgs
+names(includeEwasCpgs) <- gsub(".*-","",names(includeEwasCpgs))
+
+corInputData <- cbind(select(nmd_fhs, one_of(allRFs)), t(betas_fhs[allCpgs,])) %>%
+  na.omit() %>%
+  mutate(sex=sex=="M") %>%
+  mutate_all(as.numeric) %>%
+  select(c(includeRFs, includeLitCpgs, includeEwasCpgs)) %>%
+  setNames(c(includeRFs, names(includeLitCpgs), names(includeEwasCpgs)))
+
+corMat <- cor(corInputData)
+# sparsePcMat <- EBICglasso(corMat, n=nrow(corInputData), lambda.min.ratio=0.0001)
+# qgraph(sparsePcMat, layout="spring", 
+#        groups=rep(c("rf","litCpg","ewasCpg"),
+#                   times=c(length(includeRFs),length(includeLitCpgs),length(includeEwasCpgs))),
+#        label.color="white", label.cex=1.3, labels=names(corInputData))
+qgraph(corMat,
+       graph="pcor", threshold="bonferroni", sampleSize=nrow(corInputData),
+       groups=rep(c("rf","litCpg","ewasCpg"),
+                  times=c(length(includeRFs),length(includeLitCpgs),length(includeEwasCpgs))),
+       layout="spring",
+       labels=names(corInputData), label.color="white", label.cex=1.25)
+```
+
+# References
