@@ -272,3 +272,84 @@ calc_zhang_mrs <- function(betas) {
   data.frame(sampleKey=colnames(betas), zhang_mrs=mrs_vals, stringsAsFactors=F)
 }
 
+
+calc_khera2016grs <- function(grs_vcf) {
+  
+  riskAlleleString <- c("ATAAGTTCGTTTGCTGACCCCTCCCATGGCGACCTGTTACTCTTTGCTCA")
+  khera2016grs <- tibble(snp=c("rs599839","rs17114036","rs11206510","rs4845625","rs17465637","rs1561198",
+                               "rs6544713","rs515135","rs2252641","rs6725887","rs9818870",
+                               "rs1878406","rs7692387","rs273909","rs10947789","rs17609940",
+                               "rs12526453","rs12190287","rs2048327","rs3798220","rs10455872",
+                               "rs4252120","rs2023938","rs10953541","rs11556924","rs2954029",
+                               "rs3217992","rs4977574","rs579459","rs2505083","rs2047009","rs501120",
+                               "rs2246833","rs12413409","rs974819","rs964184","rs2259816","rs3184504",
+                               "rs9319428","rs4773144","rs9515203","rs2895811","rs3825807","rs7173743",
+                               "rs17514846","rs12936587","rs216172","rs46522","rs1122608","rs9982601"),
+                         riskAllele=strsplit(riskAlleleString, "")[[1]],
+                         riskEstimate=c(1.11,1.11,1.08,1.04,1.14,1.05,1.06,1.08,1.04,1.12,1.07,1.06,
+                                        1.06,1.09,1.06,1.07,1.1,1.07,1.06,1.51,1.45,1.06,1.07,
+                                        1.08,1.09,1.04,1.16,1.29,1.07,1.06,1.05,1.07,1.06,1.12,1.07,
+                                        1.13,1.08,1.07,1.05,1.07,1.08,1.06,1.08,1.07,1.05,1.06,1.07,
+                                        1.06,1.1,1.13))
+  
+  manualRiskAnnotations <- c(rs9818870="T", rs1878406="T", rs12190287="C", rs17514846="A", rs12413409="G", 
+                             rs501120="T", rs4773144="G", rs3825807="A", rs1122608="G", rs4845625="T", 
+                             rs17465637="C", rs11206510="T", rs17114036="A", rs9982601="T", 
+                             rs2252641="C", rs273909="G", rs12526453="C", rs10455872="G", rs579459="T")
+  
+  vcf_anno_portion <- dplyr::select(grs_vcf, ID, REF, ALT)
+  grs_calculator.df <- inner_join(vcf_anno_portion, khera2016grs, by=c("ID"="snp")) %>%
+    mutate(riskAlleleCorrected=case_when(riskAllele==REF | riskAllele==ALT ~ riskAllele,
+                                         ID %in% names(manualRiskAnnotations) ~ 
+                                           manualRiskAnnotations[ID],
+                                         TRUE ~ as.character(NA)),
+           weight=ifelse(riskAlleleCorrected==ALT, log(riskEstimate), -log(riskEstimate)))
+  
+  
+  geno_mat <- t(as.matrix(grs_vcf[,-(1:9)]))
+  colnames(geno_mat) <- grs_vcf$ID
+  geno_mat <- ifelse(geno_mat=="0/0", 0, ifelse(geno_mat=="0/1", 1, ifelse(geno_mat=="1/1", 1, NA)))
+  grs <- as.vector(geno_mat[,grs_calculator.df$ID] %*% grs_calculator.df$weight)
+  grs
+  # fix_risk_allele <- function(rsid, riskAllele, annotatedAlleles) {
+  #   case_when(length(strsplit(annotatedAlleles, "/")[[1]])>2 ~ manualRiskAnnotations[rsid],
+  #             grepl(riskAllele, annotatedAlleles) ~ riskAllele,
+  #             TRUE ~ c(A="T", C="G", G="C", `T`="A")[riskAllele])
+  # }
+  
+  
+  
+  #   mutate(riskAlleleCorrected=pmap_chr(list(snp, riskAllele, allele), fix_risk_allele),
+  #          loc=paste0(chr_name, ":", chrom_start),
+  #          lnOR=log(riskEstimate)) %>%
+  #   dplyr::rename(alleleOptions=allele) %>%
+  #   dplyr::select(snp, loc, alleleOptions, riskAlleleCorrected, lnOR)
+  # 
+  # 
+  # # library(biomaRt)
+  # # ensembl <- useMart("ENSEMBL_MART_SNP", host="grch37.ensembl.org", dataset="hsapiens_snp")
+  # # snpLocs <- getBM(attributes=c("refsnp_id","chr_name","chrom_start","allele"),
+  # #                  filters="snp_filter",
+  # #                  values=khera2016grs$snp,
+  # #                  mart=ensembl)
+  # 
+  # grs_calculator.df <- inner_join(khera2016grs, snpLocs, by=c("snp"="refsnp_id")) %>%
+  #   mutate(riskAlleleCorrected=pmap_chr(list(snp, riskAllele, allele), fix_risk_allele),
+  #          loc=paste0(chr_name, ":", chrom_start),
+  #          lnOR=log(riskEstimate)) %>%
+  #   dplyr::rename(alleleOptions=allele) %>%
+  #   dplyr::select(snp, loc, alleleOptions, riskAlleleCorrected, lnOR)
+  # 
+  # genotypeAnno <- tibble(locAllele=colnames(genotypes)) %>%
+  #   separate(locAllele, into=c("loc","allele"), sep="_") %>%
+  #   inner_join(grs_calculator.df, by="loc") %>%
+  #   # mutate(genoInOptions=map2_lgl(allele, alleleOptions, function(x,y) x %in% strsplit(y, "/")[[1]]))
+  #   mutate(needsFlip=ifelse(allele==riskAlleleCorrected, F, T),
+  #          grsCoef=ifelse(needsFlip, -lnOR, lnOR),
+  #          col_name=paste(loc, allele, sep="_"))
+  # 
+  # grs_weights <- setNames(genotypeAnno$grsCoef, genotypeAnno$col_name)[colnames(genotypes)]
+  # 
+  # grs <- as.vector(genotypes %*% grs_weights)
+  # grs
+}

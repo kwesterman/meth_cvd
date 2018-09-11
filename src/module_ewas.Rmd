@@ -422,8 +422,8 @@ run_cox_model <- function(probe_data, covar_data, model_spec) {
   #   A 1x3 matrix containing the regression coefficient, z-score and p-value 
   CpG <- rownames(probe_data)
   probe_data <- as.vector(probe_data)
-  outlier_TF <- probe_data < quantile(probe_data, 0.25) - 3 * IQR(probe_data) | 
-    (probe_data > quantile(probe_data, 0.75) + 3 * IQR(probe_data))
+  outlier_TF <- (probe_data < quantile(probe_data, 0.25) - 3 * IQR(probe_data) | 
+    (probe_data > quantile(probe_data, 0.75) + 3 * IQR(probe_data)))
   model_data <- cbind(covar_data, meth=as.numeric(probe_data),
                       survObj=Surv(time=covar_data$time, event=covar_data$event))
   my_try({

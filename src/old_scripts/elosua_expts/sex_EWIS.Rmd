@@ -1,0 +1,341 @@
+---
+title: EWIS for methylation-sex interactions
+output: pdf_document
+---
+
+```{r prereqs, include=F}
+library(knitr)
+opts_chunk$set(echo=F, cache.path="../cache/sex_EWIS/")
+suppressMessages(silent <- lapply(c("tidyverse","minfi","survival","doParallel","itertools",
+                                    "gridExtra","cowplot"), library, character.only=T))
+```
+
+```{r load-data}
+# Load methylation data
+betas_fhs <- readRDS("../int/betas.qc.norm.filt_fhs.rds")
+
+# Load metadata
+metaData <- readRDS("../int/metaData.rds")
+
+# Load estimated cell counts
+estCellCounts_fhs <- readRDS("../int/estCellCounts_fhs.rds")
+
+# Load CPACOR principal component adjustment factors
+load("../int/CPACOR_fhs.RData")
+CP_PCs_fhs <- CP_PCs
+
+# Load PCA results
+load("../int/PCA.fit_fhs.RData")
+PCs_fhs <- PCs
+
+# Load Illumina 450k annotation
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+anno450k <- data.frame(getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19), stringsAsFactors=F)
+```
+
+```{r clean-data, warning=F}
+### Create master covariate/event data frame
+nonMethData <- Reduce(function(x,y) inner_join(x, y, by="sampleKey"), 
+                          list(metaData, estCellCounts_fhs, CP_PCs_fhs, PCs_fhs)) %>%
+  distinct(subjID, .keep_all=T)  # Hacky...better way of deciding which biological replicates to keep?
+nonMethData <- replace_na(nonMethData, 
+                          list(bmi=median(nonMethData$bmi, na.rm=T),
+                               smk_now=0, smk_py=0, ht_med=0, lipid_med=0, dm_med=0)) %>%
+  mutate(diabetes=dm_med | glu>125) %>%
+  mutate_at(c("chol","ldl","hdl","tg","sbp","glu","hscrp"), log10)
+nmd_fhs <- filter(nonMethData, study=="fhs")
+
+betas_fhs <- betas_fhs[,match(nonMethData$sampleKey[nonMethData$study=="fhs"], colnames(betas_fhs))]
+stopifnot(all(colnames(betas_fhs)==nonMethData$sampleKey[nonMethData$study=="fhs"]))  # Ensure identical number and order of samples for methylation and covariate data
+```
+
+## Genome-wide assessment of sex-methylation interactions in predicting incident CVD events
+
+```{r qc, warning=F, eval=F}
+make_variation_plot <- function(cohort) {
+  nmd <- filter(nonMethData, study==cohort)
+  
+  wbcpca.fit <- prcomp(select(nmd, CD8T, CD4T, NK, Bcell, Mono, Gran), scale.=T)
+  nmd$WBC_PC1 <- wbcpca.fit$x[,"PC1"]
+  nmd$WBC_PC2 <- wbcpca.fit$x[,"PC2"]
+  
+  covs <- c("sex","age","race","bmi","smk_now","smk_py","WBC_PC1","WBC_PC2",
+            "plate","center","dnaPull","sentrixRow","sentrixCol","event","pastEvent")
+  comparisonDF <- expand.grid(pc=c(paste0("PC", 1:6),"cpPC1","cpPC2","event"), covar=covs)
+  
+  comparisonDF$negLogP <- apply(comparisonDF, 1, function(row) {
+    pc <- row["pc"]
+    covar <- row["covar"]
+    nlp <- tryCatch({
+      lm.fit <- lm(as.formula(paste0(pc, "~", covar)), data=nmd)
+      pVal <- anova(lm.fit)[covar,"Pr(>F)"]
+      -log10(pVal)
+    }, error=function(e) 0)
+    if(is.na(nlp)) 0 else min(nlp, 20)
+  })
+  
+  ggplot(comparisonDF, aes(x=pc, y=forcats::fct_rev(covar), fill=negLogP)) +
+    geom_tile(color="white") +
+    scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
+    scale_x_discrete(position="top") +
+    labs(title=toupper(cohort),
+         caption="Note: -log(p-values) capped at 20 to aid visualization.") +
+    theme(axis.title=element_blank())
+}
+
+fhsVarPlt <- make_variation_plot("fhs")
+```
+```{r ewis-prep}
+myTry <- function(expr, CpG) {
+  # Captures model failures and returns successful result or vector of NAs
+  tryCatch(expr,
+           error = function(e) {print(e); return(c(CpG, rep(NA, 3)))})
+}
+
+run_coxModel_interaction <- function(probeData, covarData, model_spec) {
+  # Given a row of the M-value matrix (corresponding to a CpG site), bind that methylation
+  # data to the covariate data and run Cox proportional hazards regression
+  CpG <- rownames(probeData)
+  probeData <- as.vector(probeData)
+  outlierTF <- probeData<quantile(probeData,0.25)-3*IQR(probeData) | 
+    probeData>quantile(probeData,0.75)+3*IQR(probeData)
+  modelData <- cbind(covarData, meth=as.numeric(probeData),
+                     survObj=Surv(time=covarData$time, event=covarData$event))
+  myTry({
+    cox.fit <- coxph(as.formula(model_spec), data=modelData, subset=!outlierTF)
+    c(CpG=CpG, summary(cox.fit)$coef['meth:sexM',c('coef','z','Pr(>|z|)')])
+  }, CpG)
+}
+```
+
+```{r ewis, cache=1}
+ewisModel_fhs <- paste0("survObj~meth*sex+age+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+center+",
+                        paste0("cpPC",1:7,collapse="+"))
+
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(meth=iter(betas_fhs, by="row"), .packages="survival") %dopar%
+  run_coxModel_interaction(meth, nmd_fhs, ewisModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+```{r ewas-inflation}
+make_qqplot <- function(pVec, plotTitle="Title") {
+  pVec <- pVec[!is.na(pVec)]
+  qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle, xlab="Expected (-logP)", ylab="Observed (-logP)")
+  abline(0,1,col="red")
+}
+gControl <- function(pVals) {
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(pVals, df=2, lower.tail=F), na.rm=T)/qchisq(0.5, df=2)
+round(lambda, 2)
+}
+
+fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+fhsQQ
+```
+
+```{r genome-distribution, eval=F}
+summarise_annotation <- function(group, df) {
+  # Takes in a set of annotations and returns the proportions of a given field (e.g. gene name)
+  df %>%
+    select(one_of("Name", group)) %>%
+    separate_rows(group, sep=";") %>%
+    distinct() %>%
+    filter_at(group, all_vars(.!="")) %>%
+    group_by_at(group) %>%
+    summarise(n=n()) %>%
+    mutate(frac=n/sum(n))
+}
+
+annot_plot <- function(cpgSet, bgCpgSet, group_var) {
+  # Given a specific field, plot proportion of CpGs in a specific subset next to those of the full set
+  my_groups <- summarise_annotation(group_var, filter(anno450k, Name %in% cpgSet))
+  all_groups <- summarise_annotation(group_var, filter(anno450k, Name %in% bgCpgSet))
+  merge_groups <- inner_join(my_groups, all_groups, by=group_var, suffix=c(".subset",".all")) %>%
+    gather(key=group, value=frac, contains("frac")) %>%
+    mutate(group=factor(group, levels=c("frac.all","frac.subset"), labels=c("All CpGs","EWAS hits")))
+  ggplot(merge_groups, aes_string(x=group_var, y="frac", fill="group")) +
+    geom_bar(stat="identity", position="dodge") +
+    theme(axis.title=element_blank(), axis.text.x=element_text(angle=30, hjust=1))
+}
+
+geneGroupEnrichmentPlot <- annot_plot(eitherSuggestiveSites, hachiyaHighRI, "UCSC_RefGene_Group")
+cpgIslandEnrichmentPlot <- annot_plot(eitherSuggestiveSites, hachiyaHighRI, "Relation_to_Island")
+# annot_plot(topCpGs, "Regulatory_Feature_Group")
+
+calc_enrichment_p <- function(group, lowerTail=F) {
+  rtiSummarySuggestive <- summarise_annotation("Relation_to_Island", filter(anno450k, Name %in% eitherSuggestiveSites))
+  rtiSummaryHachiya <- summarise_annotation("Relation_to_Island", filter(anno450k, Name %in% hachiyaHighRI))
+  n_hitsInGroup <- sum(rtiSummarySuggestive$n[rtiSummarySuggestive$Relation_to_Island %in% group])
+  n_availInGroup <- sum(rtiSummaryHachiya$n[rtiSummaryHachiya$Relation_to_Island %in% group])
+  phyper(n_hitsInGroup, n_availInGroup, length(hachiyaHighRI)-n_availInGroup, length(eitherSuggestiveSites), lower.tail=lowerTail)
+}
+
+pIsland <- calc_enrichment_p("Island")
+pShore <- calc_enrichment_p(c("N_Shore","S_Shore"))
+pOpenSea <- calc_enrichment_p("OpenSea", lowerTail=T)
+```
+
+```{r gsea, include=F, eval=F}
+gsaTbl <- missMethyl::gometh(as.vector(eitherSuggestiveSites), all.cpg=hachiyaHighRI, collection="GO")
+gsaTopResTbl <- arrange(filter(gsaTbl, FDR<0.05), FDR)
+```
+
+
+```{r sex-strat, cache=1, eval=F}
+fhsSexStratModel <- paste0("survObj~meth+age+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+center+",
+                           paste0("cpPC",1:7,collapse="+"))
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+fhsResListMale <- foreach(meth=iter(betas_fhs, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth[nmd_fhs$sex=="M"], nmd_fhs[nmd_fhs$sex=="M",], fhsSexStratModel)
+fhsResMale <- do.call(rbind, fhsResListMale) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  mutate(CpG=rownames(betas_fhs)) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+fhsResListFemale <- foreach(meth=iter(betas_fhs, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth[nmd_fhs$sex=="F"], nmd_fhs[nmd_fhs$sex=="F",], fhsSexStratModel)
+fhsResFemale <- do.call(rbind, fhsResListFemale) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  mutate(CpG=rownames(betas_fhs)) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+stopCluster(cl)
+```
+```{r race-strat, cache=1, eval=F}
+whiRaceStratModel <- "survObj~meth+age+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+dnaPull"
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+whiResListWhite <- foreach(meth=iter(betas_whi, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth[nmd_whi$race=="white"], nmd_whi[nmd_whi$race=="white",], whiRaceStratModel)
+whiResWhite <- do.call(rbind, whiResListWhite) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  mutate(CpG=rownames(betas_whi)) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+whiResListBlack <- foreach(meth=iter(betas_whi, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth[nmd_whi$race=="black"], nmd_whi[nmd_whi$race=="black",], whiRaceStratModel)
+whiResBlack <- do.call(rbind, whiResListBlack) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  mutate(CpG=rownames(betas_whi)) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+whiResListHispanic <- foreach(meth=iter(betas_whi, by="row"), .packages="survival") %dopar%
+  run_coxModel(meth[nmd_whi$race=="hispanic"], nmd_whi[nmd_whi$race=="hispanic",], whiRaceStratModel)
+whiResHispanic <- do.call(rbind, whiResListHispanic) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  mutate(CpG=rownames(betas_whi)) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+stopCluster(cl)
+```
+```{r strat-analyses, warning=F, cache=1, eval=F}
+fhsResMaleFull <- fhsResMale
+fhsResMale <- fhsResMaleFull %>%
+  filter(CpG %in% hachiyaHighRI) %>%
+  mutate(fdr=p.adjust(p, method="BH"))
+fhsResFemaleFull <- fhsResFemale
+fhsResFemale <- fhsResFemaleFull %>%
+  filter(CpG %in% hachiyaHighRI) %>%
+  mutate(fdr=p.adjust(p, method="BH"))
+whiResWhiteFull <- whiResWhite
+whiResWhite <- whiResWhiteFull %>%
+  filter(CpG %in% hachiyaHighRI) %>%
+  mutate(fdr=p.adjust(p, method="BH"))
+whiResBlackFull <- whiResBlack
+whiResBlack <- whiResBlackFull %>%
+  filter(CpG %in% hachiyaHighRI) %>%
+  mutate(fdr=p.adjust(p, method="BH"))
+whiResHispanicFull <- whiResHispanic
+whiResHispanic <- whiResHispanicFull %>%
+  filter(CpG %in% hachiyaHighRI) %>%
+  mutate(fdr=p.adjust(p, method="BH"))
+# fhsResPEFull <- fhsResPE
+# fhsResPE <- fhsResPEFull %>%
+#   filter(CpG %in% hachiyaHighRI) %>%
+#   mutate(fdr=p.adjust(p, method="BH"))
+# fhsResNoPEFull <- fhsResNoPE
+# fhsResNoPE <- fhsResNoPEFull %>%
+#   filter(CpG %in% hachiyaHighRI) %>%
+#   mutate(fdr=p.adjust(p, method="BH"))
+
+compare_results <- function(resMain, resCompare, comparison) {
+  compareRanks <- 1:sum(resMain$fdr<0.25)
+  corTest <- cor.test(resMain$coef[compareRanks], 
+           resCompare[match(resMain$CpG[compareRanks],resCompare$CpG),"coef"])
+  bothSuggestive <- resCompare$CpG[resCompare$CpG %in% resMain$CpG[resMain$fdr<0.25] & resCompare$fdr<0.25]
+  # bothNominal <- resCompare$CpG[resCompare$CpG %in% resMain$CpG[resMain$p<0.01] & resCompare$p<0.01]
+  list(df=tibble(comparison=comparison, corr=corTest$estimate, corrSig=corTest$p.value, 
+                 suggestiveOverlap=length(bothSuggestive)),
+       commonProbes=bothSuggestive)
+}
+
+compareList <- list(whi2fhs=compare_results(whiRes, fhsRes, "whi2fhs"),
+                    whi2fhsMale=compare_results(whiRes, fhsResMale, "whi2fhsMale"),
+                    whi2fhsFemale=compare_results(whiRes, fhsResFemale, "whi2fhsFemale"),
+                    # whi2fhsPE=compare_results(whiRes, fhsResPE, "whi2fhsPastEvents"),
+                    # whi2fhsNoPE=compare_results(whiRes, fhsResNoPE, "whi2fhsNoPastEvents"),
+                    fhs2whi=compare_results(fhsRes, whiRes, "fhs2whi"),
+                    fhs2whiWhite=compare_results(fhsRes, whiResWhite, "fhs2whiWhite"),
+                    fhs2whiBlack=compare_results(fhsRes, whiResBlack, "fhs2whiBlack"),
+                    fhs2whiHispanic=compare_results(fhsRes, whiResHispanic, "fhs2whiHispanic"))
+
+compareDF <- bind_rows(map(compareList, "df")) %>%
+  mutate(group=rep(c("Full WHI to stratified FHS","Full FHS to stratified WHI"), times=c(3,4)),
+         group=factor(group, levels=unique(group)),
+         stratum=c("Full","Male","Female","Full","White","Black","Hispanic"),
+         stratum=factor(stratum, levels=unique(stratum)))
+
+# ggplot(comparisonsDF, aes(x=compareDirection, y=corr)) +
+# geom_bar(aes(group=comparison), stat="identity", position="dodge", width=0.9)
+stratPlt <- ggplot(compareDF, aes(x=stratum, y=corr)) +
+  geom_bar(stat="identity") +
+  labs(y="Correlation") +
+  theme(axis.title.x=element_blank()) +
+  facet_wrap(~group, scales="free_x")
+
+stratOverlapPlt <- ggplot(compareDF, aes(x=comparison, y=suggestiveOverlap)) +
+  geom_bar(stat="identity", width=0.9) +
+  ggtitle("Size of overlap between probes with FDR<0.25 in each cohort/subset combination")
+
+gsaStrat <- map(list(fhsRes, fhsResMale, fhsResFemale, whiRes, whiResWhite, whiResBlack, whiResHispanic),
+                function(stratRes) tryCatch(missMethyl::gometh(stratRes$CpG[stratRes$fdr<0.25], 
+                                                               all.cpg=hachiyaHighRI,
+                                                               collection="GO"),
+                                            error=function(e) NA))
+# map(gsaStrat[!is.na(gsaStrat)], function(gsaResult)  head(arrange(gsaResult, P.DE)))
+# gsaCompStrat <- map(compareList, function(comp) gometh(comp$commonProbes, collection="GO"))
+# map(gsaCompStrat, function(gsaResult) head(arrange(gsaResult, P.DE)))
+
+## IMPLEMENT proportion test: prop.test(c(counts), c(trials))
+```
+```{r strat-plt, out.width="70%", fig.cap="Pearson correlations between EWAS regression coefficients in one dataset with FDR<0.25 and those of the same CpGs in subsets of the other.", eval=F}
+stratPlt
+```
+```{r qq-plots, dev="png", dpi=300, fig.asp=1.5, fig.cap="QQ-plots for EWAS results, including the full set of CpG sites passing quality control steps.", eval=F}
+make_qqplot(fhsRes$p, plotTitle=paste0("FHS: lambda = ", gControl(fhsResFull$p)))  # Q-Q & g. control
+```
+
+

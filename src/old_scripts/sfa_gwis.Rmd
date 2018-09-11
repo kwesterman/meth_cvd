@@ -1,0 +1,239 @@
+---
+title: SFA GWIS
+output: html_document
+---
+
+```{r prereqs, include=F, cache=F}
+library(knitr)
+opts_chunk$set(echo=F, cache.lazy=F, cache.path="../cache/sfa_gwis/",
+               fig.keep="high", fig.path="../output/figures/")
+suppressMessages(silent <- lapply(c("tidyverse","data.table","doParallel","itertools"), library, character.only=T))
+```
+
+```{r load-data}
+genos <- fread("../int/prunedGenos.csv", sep=",")
+ids <- genos$subjID
+genos <- t(genos[,-1])
+colnames(genos) <- ids
+
+betas <- readRDS("../int/betas.qc.norm.filt_fhs.rds")
+md <- readRDS("../int/metaData.rds") %>%
+  distinct(subjID, .keep_all=T) %>%
+  filter(sampleKey %in% colnames(betas))
+
+phenoData <- readRDS("../int/clinicalPlus.rds")
+
+ffq_c1 <- read_tsv("../../diet_meth_cvd/data/fhs/diet/ffq_c1.txt", skip=10)
+ffq_c2 <- read_tsv("../../diet_meth_cvd/data/fhs/diet/ffq_c2.txt", skip=10)
+ffq <- bind_rows(ffq_c1, ffq_c2) %>%
+  dplyr::rename(SFA=NUT_SATFAT) %>%
+  dplyr::select(shareid, SFA)
+
+phenoData <- inner_join(phenoData, ffq, by=c("subjID"="shareid")) %>%
+  mutate(subjID=as.character(subjID)) %>%
+  inner_join(dplyr::select(md, subjID, sampleKey), by="subjID") %>%
+  filter(study=="fhs") %>%
+  distinct(subjID, .keep_all=T)
+
+genos_fhs <- genos[,as.character(phenoData$subjID)]
+betas_fhs <- betas[,phenoData$sampleKey]
+
+rm(genos, betas)
+```
+
+```{r gwis-prep}
+myTry <- function(expr, snp) {
+  # Captures model failures and returns successful result or vector of NAs
+  tryCatch(expr,
+           error = function(e) {print(e); return(c(snp, rep(NA, 3)))})
+}
+
+test_interaction <- function(snpData, covarData, model_spec) {
+  snp <- rownames(snpData)
+  probeData <- as.vector(snpData)
+  modelData <- cbind(covarData, geno=as.numeric(snpData))
+  myTry({
+    model.fit <- lm(as.formula(model_spec), data=modelData)
+    c(SNP=snp, summary(model.fit)$coef['geno:SFA',c('Estimate','t value','Pr(>|t|)')])
+  }, snp)
+}
+
+test_meth_interaction <- function(methData, covarData, model_spec) {
+  cpg <- rownames(methData)
+  probeData <- as.vector(methData)
+  modelData <- cbind(covarData, meth=as.numeric(methData))
+  myTry({
+    model.fit <- lm(as.formula(model_spec), data=modelData)
+    c(CpG=cpg, summary(model.fit)$coef['meth:SFA',c('Estimate','t value','Pr(>|t|)')])
+  }, cpg)
+}
+```
+
+# LDL
+
+```{r gwis, cache=1}
+gwisModel_fhs <- "ldl ~ geno*SFA + age + sex + bmi"
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(geno=iter(genos_fhs, by="row")) %dopar%
+  test_interaction(geno, phenoData, gwisModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|t|)`) %>%
+  mutate_at(c("Estimate","t value","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r ewas-inflation}
+make_qqplot <- function(pVec, plotTitle="Title") {
+  pVec <- pVec[!is.na(pVec)]
+  qqplot(-log10(1:length(pVec)/length(pVec)), -log10(pVec), pch=".", main=plotTitle, xlab="Expected (-logP)", ylab="Observed (-logP)")
+  abline(0,1,col="red")
+}
+gControl <- function(pVals) {
+# See van Iterson 2017 methods and/or Lehne 2015 code for details on genomic control for EWAS
+# Below is modeled after Lehne 2015
+lambda <- median(qchisq(pVals, df=2, lower.tail=F), na.rm=T)/qchisq(0.5, df=2)
+round(lambda, 2)
+}
+
+fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+fhsQQ
+```
+
+# HDL
+
+```{r gwis-hdl, cache=1}
+gwisModel_fhs <- "hdl ~ geno*SFA + age + sex + bmi"
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(geno=iter(genos_fhs, by="row")) %dopar%
+  test_interaction(geno, phenoData, gwisModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|t|)`) %>%
+  mutate_at(c("Estimate","t value","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r hdl-gen-qq}
+fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+fhsQQ
+```
+
+# BMI
+
+```{r gwis-bmi, cache=1}
+gwisModel_fhs <- "bmi ~ geno*SFA + age + sex"
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(geno=iter(genos_fhs, by="row")) %dopar%
+  test_interaction(geno, phenoData, gwisModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|t|)`) %>%
+  mutate_at(c("Estimate","t value","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r bmi-geno-qq}
+fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+fhsQQ
+```
+
+
+# LDL - methylation
+
+```{r ewis-ldl, cache=1}
+ewisModel_fhs <- "ldl ~ meth*SFA + age + sex + bmi"
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(meth=iter(betas_fhs, by="row")) %dopar%
+  test_meth_interaction(meth, phenoData, ewisModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|t|)`) %>%
+  mutate_at(c("Estimate","t value","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r ldl-meth-qq}
+fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+fhsQQ
+```
+
+# HDL - methylation
+
+```{r ewis-hdl, cache=1}
+ewisModel_fhs <- "hdl ~ meth*SFA + age + sex + bmi"
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(meth=iter(betas_fhs, by="row")) %dopar%
+  test_meth_interaction(meth, phenoData, ewisModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|t|)`) %>%
+  mutate_at(c("Estimate","t value","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r hdl-meth-qq}
+fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+fhsQQ
+```
+
+# BMI - methylation
+
+```{r ewis-bmi, cache=1}
+ewisModel_fhs <- "bmi ~ meth*SFA + age + sex"
+
+cl <- makePSOCKcluster(detectCores())
+registerDoParallel(cl)
+
+fhsResList <- foreach(meth=iter(betas_fhs, by="row")) %dopar%
+  test_meth_interaction(meth, phenoData, ewisModel_fhs)
+
+stopCluster(cl)
+
+fhsRes <- do.call(rbind, fhsResList) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|t|)`) %>%
+  mutate_at(c("Estimate","t value","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
+```
+
+```{r bmi-meth-qq}
+fhsQQ <- make_qqplot(fhsRes$p, plotTitle=paste0("lambda = ", gControl(fhsRes$p)))
+fhsQQ
+```
