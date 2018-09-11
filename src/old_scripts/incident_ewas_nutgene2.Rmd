@@ -1,24 +1,19 @@
 ---
 title: EWAS for Incident CVD Events
 output:
-  bookdown::pdf_document2:
-    fig_caption: true
-    keep_tex: true
-    toc: false
+  pdf_document:
     latex_engine: pdflatex
-documentclass: bmcart2
-bibliography: ../doc/incident_ewas.bib
 ---
 
 ```{r prereqs, include=F}
 library(knitr)
 opts_chunk$set(echo=F, fig.path="../doc/figures/", cache.path="../cache/incident_ewas/")
-suppressMessages(silent <- lapply(c("tidyverse","minfi","survival","doParallel","itertools",
-                                    "gridExtra","cowplot"), library, character.only=T))
+suppressMessages(silent <- lapply(c("tidyverse","minfi","survival","doParallel","itertools","gridExtra"), library, character.only=T))
 ```
 
 ```{r load-data}
 # Load methylation data
+getwd()
 betas_whi <- readRDS("../int/betas.qc.norm.filt_whi.rds")
 betas_fhs <- readRDS("../int/betas.qc.norm.filt_fhs.rds")
 
@@ -52,8 +47,9 @@ CP_PCs <- bind_rows(CP_PCs_whi, CP_PCs_fhs)
 PCs <- bind_rows(PCs_whi, PCs_fhs)
 
 ### Create master covariate/event data frame
-nonMethData <- Reduce(function(x,y) inner_join(x, y, by="sampleKey"), 
+nonMethData <- Reduce(function(x,y) inner_join(x, y, by="sampleKey"),
                           list(metaData, estCellCounts, CP_PCs, PCs)) %>%
+                          # list(metaData, estCellCounts, CP_PCs, PCs)) %>%
   distinct(subjID, .keep_all=T)  # Hacky...better way of deciding which biological replicates to keep?
 nonMethData <- replace_na(nonMethData, 
                           list(bmi=median(nonMethData$bmi, na.rm=T),
@@ -71,7 +67,7 @@ stopifnot(all(colnames(betas_whi)==nonMethData$sampleKey[nonMethData$study=="whi
 
 # Introduction
 
-Genetic approaches to cardiovascular disease (CVD) research have led to important breakthroughs in mechanistic understanding and therapeutic strategies. However, the mechanisms for gene variant-disease relationships are often difficult to determine, and their effects may often be mediated by epigenetic regulation [@Bonder2016]. DNA methylation is one such mechanism that can integrate both genetic variation and environmental exposures and potentially reflect or drive their effects on CVD outcomes [@Ordovas2010].
+Genetic approaches to cardiovascular disease (CVD) research have led to important breakthroughs in mechanistic understanding and therapeutic strategies. However, the mechanisms for gene variant-disease relationships are often difficult to determine, and their effects may often be mediated by epigenetic regulation [@Bonder2016]. DNA methylation is one such mechanism that can reflect both genetic variation and environmental exposures and potentially drive their effects on CVD outcomes [@Ordovas2010].
 
 A series of recent epigenome-wide association studies (EWAS) have examined relationships between DNA methylation at cytosine-phosphate-guanine (CpG) sites and various CVD phenotypes, including prior myocardial infarction [@Rask-Andersen2016], acute coronary syndrome [@Li2017], and atherosclerosis [@Nakatochi2017]. These discoveries may reveal important mechanistic insights, but are susceptible to reverse causation. Mendelian randomization approaches can resolve some of this ambiguity, but are dependent on the existence of appropriate genetic instrumental variables (methylation-quantitative trait loci) for the CpGs of interest. Furthermore, those that have been performed often suggest that reverse causation (methylation being influenced by the phenotype of interest) is more common [@Dekkers2016;@Wahl2017].
 
@@ -79,7 +75,7 @@ One approach to this problem is to examine epigenetic associations with cardiova
 
 Most epigenetic investigations of CVD to-date have been performed in blood, based on the importance of immune-related processes in its pathogenesis [@Back2015] as well as its relative ease of collection in comparison to other relevant tissues (e.g. endothelium, myocardium). In addition, several groups have shown a moderate ability of blood-based methylomic signatures to reflect those in disease-relevant tissues [@Bacos2016;@Huang2016].
 
-To address the problem of reverse causation while incorporating time-to-event information, we performed a Cox model-based EWAS for incident CVD in a series of two cohorts. We used sensitivity analyses to demonstrate that demographic factors are relevant, but not dominant, in explaining the variation in results across cohorts. Furthermore, we incorporated existing genetic, epigenetic, and transcriptomic datasets to explore the potential mechanistic relevance of different cell types and transcription factors to CVD risk, both within blood and in other cell types of interest. Finally, we assessed relationships between methylation at relevant CpG sites and traditional cardiovascular risk factors.
+To address the problem of reverse causation while incorporating time-to-event information, we performed a Cox model-based EWAS for incident CVD in a series of two cohorts. We used sensitivity analyses to demonstrate that demographic factors are relevant, but not dominant, in explaining the variation in results across cohorts. Furthermore, we explored the utility of groups of CpGs (regions and modules) in increasing the power to detect associations. Finally, we incorporated existing genomic, epigenomic, and transcriptomic datasets to explore the potential mechanistic relevance of different cell types and transcription factors to CVD risk, both within blood and in other cell types of interest.
 
 # Results
 
@@ -138,7 +134,7 @@ run_coxModel <- function(probeData, covarData, model_spec) {
                      survObj=Surv(time=covarData$time, event=covarData$event))
   myTry({
     cox.fit <- coxph(as.formula(model_spec), data=modelData, subset=!outlierTF)
-    c(CpG=CpG, summary(cox.fit)$coef['meth',c('coef','z','Pr(>|z|)')])
+    c(CpG=CpG, summary(cox.fit)$coef[c('meth'),c('Pr(>|z|)')])
   }, CpG)
 }
 ```
@@ -221,7 +217,7 @@ fhsRes <- fhsResFull %>%
   mutate(fdr=p.adjust(p, method="BH"))
 ```
 
-The epigenome-wide association analysis was performed using two datasets: the Women's Health Initiative Study (WHI) for discovery, and the Framingham Heart Study Offspring Cohort (FHS) for validation. Subject characteristics are shown in Table \@ref(tab:population-description). The objective of our initial analysis was to identify specific CpG sites whose methylation levels in blood at a given baseline timepoint predict incident cardiovascular events. For each CpG site passing quality control (`r nrow(betas_whi)` in WHI and `r nrow(betas_fhs)` in FHS), a Cox proportional hazards model was used to predict time-to-event from methylation beta values while adjusting for relevant biological and technical covariates.
+The epigenome-wide association analysis was performed using two datasets: the Women's Health Initiative Study (WHI) for discovery, and the Framingham Heart Study Offspring Cohort (FHS) for validation. Subject characteristics are shown in Table 1. The objective of our foundational analysis was to identify specific CpG sites whose methylation levels in blood at a given baseline timepoint predict incident cardiovascular events. For each CpG site passing quality control (`r nrow(betas_whi)` in WHI and `r nrow(betas_fhs)` in FHS), a Cox proportional hazards model was used to assess these associations while adjusting for relevant biological and technical covariates.
 
 ```{r population-description}
 popData <- nonMethData %>%
@@ -235,15 +231,15 @@ popData <- nonMethData %>%
             perc_smoke=paste0(round(sum(smk_now)/n*100), " %"),
             n_pastEvent=sum(pastEvent),
             n_event=sum(event)) %>%
-  setNames(c("Dataset","Sample Size","% female","Age","Multiple races","BMI","% smoke",
+  setNames(c("Dataset","Sample Size","% female","Age","Mixed race","BMI","% smoke",
              "# prior CVD events","# incident CVD events")) %>%
   t() %>%
   data.frame() %>%
   setNames(c("FHS","WHI"))
-kable(popData[-1,], caption="Population description.", booktabs=T)
+kable(popData[-1,], caption="Population description")
 ```
 
-Genomic inflation was limited in both datasets across the full set of CpG sites (see Supp. Fig. \@ref(fig:supp-qq-plots)), suggesting adequate correction for substructure and confounding. However, to increase power, a subset of `r length(hachiyaHighRI)` highly variable sites were taken from a prior analysis of methylation variability in blood cell subtypes [@Hachiya2017] and used during the initial analysis. Though this dataset was gathered in Asian subjects, the variability patterns are highly consistent with those seen in the datasets analyzed here (Supp. Fig. \@ref(fig:supp-hachiya-plot)).
+Genomic inflation was limited in both datasets across the full set of CpG sites (see supp figure .....), suggesting adequate correction for substructure and confounding. However, to increase power, a subset of `r length(hachiyaHighRI)` highly variable sites were taken from a prior analysis of methylation variability in blood cell subtypes [@Hachiya2017] and used during the initial analysis. Though this dataset was gathered in Asian subjects, the variability patterns are highly consistent with those seen in the datasets analyzed here (see supp figure ....).
 
 ```{r ewas-discovery-investigation, warning=F}
 qqmanInput_whi <- whiRes %>%
@@ -261,13 +257,12 @@ bonferroniTbl <- whiToFhsReplication %>%
 # kable(bonferroniTbl, caption="Bonferroni-significant CpGs in the discovery set")
 fdrTbl <- whiRes %>%
   filter(fdr<0.05) %>%
-  mutate(direction=ifelse(sign(coef)==1, "+", "-"),
+  mutate(direction=sign(coef),
          p=as.character(signif(p,3))) %>%
   inner_join(select(anno450k, Name, chr, UCSC_RefGene_Group, UCSC_RefGene_Name), by=c("CpG"="Name")) %>%
   select(CpG, chr, direction, p, UCSC_RefGene_Group, UCSC_RefGene_Name) %>%
-  mutate_at(c("UCSC_RefGene_Group","UCSC_RefGene_Name"), function(n) gsub(";.*","",n)) %>%
-  setNames(c("CpG","Chromosome","Association","P-value","Location","Annotated gene"))
-kable(fdrTbl, caption="CpGs with FDR<0.05 in the discovery set.", booktabs=T)
+  setNames(c("CpG","Chromosome","Direction of Association","P-value","Location","Annotated Gene"))
+kable(fdrTbl, caption="CpGs with FDR<0.05 in the discovery set")
 ```
 ```{r suggestive-overlap}
 # bothNominalSites <- na.omit(intersect(whiRes$CpG[whiRes$p<0.01], fhsRes$CpG[fhsRes$p<0.01]))
@@ -302,6 +297,9 @@ fhsResNoPE <- do.call(rbind, fhsResListNoPE) %>%
   arrange(p)
 stopCluster(cl)
 ```
+
+Sites passing a false discovery rate threshold of 0.05 are shown in Table 2 (a Manhattan plot of the full results can be found in Supp. Fig. [[]]). `r nrow(bonferroniTbl)` CpG site was found to pass a Bonferroni threshold of p<`r as.character(signif(bonferroniThreshold,2))` in the discovery cohort, though it replicated only marginally in the validation cohort (p=`r round(fhsRes$p[fhsRes$CpG==whiRes$CpG[1]],2)`). Despite this lack of validation, there was consistency in the direction of coefficients between cohorts. Of `r length(bothSuggestiveSites)` sites reaching a suggestive FDR<0.25 in both datasets, `r round(sum(sign(whiCoefs[bothSuggestiveSites])==sign(fhsCoefs[bothSuggestiveSites]))/length(bothSuggestiveSites)*100)`% show consistent direction of effect, and will be referred to as differentially methylated positions (DMPs).
+
 ```{r site-investigation}
 suggestiveOrder <- order(abs(whiCoefs[bothSuggestiveSites]+fhsCoefs[bothSuggestiveSites])/2, decreasing=T)
 suggestiveMyAnnot <- anno450k[match(bothSuggestiveSites, anno450k$Name),] %>%
@@ -312,7 +310,7 @@ suggestiveMyAnnot <- anno450k[match(bothSuggestiveSites, anno450k$Name),] %>%
          Location=unlist(lapply(strsplit(UCSC_RefGene_Group, split=";"), 
                             function(x) paste(unique(x), collapse=";")))) %>%
   dplyr::rename(CpG=Name, Chr=chr) %>%
-  mutate(Association=ifelse(sign(whiCoefs[CpG])==1, "+", "-")) %>%
+  mutate(Coef=ifelse(sign(whiCoefs[CpG])==1, "+", "-")) %>%
          # Tissue_GTEx=c("Lymph;Fibroblast;SkM",
          #               "Whole blood",
          #               "Brain",
@@ -333,24 +331,22 @@ suggestiveMyAnnot <- anno450k[match(bothSuggestiveSites, anno450k$Name),] %>%
          #            "Cytoskeleton",
          #            "p53/NFkB regulator",
          #            "tRNA synthetase")) %>%
-  select(CpG, Association, Chr, Location, Gene)
-kable(suggestiveMyAnnot, caption="8 CpGs found at FDR<0.25 in both datasets.", booktabs=T)
+  select(CpG, Coef, Chr, Location, Gene)
+kable(suggestiveMyAnnot, caption="8 CpGs found at FDR<0.25 in both datasets")
 
 boxplotData <- cbind(nonMethData[,c("study","event")], 
                      t(cbind(betas_fhs[bothSuggestiveSites,], betas_whi[bothSuggestiveSites,]))) %>%
   gather(key=CpG, value=Beta, -study, -event)
-dmpBoxplot <- ggplot(boxplotData, aes(x=CpG, y=Beta, fill=event)) +
+ggplot(boxplotData, aes(x=CpG, y=Beta, fill=event)) +
   geom_boxplot() +
-  # ggtitle("8 CpGs found at FDR<0.25 in both datasets") +
-  theme(axis.text.x=element_text(angle=20), axis.title.x=element_blank()) +
+  ggtitle("10 CpGs found at FDR<0.25 in both datasets") +
+  theme(axis.text.x=element_text(angle=30)) +
   facet_wrap(~study, nrow=2)
 ```
 
-Sites passing a false discovery rate threshold of 0.05 are shown in Table \@ref(tab:top-hits) (a Manhattan plot of the full results can be found in Supp. Fig. \@ref(fig:supp-manhattan)). `r nrow(bonferroniTbl)` CpG site was found to pass a Bonferroni threshold of p<`r as.character(signif(bonferroniThreshold,2))` in the discovery cohort, though it replicated only marginally in the validation cohort (p=`r round(fhsRes$p[fhsRes$CpG==whiRes$CpG[1]],2)`). Despite this lack of validation, there was consistency in the direction of coefficients between cohorts. Of `r length(bothSuggestiveSites)` sites reaching a suggestive FDR<0.25 in both datasets, `r round(sum(sign(whiCoefs[bothSuggestiveSites])==sign(fhsCoefs[bothSuggestiveSites]))/length(bothSuggestiveSites)*100)`% show consistent direction of effect, and will be referred to as differentially methylated positions (DMPs; Table \@ref(tab:site-investigation)).
+The effect of confounding by past cardiovascular events in FHS was minimized in the analysis setup by using FHS as a replication rather than discovery set. However, to further address this possibility, EWAS analyses stratified by past event status were conducted. Of the 10 suggestive sites overlapping at FDR<0.25, both strata showed perfect consistency of regression coefficient signs with those from WHI. Though power to identify strong signals was reduced by the stratification, `r sum(fhsResNoPE$p[match(bothSuggestiveSites,fhsResNoPE$CpG)]<0.05)` of 10 DMPs retained nominal significance (p<0.025) in the group without past events, compared to `r sum(fhsResNoPE$p[match(bothSuggestiveSites,fhsResNoPE$CpG)]<0.05)` sites in the group with past events. These results indicate that the moderate agreement between cohorts was not being primarily driven by history of CVD.
 
-The effect of confounding by past cardiovascular events in FHS was minimized in the analysis setup by using FHS as a replication rather than discovery set. However, to further address this possibility, EWAS analyses stratified by past event status were conducted. Of the 10 suggestive sites overlapping at FDR<0.25, both strata showed perfect consistency of regression coefficient signs with those from WHI. Though power to identify strong signals was reduced by the stratification, `r sum(fhsResNoPE$p[match(bothSuggestiveSites,fhsResNoPE$CpG)]<0.05)` of 8 DMPs retained nominal significance (p<0.05) in the group without past events, compared to `r sum(fhsResPE$p[match(bothSuggestiveSites,fhsResPE$CpG)]<0.05)` sites in the group with past events. These results indicate that the moderate agreement between cohorts was not being primarily driven by history of CVD.
-
-```{r genome-distribution}
+```{r genome-distribution, fig.show="hold", out.width="50%"}
 summarise_annotation <- function(group, df) {
   # Takes in a set of annotations and returns the proportions of a given field (e.g. gene name)
   df %>%
@@ -392,15 +388,14 @@ pShore <- calc_enrichment_p(c("N_Shore","S_Shore"))
 pOpenSea <- calc_enrichment_p("OpenSea", lowerTail=T)
 ```
 
-Because only `r length(bothSuggestiveSites)` sites overlapped at FDR<0.25, the union rather than intersection of these sites (`r length(eitherSuggestiveSites)` CpGs) was used for further investigation of the characteristics of the set. These sites showed no major enrichment for gene-related genomic locations (as compared to a background of only the highly variable subset), but did show a moderate enrichment for presence in CpG islands (p=`r as.character(signif(pIsland,2))`; hypergeometric test) and shores (p=`r as.character(signif(pShore,2))`) 
-<!--at the expense of those in the "open sea" (p=`r as.character(signif(pOpenSea,2))` for depletion).-->
+Because only 10 sites overlapped at FDR<0.25, the union of the suggestive sites (`r length(eitherSuggestiveSites)` CpGs) was used for further investigation of the characteristics of the set. These sites showed no major enrichment for gene-related genomic locations (as compared to a background of only the highly variable subset), but did show a moderate enrichment for presence in CpG islands (p=`r as.character(signif(pIsland,2))`; hypergeometric test) and shores (p=`r as.character(signif(pShore,2))`) at the expense of those in the "open sea" (p=`r as.character(signif(pOpenSea,2))` for depletion).
 
-```{r gsea, include=F}
+```{r gsea, warning=F}
 gsaTbl <- missMethyl::gometh(as.vector(eitherSuggestiveSites), all.cpg=hachiyaHighRI, collection="GO")
 gsaTopResTbl <- arrange(filter(gsaTbl, FDR<0.05), FDR)
 ```
 
-A gene set enrichment analysis of genes annotated to the same set of DMPs showed enrichment for biological processes related to developmental processes (embryonic development, cell fate commitment, and embryonic morphogenesis), cell adhesion, and transcriptional regulation (see Supp. Table \@ref(tab:supp-gsea-table)).
+A gene set enrichment analysis of genes annotated to the same set of DMPs showed enrichment for biological processes related to developmental processes (embryonic development, cell fate commitment, and embryonic morphogenesis), cell adhesion, and transcriptional regulation (see Supp Table [[]]).
 
 ## Demographic stratification partially explains the observed heterogeneity between cohorts
 
@@ -463,9 +458,9 @@ whiResHispanic <- do.call(rbind, whiResListHispanic) %>%
 stopCluster(cl)
 ```
 
-Sex and race were adjusted for in the above analyses in order to remove their direct associations with incident CVD events, but interactions with methylation were not included that would allow loci to have different associations between demographics. To evaluate the potential role of this demographic heterogeneity in explaining the level of agreement between cohorts, stratified analyses were undertaken (separates sexes in FHS, and separate races in WHI).
+Sex and race were adjusted for in the above analyses in order to remove their direct associations with incident CVD events, but epigenetic associations were not allowed to vary across sex or race. To evaluate the potential role of this heterogeneity in explaining the level of agreement between cohorts, stratified analyses were undertaken (separates sexes in FHS, and separate races in WHI).
 
-```{r strat-analyses, warning=F, cache=1}
+```{r strat-analyses, warning=F, out.width="70%", fig.cap="Pearson correlations between CpGs in one dataset with FDR<0.25 and the corresponding CpGs in subsets of the other."}
 fhsResMaleFull <- fhsResMale
 fhsResMale <- fhsResMaleFull %>%
   filter(CpG %in% hachiyaHighRI) %>%
@@ -524,9 +519,8 @@ compareDF <- bind_rows(map(compareList, "df")) %>%
 
 # ggplot(comparisonsDF, aes(x=compareDirection, y=corr)) +
 # geom_bar(aes(group=comparison), stat="identity", position="dodge", width=0.9)
-stratPlt <- ggplot(compareDF, aes(x=stratum, y=corr)) +
+ggplot(compareDF, aes(x=stratum, y=corr)) +
   geom_bar(stat="identity") +
-  labs(y="Correlation") +
   theme(axis.title.x=element_blank()) +
   facet_wrap(~group, scales="free_x")
 
@@ -546,13 +540,9 @@ gsaStrat <- map(list(fhsRes, fhsResMale, fhsResFemale, whiRes, whiResWhite, whiR
 ## IMPLEMENT proportion test: prop.test(c(counts), c(trials))
 ```
 
-```{r strat-plt, out.width="70%", fig.cap="Pearson correlations between EWAS regression coefficients in one dataset with FDR<0.25 and those of the same CpGs in subsets of the other."}
-stratPlt
-```
+Fig. [[]] shows the correlations between regression coefficients from a main cohort (w/ FDR<0.25) and those of the corresponding sites from the stratified groups. Based on these results, it does appear that "like" demographic factors result in more similar regression coefficients in a broad sense, as we see Caucasians in WHI displaying more similar coefficients to FHS and females in FHS displaying more similar coefficients to WHI, though these comparisons of more similar demographic groups did not uncover an increased number of replicating loci at FDR<0.25. 
 
-Fig. \@ref(fig:strat-plt) shows the correlations between regression coefficients from a main cohort (w/ FDR<0.25) and those of the corresponding sites from the stratified groups. In this dataset, similarity of demographic factors did associate with similarity of regression coefficients: Caucasians in WHI displayed more similar coefficients to FHS and females in FHS displayed more similar coefficients to WHI. However, these comparisons of more similar demographic groups did not uncover an increased number of replicating loci at FDR<0.25. 
-
-A clear lack of correlation with FHS was observed in black subjects in comparison to white or hispanic subjects from WHI. Although females from FHS did show a slightly higher correlation with WHI, this difference was not large, and neither stratum correlated as well as the full FHS dataset. Notably, however, after stratification of the FHS dataset by sex, the single CpG site passing the Bonferroni threshold in WHI (upstream of the TSS of VKORC1) showed a nominal association in women (p = `r round(fhsResFemale$p[fhsResFemale$CpG==whiRes$CpG[1]],3)`) but none in men. 
+A clear lack of correlation with FHS is observed in black subjects in comparison to white or hispanic subjects from WHI. Although females from FHS do have a slightly higher correlation with WHI, this difference is not large, and neither stratum correlates as well as the full FHS dataset. Notably, however, after stratification of the FHS dataset by sex, the single CpG site passing the Bonferroni threshold in WHI (upstream of the TSS of VKORC1) showed a nominal association in women (p = `r round(fhsResFemale$p[fhsResFemale$CpG==whiRes$CpG[1]],3)`) but none in men. 
 
 ## Region-based approach detects additional associations
 
@@ -610,22 +600,21 @@ combpResTbl <- combpResTbl %>%
   mutate_at(vars(contains("p_")), function(p) as.character(signif(p,3))) %>%
   select(chr, start, end, loc, num_cpgs, annot_gene, gene_loc, p_region_slk, p_adj_region, p_region_slk_fhs)
 
-kable(setNames(select(combpResTbl, loc, num_cpgs, annot_gene, gene_loc, 
-                      p_region_slk, p_adj_region, p_region_slk_fhs), 
+# combpResTbl$my_annot <- c("Found in BMI EWAS","smoking during pregnancy, serum CRP","","predicts mortality, related to blood pressure","DM in aorta w/ atherosclerosis","","aberrant methylation in cancer, DM in coronary artery disease")
+kable(setNames(select(combpResTbl, loc, num_cpgs, annot_gene, gene_loc, p_region_slk, p_adj_region, p_region_slk_fhs), 
                c("Location","# CpGs","Annotated gene","Genomic region","P.whi","Padj.whi","P.fhs")),
-      caption="Comb-p regions with multiple test-corrected p<0.05 in WHI and uncorrected p<0.05 in FHS",
-      booktabs=T)
+      caption="Comb-p regions with multiple test-corrected p<0.05 in WHI and uncorrected p<0.05 in FHS")
 
-whiDmrs <- combp_res_whi[1:20,] %>% mutate(annot_gene=find_genes_byRegion(.)) %>% select(-lowest_p)
-fhsDmrs <- combp_res_fhs[1:20,] %>% mutate(annot_gene=find_genes_byRegion(.)) %>% select(-lowest_p)
+whiDmrs <- combp_res_whi[1:20,] %>% mutate(annot_gene=find_genes_byRegion(.))
+fhsDmrs <- combp_res_fhs[1:20,] %>% mutate(annot_gene=find_genes_byRegion(.))
 ```
 
-In contrast to the site-based approach, `r nrow(combpResTbl)` regions were identified that passed a Bonferroni correction in the discovery set and showed at least nominal significance in validation (Table \@ref(tab:combp-results)). Three of these regions are annotated to known genes: ApoB (N shore of island in gene body), ZNF274 (CpG island in gene body) and SLC9A1 (gene body). Fig. \@ref(fig:combp-plots) shows EWAS associations within these regions, with and without adjustment for traditional cardiovascular risk factors (LDL-C, HDL-C, Tg, Sys. BP, hsCRP). Risk factors seem to explain some, but not all, of the observed relationships in FHS.
+In contrast to the site-based approach, three regions were identified that passed a Bonferroni correction in the discovery set and showed at least nominal significance in validation (Table [[]]). Two of these regions are annotated to known genes: ApoB (N shore of island in gene body) and SLC9A1 (gene body). Fig. [[]] shows EWAS associations within these regions. Because there were multiple genome-wide significant regions, we examine them in relation to traditional cardiovascular risk factors (TC, HDL, Tg, Sys. BP). Risk factors seem to explain some, but not all, of the observed relationships in FHS.
 
 ```{r rf-adjust}
 run_fhs_adjusted <- function(cpgSet) {
   ewasModel_fhs_rfAdjust <- paste0("survObj~meth+sex+age+bmi+smk_now+smk_py+CD4T+CD8T+Bcell+NK+Mono+Gran+",
-                                   "ldl+hdl+tg+sbp+hscrp+center+",
+                                   "chol+hdl+tg+sbp+center+",
                                    paste0("cpPC",1:7,collapse="+"))
   fhsResAdjList <- foreach(meth=iter(betas_fhs[cpgSet,], by="row"), .packages="survival") %do%
     run_coxModel(meth, nonMethData[nonMethData$study=="fhs",], ewasModel_fhs_rfAdjust)
@@ -668,8 +657,8 @@ apobPlt <- ggplot(plotDF, aes(x=start/1000, y=negLogP, color=Dataset)) +
   ggtitle("ApoB locus")
 
 ## SLC9A1 locus
-dmr <- c(combpResTbl$start[3], combpResTbl$end[3])
-chrom <- combpResTbl$chr[3]
+dmr <- c(combpResTbl$start[2], combpResTbl$end[2])
+chrom <- combpResTbl$chr[2]
 chromstart <- dmr[1]-5000
 chromend <- dmr[2]+5000
 resAnnoRegionWhi <- filter(resAnnoWhi, chr==chrom, start>=chromstart, end<=chromend)
@@ -685,7 +674,7 @@ slc9a1Plt <- ggplot(plotDF, aes(x=start/1000, y=negLogP, color=Dataset)) +
   xlab("Position on chr. 1 (kb)") +
   ggtitle("SLC9A1 locus")
 
-plot_grid(apobPlt, slc9a1Plt, nrow=2, labels="auto")
+grid.arrange(apobPlt, slc9a1Plt, layout_matrix=rbind(1,2))
 ```
 
 ## Weighted correlation network approach 
@@ -790,7 +779,7 @@ test_epiAnno <- function(epiAnno.gr, ewasRes) {
   annoWithMembership <- mutate(anno450k, member=1:nrow(anno450k) %in% queryHits(cpgsInAnno))
   annoWithMembershipAndPvals <- inner_join(ewasRes, annoWithMembership, by=c("CpG"="Name"))
   tryCatch({
-    p <- phyper(sum(annoWithMembershipAndPvals$member*(annoWithMembershipAndPvals$negLogP>-log10(0.05))),
+    p <- phyper(sum(annoWithMembershipAndPvals$member*(annoWithMembershipAndPvals$negLogP>-log10(0.1))),
                 sum(annoWithMembershipAndPvals$member),  # Number of sites in peaks
                 sum(!annoWithMembershipAndPvals$member),  # Number of sites not in peaks
                 sum(annoWithMembershipAndPvals$negLogP>-log10(0.05)))  # Number of sites with p<0.05
@@ -815,60 +804,101 @@ mergedEwasRes <- inner_join(whiResFull, fhsResFull, by="CpG", suffix=c(".whi",".
   mutate(negLogP=-(log10(p.whi)+log10(p.fhs))/2) %>%
   select(CpG, negLogP)
 
+whiEwasRes <- mutate(whiResFull, negLogP=-log10(p)) %>% select(CpG, negLogP)
+fhsEwasRes <- mutate(fhsResFull, negLogP=-log10(p)) %>% select(CpG, negLogP)
+
+whiEwasResLowP <- mutate(whiResFull, negLogP=-log10(p)) %>% filter(p<0.05) %>% select(CpG, negLogP)
+fhsEwasResLowP <- mutate(fhsResFull, negLogP=-log10(p)) %>% filter(p<0.05) %>% select(CpG, negLogP)
+
 cl <- makePSOCKcluster(detectCores())
 registerDoParallel(cl)
 tStats <- foreach(anno=iter(featureCellGrid, by="row"), .combine=rbind,
                       .packages=c("tidyverse","GenomicRanges")) %dopar%
   assemble_epiAnno(anno$EpiFeature, anno$CellType, mergedEwasRes) 
+tStatsWhi <- foreach(anno=iter(featureCellGrid, by="row"), .combine=rbind,
+                  .packages=c("tidyverse","GenomicRanges")) %dopar%
+  assemble_epiAnno(anno$EpiFeature, anno$CellType, whiEwasRes) 
+tStatsFhs <- foreach(anno=iter(featureCellGrid, by="row"), .combine=rbind,
+                  .packages=c("tidyverse","GenomicRanges")) %dopar%
+  assemble_epiAnno(anno$EpiFeature, anno$CellType, fhsEwasRes) 
+# tStatsWhiLowP <- foreach(anno=iter(featureCellGrid, by="row"), .combine=rbind,
+#                   .packages=c("tidyverse","GenomicRanges")) %dopar%
+#   assemble_epiAnno(anno$EpiFeature, anno$CellType, whiEwasResLowP) 
+# tStatsFhsLowP <- foreach(anno=iter(featureCellGrid, by="row"), .combine=rbind,
+#                   .packages=c("tidyverse","GenomicRanges")) %dopar%
+#   assemble_epiAnno(anno$EpiFeature, anno$CellType, fhsEwasResLowP) 
 stopCluster(cl)
 ```
-```{r epigenomic-annotation-plots, fig.cap="Inference of cell type-specificity of EWAS signal. The heatmap shows t-statistics from t-tests comparing EWAS -log10(p) values based on membership in peaks for a given combination of cell type and epigenomic feature. The barplot shows the marginal distribution of t-statistic magnitudes (sum of absolute values) across all epigenomic features for each cell type."}
+```{r epigenomic-annotation-plots, fig.cap="Inference of cell type-specificity of EWAS signal. (a) Heatmap of t-statistics from t-tests comparing EWAS -log10(p) values based on membership in peaks for a given combination of cell type and epigenomic feature. (b) Average t-statistic magnitudes across all epigenomic features for each cell type."}
 roadmapMeta <- read_csv("../data/literature/roadmap/jul2013.roadmapData.qc\ -\ Consolidated_EpigenomeIDs_QC.csv", col_types=cols())
+
+# make_annoCellTypeHeatmap <- function(tStats) {
+#   epiAnnoPltData <- tStats %>%
+#     na.omit() %>%
+#     mutate(CellType=roadmapMeta$`Standardised epigenome name`[match(CellTypeCode,roadmapMeta$EID)]) %>%
+#     group_by(CellType) %>%
+#     mutate(cellTypeAbsMean=mean(abs(tStat), na.rm=T)) %>%
+#     filter(all(epiFeatures %in% EpiFeature)) %>%
+#     ungroup() %>%
+#     arrange(desc(cellTypeAbsMean)) %>%
+#     mutate(CellType=factor(CellType, levels=unique(CellType)))
+#   ggplot(epiAnnoPltData, aes(x=EpiFeature, y=forcats::fct_rev(CellType), fill=tStat)) +
+#     geom_tile() +
+#     scale_fill_gradient2(low="blue", mid="white", high="red") +
+#     theme(axis.title.y=element_blank(), axis.text.y=element_text(size=9),
+#           axis.text.x=element_text(angle=30))
+# }
 
 epiAnnoPltData <- tStats %>%
   na.omit() %>%
   mutate(CellType=roadmapMeta$`Standardised epigenome name`[match(CellTypeCode,roadmapMeta$EID)]) %>%
   group_by(CellType) %>%
-  mutate(cellTypeAbsMean=mean(abs(tStat), na.rm=T)) %>%
+  mutate(CellTypeAbsMean=mean(abs(tStat), na.rm=T)) %>%
   filter(all(epiFeatures %in% EpiFeature)) %>%
   ungroup() %>%
-  arrange(desc(cellTypeAbsMean)) %>%
+  arrange(desc(CellTypeAbsMean)) %>%
   mutate(CellType=factor(CellType, levels=unique(CellType)))
 heat <- ggplot(epiAnnoPltData, aes(x=EpiFeature, y=forcats::fct_rev(CellType), fill=tStat)) +
   geom_tile() +
   scale_fill_gradient2(low="blue", mid="white", high="red") +
-  theme(axis.title=element_blank(), axis.text.x=element_text(size=9, angle=25, hjust=0.75),
-        axis.text.y=element_text(size=9), axis.ticks.y=element_blank(), axis.line.y=element_blank(),
-        legend.title=element_blank(), legend.text=element_text(size=9), legend.position="top")
+  theme(axis.title.y=element_blank(), axis.text.y=element_text(size=9),
+        legend.position="top")
+
+# heat <- make_annoCellTypeHeatmap(tStats)
 
 epiAnnoSummary <- tStats %>%
   na.omit() %>%
   mutate(CellType=roadmapMeta$`Standardised epigenome name`[match(CellTypeCode,roadmapMeta$EID)]) %>%
   group_by(CellType) %>%
   filter(all(epiFeatures %in% EpiFeature)) %>%
-  summarise(CellTypeAbsMean=sum(abs(tStat))) %>%
+  summarise(CellTypeAbsMean=mean(abs(tStat))) %>%
   arrange(desc(CellTypeAbsMean)) %>%
   mutate(CellType=factor(CellType, levels=unique(CellType)))
 
 hist <- ggplot(epiAnnoSummary, aes(x=forcats::fct_rev(CellType), y=CellTypeAbsMean)) +
   geom_bar(stat="identity") +
   labs(y="Average t-statistic magnitude") +
-  theme(axis.title=element_blank(), axis.text=element_blank(), 
-        axis.ticks=element_blank(), axis.line=element_blank(),
+  theme(axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank(), axis.line=element_blank(),
         panel.background=element_blank()) +
   coord_flip()
+
+# ggplot(mutate(a, CellTypeAbsMean=CellTypeAbsMean/10000)) +
+#   geom_tile(data=filter(a, pltType==1), aes(y=EpiFeature, x=forcats::fct_rev(CellType), fill=tStat)) +
+#   geom_bar(data=filter(a, pltType==2), aes(x=forcats::fct_rev(CellType), y=CellTypeAbsMean), stat="identity") +coord_flip() +
+#   theme(strip.text=element_blank(), panel.background=element_blank(), axis.text.x=element_text(angle=30)) + facet_grid(~pltType, scales="free_x", space="free_y")
+
 
 # https://statbandit.wordpress.com/2011/07/29/a-ggplot-trick-to-plot-different-plot-types-in-facets/
   
 plot_grid(heat, hist, align="h", axis="bt", ncol=2, rel_widths=c(4,1))
 ```
 
-To probe the cell type specificity of the observed associations, a novel procedure based on epigenomic annotations was used. Peak calls for a series of epigenomic features (DNase hypersensitivity sites and multiple histone marks) have been determined as previously described [@Kundaje2014] and are available from the Roadmap Epigenomics database. These data were retrieved for a broad array of cell types in order to assign CpGs analyzed here to cell- and feature-specific peaks. For each annotation, t-tests were performed to compare the significance of sites ($-log_{10}(p)$ from EWAS) to their membership in a peak. Overall, this method would be expected to show greater significance in cell types relevant to the observed signal, whether as a specific component of a mixed tissue (e.g. blood) or as a surrogate for the relevant tissue.
+To probe the cell type specificity of the observed associations, a novel procedure based on epigenomic annotations was used. Peak calls for a series of epigenomic features (DNase hypersensitivity sites and multiple histone marks) across a broad array of cell types were retrieved from the Roadmap Epigenomics database in order to assign CpGs analyzed here to cell- and feature-specific peaks. For each annotation, t-tests were performed to compare the significance of sites ($-log_{10}(p)$ from EWAS) to their membership in a peak. Overall, this method would be expected to show greater significance in cell types relevant to the observed signal, whether as a specific component of a mixed tissue (e.g. blood) or as a surrogate for the relevant tissue.
 
-In this cross-cohort analysis, monocyte annotations showed the strongest associations with EWAS signal across epigenomic features, with other blood cell types showing many of the other top ranks. Non-blood cell types also showing high ranks, potentially representative of blood acting as a surrogate tissue, included fibroblast, mesenchymal stem cells, and fetal tissues.
+In this cross-cohort analysis, monocyte annotations showed the strongest associations with EWAS signal across epigenomic features, with other blood cell types showing many of the other top ranks. Non-blood cell types also showing high ranks, potentially representative of blood acting as a surrogate tissue type, included fibroblast, mesenchymal stem cells, and fetal tissues.
 
 ```{r gwas-integration, include=F}
-cardiogram <- read_tsv("../data/literature/CARDIoGRAMplusC4D_1k.txt") 
+cardiogram <- read_tsv("../data/literature/CARDIoGRAMplusC4D_1k.txt", col_types=cols()) 
 cardiogramSig <- cardiogram %>%
   dplyr::rename(snp=markername, pos=bp_hg19, p=p_dgc) %>%
   filter(p<1e-8) %>%
@@ -885,9 +915,9 @@ dmrRanges <- GRanges(dmrAnno$chr, IRanges(start=dmrAnno$start, end=dmrAnno$end))
 dmrOverlaps <- findOverlaps(dmrRanges, cSigRanges)
 ```
 
-The positions of the `r length(bothSuggestiveSites)` DMPs and 4 DMRs were assessed for their proximity the set of genome-wide significant (p<1e-8) variants from the CaRDIoGRAMplusC4D meta-analysis [@Nikpay2015] (here, within 1MB of a GWAS hit). One DMP, `r suggestiveAnno$Name[queryHits(siteOverlaps)[1]]` in the gene body of PPP1R13L, was found to be about 500kb downstream of a series of hits in the TOMM40-APOE-C1-C2-C4 cluster on chromosome 19. Hi-C chromatin interaction data visualized using the 3DIV database [@Yang2017] indicated that this DMP and SNP cluster mark the approximate respective boundaries of a topologically associating domain (TAD) in the GM12787 lymphoblastoid cell line. In a some of the top-ranking cell types from the cell type-specific analysis above, this same TAD did not exist, although specific long-range chromatin contacts between these SNPs and the DMP were found (for example, in lung fibroblasts and mesenchymal stem cells).
+The positions of the 10 DMPs and 4 DMRs were assessed for their proximity the set of genome-wide significant (p<1e-8) variants from the CaRDIoGRAMplusC4D meta-analysis [@Nikpay2015] (here, within 1MB of a GWAS hit). One DMP, `r suggestiveAnno$Name[queryHits(siteOverlaps)[1]]` in the gene body of PPP1R13L, was found to be about 500kb downstream of a series of hits in the TOMM40-APOE-C1-C2-C4 cluster on chromosome 19. Hi-C chromatin interaction data visualized using the 3DIV database [@Yang2017] indicated that this DMP and SNP cluster mark the approximate respective boundaries of a topologically associating domain (TAD) in the GM12787 lymphoblastoid cell line. In a some of the top-ranking cell types from the analysis cell type-specific analysis above, this same TAD did not exist, although specific long-range chromatin contacts between these SNPs and the DMP were found (for example, in lung fibroblasts and mesenchymal stem cells).
 
-```{r mr-prep, cache=1, include=F}
+```{r mr-prep, message=F}
 lead_cpg_from_region <- function(chr, start, end) {
   # Given a region, find all 450k CpGs in the region and return the top EWAS hit from that set
   regionCpgs <- filter(anno450k, chr==chr, pos>=as.numeric(start), pos<=as.numeric(end))$Name
@@ -950,6 +980,7 @@ snpSetNames <- names(snpSets[lengths(snpSets)>1])
 
 for (set in snpSetNames) write(snpSets[[set]], file=paste0("../int/", set, "_snps.txt"))
 ```
+
 ```{r mr-res, message=F}
 mrSetsPruned <- lapply(setNames(snpSetNames, snpSetNames), function(set) 
   scan(paste0("../int/", set, "_snps_pruned.txt"), what=character()))
@@ -970,6 +1001,11 @@ mrResSingle <- lapply(oneSnpSetNames, function(set) run_mr(topCpgs[set], snpSets
 mrRes <- lapply(setNames(snpSetNames, snpSetNames), 
                 function(set) run_mr(topCpgs[set], mrSetsPruned[[set]]))
 ```
+
+Though the prospective nature of this EWAS analysis precludes reverse causation, assocations between DMPs/DMRs and CVD are still subject to confounding. To better examine the causality of these relationships, a Mendelian randomization (MR) approach using single nucleotide polymorphisms (SNPs) as instrumental variables was undertaken through the use of external datasets. SNP-methylation associations were taken from the "mQTLdb" (ARIES study) [@Gaunt2016] and SNP-CVD associations were taken from the CARDIoGRAMplusC4D meta-analysis as above. 
+
+The inverse-variance weighted method was used to assess the causal relationship between differential methylation and potential pleiotropy of the instrumental variables (here, SNPs) for the 10 DMPs and 4 DMRs. The most significant CpG site from each region was chosen as the "lead CpG" to be used in the MR analysis. `r length(noSnpSetNames)` methylation loci were lacked links to any SNPs in the mQTLdb. Of the remaining set of CpGs, one (`r topCpgs["dmrAPOB"]`, from the APOB region) demonstrated a consistent and "dose-dependent" association of its IV SNPs with CVD (Fig. [[]]). MR-Egger regression [@Bowden2015] was then applied to address potential pleiotropy of the IV SNPs, and showed an attenuated causal relationship (MR-Egger slope p=`r as.character(signif(mrRes[[grep("APOB", snpSetNames, value=T)]]$fit$Pvalue,2))`), but no direct evidence of pleiotropy per se based on the non-significant regression intercept.
+
 ```{r apob-specific}
 apobSiteName <- grep("APOB", snpSetNames, value=T)
 apobEggerRes <- run_mr(topCpgs[apobSiteName], mrSetsPruned[[apobSiteName]], mrType="egger")
@@ -982,35 +1018,22 @@ cardiogramSig <- cardiogram %>%
 cSigRanges <- GRanges(cardiogramSig$chr, IRanges(start=cardiogramSig$pos-1e6, end=cardiogramSig$pos+1e6))
 
 apobDmrAnno <- combpResTbl[combpResTbl$annot_gene=="APOB",]
-apobDmrRanges <- GRanges(apobDmrAnno$chr, IRanges(start=apobDmrAnno$start, end=apobDmrAnno$end))
-apobDmrOverlaps <- findOverlaps(apobDmrRanges, cSigRanges)
-apobSnpsBed <- cardiogramSig[subjectHits(apobDmrOverlaps),] %>%
-  filter(!is.na(as.numeric(pos))) %>%
-  mutate(start=pos, end=pos, negLogP=-log10(p)) %>%
-  select(chr, start, end, snp, negLogP)
-cat('track name="CVD SNPs near APOB" description="CARDIoGRAMplusC4D suggestive SNPs within 1MB of APOB DMR"', file="../int/apob_proximal_cvd_snps.bed")
-write_tsv(apobSnpsBed, "../int/apob_proximal_cvd_snps.bed", col_names=F, append=T)
+apobDmrRanges <- GRanges(dmrAnno$chr, IRanges(start=dmrAnno$start, end=dmrAnno$end))
+apobDmrOverlaps <- findOverlaps(dmrRanges, cSigRanges)
 ```
 
-Though the prospective nature of this EWAS analysis precludes reverse causation, assocations between DMPs/DMRs and CVD are still subject to confounding. To better examine the causality of these relationships, a Mendelian randomization (MR) approach using single nucleotide polymorphisms (SNPs) as instrumental variables was undertaken through the use of external datasets. SNP-methylation associations were taken from the mQTLdb (ARIES study) [@Gaunt2016] and SNP-CVD associations were taken from the CARDIoGRAMplusC4D meta-analysis as above. 
+Based on this result, we expanded the previous CVD GWAS-related analysis to include genome-wide "suggestive" SNPs (p<1e-5) and found that the APOB DMR was within 1MB of `r length(subjectHits(apobDmrOverlaps))` of these (non-independent) loci. Because this gene is expressed primarily in liver and small intestine, we examined Hi-C interaction data as above for this locus in these two tissues as well as the GM12787 lymphocyte precursor. This region was completely contained by a TAD and showed the strongest within-locus interactions in small bowel only (Fig. [[]]).
 
-The inverse-variance weighted method was used to assess the causal relationship between differential methylation and potential pleiotropy of the instrumental variables (here, SNPs) for the `r length(bothSuggestiveSites)` DMPs and 4 DMRs. The most significant CpG site from each region was chosen as the "lead CpG" to be used in the MR analysis. `r length(noSnpSetNames)` methylation loci lacked links to any SNPs in the mQTLdb. Of the remaining set of CpGs, one (`r topCpgs[grepl("APOB",names(topCpgs))]`, from the APOB region) demonstrated a consistent and "dose-dependent" association of its IV SNPs with CVD (p=`r as.character(signif(mrRes[[grep("APOB", snpSetNames, value=T)]]$fit$Pvalue,2))`; Fig. \@ref(fig:genomic-annotation-figure)a). MR-Egger regression [@Bowden2015] was then applied to address potential pleiotropy of the IV SNPs, and showed no direct evidence of pleiotropy (MR-Egger intercept p=`r as.character(signif(apobEggerRes$fit$Pvalue.Int,2))`), though the causal relationship estimate was attenuated (MR-Egger slope p=`r as.character(signif(apobEggerRes$fit$Pvalue.Est,2))`).
-
-Based on this result, we expanded the previous CVD GWAS-related analysis to include genome-wide "suggestive" SNPs (p<1e-5) and found that the APOB DMR was within 1MB of `r length(subjectHits(apobDmrOverlaps))` of these (non-independent) loci. Because this gene is expressed primarily in liver and small intestine, we examined Hi-C interaction data as above for this locus in these two tissues as well as the GM12787 lymphocyte precursor. This region was contained by a TAD in the two tissues of interest (liver and small bowel) but not in the blood cell precursor (Fig. \@ref(fig:genomic-annotation-figure)b).
-
-```{r genomic-annotation-figure, fig.asp=1.2, fig.cap="Evidence for a causal association of APOB methylation with CVD. (a) Plot of the strength of genetic associations with CVD vs. with APOB methylation for the series of instrumental variables used in the Mendelian randomization analysis. The trend line shown is the Egger regression fit. (b) Genomic annotations for the area containing the APOB gene and all suggestive GWAS loci within 1MB. Heatmap intensities represent interaction frequencies in small bowel."}
+```{r genomic-annotation-figure, fig.cap="Evidence for a causal association of APOB methylation with CVD. (a) Plot of the strength of genetic associations with CVD vs. with APOB methylation for the series of instrumental variables used in the Mendelian randomization analysis. The trend line shown is the Egger regression fit. (b) Genomic annotations for the area containing the APOB gene and all suggestive GWAS loci within 1MB. Heatmap intensities represent interaction frequencies in small bowel."}
 # include a figure showing anything from the GWAS linkage along with the egger regression plot
 # motivate using GWAS then confirm causality using regression? --> single figure
-apobEggerPlt <- mr_plot(apobEggerRes$mrInput, line="egger", orientate=T, interactive=F) +
-  theme(axis.title=element_text(size=10))
-# apobRegionImg <- png::readPNG("../int/apob_region_smallBowel.png")
-apobRegionImg <- png::readPNG("../int/apob_region_viz.png")
+apobEggerPlt <- mr_plot(apobEggerRes$mrInput, line="egger", orientate=T, interactive=F)
+apobRegionImg <- png::readPNG("../int/apob_region_smallBowel.png")
 apobRegionGrob <- grid::rasterGrob(apobRegionImg, interpolate=T)
-plot_grid(apobEggerPlt, apobRegionGrob, nrow=2, rel_heights=c(3,2), labels="auto")
-# grid.arrange(apobEggerPlt, apobRegionGrob, heights=c(3,5), nrow=2)
+grid.arrange(apobEggerPlt, apobRegionGrob, heights=c(3,5), nrow=2)
 ```
 
-(Note to readers: This regional plot is just a stand-in -- recommendations for publication-quality/nice-looking browsers to incorporate annotations, TADs, etc. are welcome.)
+(Note to readers: This regional plot is just a stand-in. I spent a lot of time trying to find a browser that can show Hi-C/TAD data, potential chromatin contact hotspots, and genome tracks (gene annotations and my custom track to show the relevant GWAS SNPs) in a concise way, and still haven't found anything satisfactory.)
 
 To further probe the mechanistic relationship between methylation levels and CVD-related biological activity, the SEPIRA method [@Chen2017] was used to infer blood-specific transcription factor activity. First, blood-specific transcription factors are determined using expression data (here, from GTEx), then levels of these TFs in each sample are inferred from DNA methylation data.
 
@@ -1034,11 +1057,11 @@ plotDF <- bind_rows(whiTfDf, fhsTfDf) %>%
 ggplot(plotDF, aes(x=gene, y=as.numeric(coef), fill=dataset)) + 
   geom_bar(stat="identity", position="dodge", width=0.5) + 
   ylab("Regression coefficient") +
-  # ggtitle("Estimated TF activities regressed on incident event (binary) + covariates") +
+  ggtitle("Estimated TF activities regressed on incident event (binary) + covariates") +
   theme(axis.text.x=element_text(angle=40), axis.title.x=element_blank())
 ```
 
-A set of `r ncol(whiTFres)` blood-specific transcription factors were found based on the input expression data from GTEx. Activity profiles for this set of TFs were then inferred from DNA methylation data for each sample. No TFs reached significance and replication across datasets, but two (TBX21 & MTA2) showed moderate effects and consistency in direction. 
+A set of `r ncol(whiTFres)` blood-specific transcription factors were found based on the input expression data from GTEx. Activity profiles for this set of TFs were then inferred from DNA methylation data for each sample. No TFs reached notable significance and replication across datasets, but two (TBX21 & MTA2) seem worth further attention based on their magnitude of effect and similarity in direction. 
 
 ## Comparison to known risk factors
 
@@ -1048,86 +1071,61 @@ A set of `r ncol(whiTFres)` blood-specific transcription factors were found base
 #   prcomp(t(betas_fhs[cpgs,]), scale.=T)$x[,"PC1"]
 # })
 # sigFeatures <- cbind(betas_fhs[bothSuggestive,], do.call(cbind, c(dmrEigencpgs)))
-
-topCpgBetasAdj <- t(map_dfc(setNames(topCpgs,topCpgs), function(cpg) {
-  lm(betas_fhs[cpg,] ~ center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7, data=nmd_fhs)$residuals
-}))
-
-sigByRF <- expand.grid(cpg=topCpgs, rf=c("ldl","hdl","tg","sbp","hscrp","diabetes"))
+sigFeatures <- topCpgs
+sigByRF <- expand.grid(cpg=sigFeatures, rf=c("chol","hdl","tg","sbp","pastEvent"))
 sigByRF$cor <- apply(sigByRF, 1, function(row) {
-  cor.test(topCpgBetasAdj[row["cpg"],], as.numeric(nmd_fhs[[row["rf"]]]))$estimate
+  cor.test(betas_fhs[row["cpg"],], as.numeric(nmd_fhs[[row["rf"]]]))$estimate
 })
 sigByRF$cpgLabel=factor(sigByRF$cpg, levels=topCpgs, labels=names(topCpgs))
 
-rfPlt <- ggplot(sigByRF, aes(x=rf, y=cpgLabel, fill=cor)) +
+dmpRfPlt <- ggplot(sigByRF, aes(x=rf, y=cpgLabel, fill=cor)) +
   geom_tile(color="white") +
   scale_fill_gradient2(low='#0000FF',mid='#FFFFFF',high='#FF0000') +
-  # ggtitle("Correlations of DMPs with traditional risk factors") +
+  ggtitle("Correlations of DMPs with traditional risk factors") +
   theme(legend.title=element_blank(), axis.title=element_blank())
+dmpRfPlt
 ```
 
-```{r partial-correlation-network, message=F, include=F}
-library(qgraph)
+```{r bayesian-network, message=F, eval=F}
+library(bnlearn)
 
-# sbp_cpgs <- c(PHGDH="cg14476101", TXNIP="cg19693031")
-# hdl_cpgs <- c(DHCR24="cg17901584")#, ABCG1="cg06500161")
-# tg_cpgs <- c(CPT1A_1="cg00574958", CPT1A_2="cg17058475")
-# tc_cpgs <- c(SQLE="cg00285394", NLRC5="cg07839457")
+sbp_cpgs <- c(PHGDH="cg14476101", TXNIP="cg19693031")
+hdl_cpgs <- c(DHCR24="cg17901584", ABCG1="cg06500161")
+tg_cpgs <- c(CPT1A_1="cg00574958", CPT1A_2="cg17058475")
+tc_cpgs <- c(SQLE="cg00285394", NLRC5="cg07839457")
 
 sbp_cpgs <- c(PHGDH="cg14476101")
-hdl_cpgs <- c(DHCR24="cg17901584")
+hdl_cpgs <- c(ABCG1="cg06500161")
 tg_cpgs <- c(CPT1A_1="cg00574958")
 tc_cpgs <- c(SQLE="cg00285394")
-
 acs_cpgs <- c(RUNX3="cg21217270", DGKQ="cg12226453", RGS3="cg14049634", ANKRD11="cg27513667")
 cvdSR_cpgs <- c(GRIP1="cg09414535", KCNJ14="cg10222534", PKD2="cg26215428", AIM2="cg10636246",
                 HRH2="cg14345676", NGEF="cg19485804", TNS1="cg18752854")
 
-allRFs <- c("age","sex","bmi","diabetes","chol","ldl","hdl","tg","sbp","glu","hscrp","smk_now")
-allCpgs <- c(sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs, acs_cpgs, cvdSR_cpgs, topCpgs)
+rfs <- c("sbp","chol","hdl","tg")
 
-includeRFs <- c("diabetes","ldl","hdl","tg","sbp","hscrp")
-includeLitCpgs <- c()
-includeEwasCpgs <- topCpgs
-names(includeEwasCpgs) <- gsub(".*-","",names(includeEwasCpgs))
-
-corInputData <- cbind(select(nmd_fhs, one_of(allRFs)), t(topCpgBetasAdj)) %>%
+bnInputData <- cbind(select(nmd_fhs, age, sex, bmi, one_of(rfs), event, pastEvent), 
+           t(betas_fhs[unique(c(topCpgs, sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs)),])) %>%
   na.omit() %>%
-  mutate(sex=sex=="M") %>%
-  mutate_all(as.numeric) %>%
-  select(c(includeRFs, includeLitCpgs, includeEwasCpgs)) %>%
-  setNames(c(includeRFs, names(includeLitCpgs), names(includeEwasCpgs)))
+  mutate_at(vars(one_of(rfs)), as.numeric) %>%
+  mutate(sex=factor(sex), event=factor(event), pastEvent=factor(pastEvent), age=as.numeric(age))
 
-corMat <- cor(corInputData)
-# sparsePcMat <- EBICglasso(corMat, n=nrow(corInputData), lambda.min.ratio=0.0001)
-# qgraph(sparsePcMat, layout="spring", 
-#        groups=rep(c("rf","litCpg","ewasCpg"),
-#                   times=c(length(includeRFs),length(includeLitCpgs),length(includeEwasCpgs))),
-#        label.color="white", label.cex=1.3, labels=names(corInputData))
-png("../output/figures/pcPlt.png")
-qgraph(corMat,
-       graph="pcor", threshold="bonferroni", sampleSize=nrow(corInputData),
-       groups=rep(c("Risk Factor","litCpg","EWAS CpG"),
-                  times=c(length(includeRFs),length(includeLitCpgs),length(includeEwasCpgs))),
-       layout="spring",
-       labels=names(corInputData), label.color="white", label.cex=1.25)
-# pcPlt <- recordPlot()
-dev.off()
+ewasCpgs <- fhsRes$CpG[fhsRes$CpG %in% topCpgs][1:5]
+ofInterest <- c(age="age", bmi="bmi", pastEvent="pastEvent", rfs, sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs)
+
+bn <- bnlearn::rsmax2(select(bnInputData, one_of("age", "bmi", "pastEvent",
+                                                 # sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs,
+                                                 ewasCpgs,
+                                                 # topCpgs[grepl("dmr",names(topCpgs))],
+                                                 c("chol","hdl","tg","sbp"))))
+bnPlt <- plot(bn, 
+              highlight=ewasCpgs,
+              # highlight=topCpgs[grepl("dmr",names(topCpgs))],
+              main="Bayesian network of our CpGs, RF-related CpGs, and RFs")
+bnPlt
 ```
 
-```{r rf-cor-plots, fig.asp=1.5, fig.cap="Relationships between methylation and traditional CVD risk factors. (a) Pearson correlations between DMPs and DMR lead CpGs and risk factors. (b) Partial correlation network between and among the same CpGs and risk factors. Edge widths correspond to partial correlation magnitudes, and edge colors to partial correlation sign (green positive; red negative). CpG sites are labeled based on their associated genes, and CpGs representing DMRs are labeled as such."}
-# grid.arrange(rfPlt, pcPlt, nrow=2)
-pcPlt <- grid::rasterGrob(png::readPNG("../output/figures/pcPlt.png"), interpolate=T)
-plot_grid(rfPlt, pcPlt, nrow=2, rel_heights=c(1,2), labels="auto")
-# https://stackoverflow.com/questions/14124373/combine-base-and-ggplot-graphics-in-r-figure-window
-# later answer doesn't require gridBase
-```
-
-To understand how these findings fit into the context of known CVD biology and risk assessment, we evaluated relationships between DMPs and DMRs (represented by their lead CpGs) with traditional blood-based CVD risk factors. First, simple correlations were examined between EWAS sites (single and lead CpGs from DMRs) and log-transformed risk factors (Fig. \@ref(fig:rf-cor-plots)a). A few sites, including cg06500161 (ABCG1 body) and cg02519286 (lead CpG from the SLC9A1 DMR) showed strong correlations with multiple risk factors. Others, such as cg11772801 (TMX1 body), showed little such correlation, indicating that these CpGs may relate to incident CVD through other mechanisms. 
-
-Next, a partial correlation network was constructed to enable inspection of putative direct relationships between risk factors and the CpG sites uncovered here (Fig. \@ref(fig:rf-cor-plots)b). The network revealed a general clustering of known blood-based risk factors apart from CpG sites. Unlike the other risk factors, hsCRP demonstrated independent correlations with many CpG sites. Furthermore, a strongly associated cluster of CpGs annotated to genes MS4A1, APBA2, APLP2, and TMX1 was apparent. Triglyceride levels served as a central node in the network, linking to multiple CpG sites, as well as systolic blood pressure, lipid levels, and diabetes status.
-
-```{r partial-correlation-network-noAge, message=F, eval=F}
+```{r partial-correlation-network, message=F}
 library(qgraph)
 
 # sbp_cpgs <- c(PHGDH="cg14476101", TXNIP="cg19693031")
@@ -1147,12 +1145,12 @@ cvdSR_cpgs <- c(GRIP1="cg09414535", KCNJ14="cg10222534", PKD2="cg26215428", AIM2
 allRFs <- c("age","sex","bmi","diabetes","chol","ldl","hdl","tg","sbp","glu","hscrp")
 allCpgs <- c(sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs, acs_cpgs, cvdSR_cpgs, topCpgs)
 
-includeRFs <- c("diabetes","ldl","hdl","tg","sbp","hscrp")
+includeRFs <- c("age","bmi","diabetes","ldl","hdl","tg","sbp","glu","hscrp")
 includeLitCpgs <- c()
-includeEwasCpgs <- dmrLeadCpgs
+includeEwasCpgs <- topCpgs
 names(includeEwasCpgs) <- gsub(".*-","",names(includeEwasCpgs))
 
-corInputData <- cbind(select(nmd_fhs, one_of(allRFs)), t(topCpgBetasAdj)) %>%
+corInputData <- cbind(select(nmd_fhs, one_of(allRFs)), t(betas_fhs[allCpgs,])) %>%
   na.omit() %>%
   mutate(sex=sex=="M") %>%
   mutate_all(as.numeric) %>%
@@ -1165,44 +1163,26 @@ corMat <- cor(corInputData)
 #        groups=rep(c("rf","litCpg","ewasCpg"),
 #                   times=c(length(includeRFs),length(includeLitCpgs),length(includeEwasCpgs))),
 #        label.color="white", label.cex=1.3, labels=names(corInputData))
-pcPlt <- qgraph(corMat,
+qgraph(corMat,
        graph="pcor", threshold="bonferroni", sampleSize=nrow(corInputData),
        groups=rep(c("rf","litCpg","ewasCpg"),
                   times=c(length(includeRFs),length(includeLitCpgs),length(includeEwasCpgs))),
        layout="spring",
        labels=names(corInputData), label.color="white", label.cex=1.25)
-pcPlt
 ```
+
+
+To understand how these findings fit into the context of known CVD biology and risk assessment, we evaluated relationships between DMPs and DMRs (represented by their lead CpGs) with traditional blood-based CVD risk factors. First, simple correlations were examined between EWAS sites (single and lead CpGs from DMRs) and log-transformed risk factors. A few sites, including cg06500161 (ABCG1 body) and cg02519286 (lead CpG from the SLC9A1 DMR) showed strong correlations with multiple risk factors. Others, such as cg11772801 (TMX1 body), showed little such correlation, indicating that these CpGs may relate to incident CVD through other mechanisms. 
+
+Next, a partial correlation network was constructed to enable inspection of putative direct relationships between risk factors.....
 
 <!--
 Next, a Bayesian network was created to link methylation at these CpG sites with both common risk factors and CpG sites previously established as related to these risk factors.  with common CVD RFs.....This approach has the advantage of providing a statistical inference of directionality to relationships between entities. We first undertook a preliminary analysis to validate the Bayesian network method, in which a structure was inferred between lipid-based risk factors and CpG sites previously established as related to these risk factors in EWAS. Not only did the expected links appear in the final graph structure, but they also strongly favored a directionality in which lipids affected methylation levels, as has been previously reported. Relevant CpGs from this study were then examined together with risk factors in a similar model. 
 -->
 
-
-# Discussion
-
-Investigation of DNA methylation data in samples taken before onset of a disease addresses the central difficulty of reverse causation in epigenome analyses. Here, we looked for prospective biomarkers of CVD onset using survival models, and discovered a set of CpG sites and regions that are suggestively associated across the FHS and WHI datasets.
-
-* basic CpG sites rundown -- have these been discovered elsewhere?
-
-In order to better understand the effects of sex and race differences across the two datasets, we undertook stratified EWAS analyses. First, the top regression coefficients from WHI were compared to those from the same sites in men and women from FHS. Though women did show somewhat greater correlation of coefficients, neither stratum agreed as well as the full FHS dataset, indicating that sex is not a major driver of the observed heterogeneity in EWAS results. Next, an equivalent comparison was made between FHS coefficients and those from separate races in WHI. Here, coefficients from both whites and hispanic subjects showed greater agreement than the full population, while there was essentially no correlation in black subjects. Importantly, the group of hispanic subjects in WHI are mostly of Mexican descent [@Zambrana2014], and thus share a greater genetic similarity to those of European rather than African descent.
-Previous observations have supported the generalizability of cardiovascular risk functions from the Framingham Heart Study to diverse populations [@Fox2016], and a reasonable overlap of genetic risk loci across ancestries [@Lettre2011]. However, the patterns observed here suggest caution in generalizing epigenetic results from FHS to other populations. Despite this intriguing pattern with respect to race, the improvement in correlation was modest, suggesting that demographic differences were not generally driving the observed differences in epigenetic associations.
-
-* anything explicit about race dominating over sex in explaining epigenetic patterns?
-
-Though no strong patterns were observed at the single-CpG level, we searched for differentially methylated regions, which may be more statistically robust and biologically meaningful [@Jaffe2012]. Four associations passed a strict multiple test correction threshold and were validated in FHS, the strongest of which was found in the ______ region of the APOB gene. There is existing support for both mechanistic [@Goff2014] and genetic [@Liu2015] associations between APOB and caridovascular disease, related to its function in cholesterol transport. Indeed, a recent Mendelian randomization-based analysis suggested a causal link between ____ the same ____ CpG and ApoB, the APOB protein product and known CVD risk factor [@Richardson2017]. APOB methylation has been linked to differential expression in liver cells [@ElTaghdouini2015], but whether this translates to increased circulating protein levels is not clear.
-
-To expand on this observation, we undertook a Mendelian randomization analysis to examine potential causal relationships between the regions discovered here and cardiovascular disease, using existing databases for mQTLs (the same as was used in Richardson et al. for CVD risk factors) and CVD GWAS associations. We showed a possible causal relationship between methylation at the lead CpG from the APOB region and CVD. It is particularly interesting that this relationship was uncovered in whole blood samples, as the APOB gene is expressed primarily in small intestine and liver. Thus, in this case, blood may be acting as a surrogate reflecting methylation changes in the primary disease-relevant tissue.
-
-Identification of specific cell types of interest may be valuable for understanding disease mechanisms as well as informing follow-up studies in specific cell types [@Bauer2018]. To further probe the cell-type specificity of our EWAS signal, we used a novel method based on the assumption that correlations between epigenomic feature annotations (e.g. histone marks) and EWAS signal strength will be stronger in relevant cell types. By averaging the strengths of this association across features for each cell type, we were able to rank cell types based on their potential relevance to our overall signal. As expected, blood cell types were all highly ranked. Monocytes showe the greatest importance based on this metric, supporting their well-known integral role in CVD pathogenesis [@Libby2006]. We also observed high ranks for fibroblasts and adrenal cells, both of which have been linked to CVD [@Murtha2017;@Rosmond2000], and which may suggest additional tissues for which blood is acting as a surrogate.
-
-* WGCNA discussion
-
-The methylation patterns observed here may be acting up- or downstream of known cardiovascular risk pathways (e.g. lipids), or may represent novel disease mechanisms. We looked at correlations between lead CpGs from our identified DMRs and classical CVD risk factors, including BMI, diabetes status, lipid levels, blood pressure, and hsCRP. None of the DMRs correlated strongly with these risk factors. Surprisingly, this included a lack of correlation between APOB methylation and cholesterol levels, which would otherwise be expected based on the biological function of the ApoB protein product. ....more when have bmi.... To move closer to mechanistic or causal relationships, we constructed a partial correlation network to display only Bonferroni-level correlations conditional on all other DMRs and risk factors. Most traditional risk factors showed strong connections to each other, to the exclusion of the DMRs. However, hsCRP stood out as a notable exception, showing stronger conditional correlations with methylation levels than with other risk factors. This suggests that these DMRs mediate or track disease pathways more related to inflammation than lipid levels, which may be intuitive given that they were assessed in blood samples.
-
-There are a few important limitations to this association study. As discussed, only blood samples were analyzed, which represent an important tissue for CVD pathology but do not fully capture epigenetic dynamics of other disease-relevant tissues. Demographic heterogeneity of the two datasets may have contributed to a lack of sensitivity in identifying or validating population-specific epigenetic associations with CVD. Additionally, as this study examines relationships between baseline methylation levels and incident disease, the measurement of DNA methylation at only a single time point precluded an understanding of the stability of these epigenetic signatures over time.
-
-* Summary para.
+```{r rf-figure, eval=F}
+grid.arrange(dmpRfPlt, bnPlt, nrow=2, heights=c(3,5))
+```
 
 # Methods
 
@@ -1212,10 +1192,6 @@ Data for the discovery set came from a combined case-control and pseudo case-coh
 
 Data for the validation set came from a substudy of the Framingham Heart Study that measured DNA methylation in 2726 subjects from the Offspring Cohort. Fasting blood samples for both methylation and clinical biochemistry were collected from participants at Exam 8. Data are available in the dbGaP public repository (accession: phs000007.v29.p10).
 
-More details on the cohorts will be requested from collaborators. 
-
-CVD events were defined as adjudicated coronary heart disease events, stroke, or death from CVD.  
-
 ## DNA methylation data processing
 
 In both cohorts, DNA methylation data were collected using the Illumina HumanMethylation450 microarray platform. (reference) Preprocessing was performed using the *minfi* and *wateRmelon* packages for R. As a quality control step, samples were removed if they showed weak overall signal based on visual inspection of an intensity plot, if they had more than 10% of probes undetected at a detection threshold of p<1e-16, or if the reported sex did not match the predicted sex based on methylation patterns. Probes were removed if they met any of the following criteria: more than 10% of samples undetected at a detection threshold of p<1e-16, location in the X or Y chromosomes, non-CpG probes, cross-hybridizing probes, probes measuring SNPs, and probes with an annotated SNP at the CpG site or in the single-base extension region. Samples were normalized using the Noob method for background correction and dye-bias normalization, followed by the BMIQ method for probe type correction. For each dataset, principal components analysis was performed on the set of control probes using code adapted from the CPACOR method of Lehne et al. [@Lehne2015] to account for technical variation. Blood cell counts for 6 blood cell types were estimated using the reference-based method of Houseman et al. [@Houseman2012]. 
@@ -1223,10 +1199,10 @@ In both cohorts, DNA methylation data were collected using the Illumina HumanMet
 ## Association of DNA methylation with incident CVD events
 
 After quality control and filtering steps, `r nrow(betas_whi)` (WHI) and `r nrow(betas_fhs)` (FHS) CpG sites
-remained for downstream analysis. Visualization of the associations between top principal components for each dataset and major biological and technical variables was examined using heatmaps (Supp. Fig. \@ref(fig:supp-var-plots)). Based on these assessments as well as examination of Scree plots for CPACOR principal components, 
+remained for downstream analysis. Visualization of the associations between top principal components for each dataset and major biological and technical variables was examined using heatmaps (supp. fig [[]]). Based on these assessments as well as examination of Scree plots for CPACOR principal components, 
 
 For each CpG site, a Cox proportional hazards regression was performed to assess the relationship between methylation beta value as the independent variable and time-to-event measures for incident CVD while adjusting for biological covariates (age, bmi, smoking status, smoking pack-years, and estimated blood cell counts; race in WHI; sex in FHS) and technical covariates (DNA pull batch in WHI; analysis center in FHS). To remove the influence of outliers in the regression, samples were removed from the analysis for each CpG if their beta value was outside of an extended outer fence (< 25%ile - $5*IQR$ or > 75%ile + $5*IQR$).
-QQ plots revealed that genomic inflation was not adequately controlled in FHS, so 7 CPACOR principal components (chosen based on a Scree plot assessment) were additionally adjusted for in FHS.
+QQ plots revealed that genomic inflation was not properly controlled in FHS, so 7 CPACOR principal components (chosen based on a Scree plot assessment) were additionally adjusted for in FHS.
 
 For the main analysis of single sites, a specific subset of variable sites were selected based on a previous publication that performed bisulfite sequencing in isolated monocytes, CD4+ T-cells, and neutrophils [@Hachiya2017]. This study calculated "reference intervals", defined as the difference in beta value between the 5th and 95th percentile, as a measure of the variability of a given CpG site. Based on their provided recommendation, sites were included here if they demonstrated a reference interval of more than 30 in any cell type.
 
@@ -1260,67 +1236,11 @@ Mendelian randomization analysis was performed using the R package *MendelianRan
 
 ## Risk factor comparison
 
-CVD risk factors were log-transformed to reduce the influence of extreme values on correlations. Methylation beta-values in FHS were adjusted for center and 7 control-probe principal components (as in the EWAS) using linear models, and the residuals were taken forward for use in the correlation analysis. Pearson correlations were computed between each risk factor and each CpG of interest (8 suggestive CpGs plus 4 DMR lead CpGs). Next, the full Pearson correlation matrix consisting of risk factors and these CpG sites was transformed into a partial correlation matrix using the R package *qgraph*. The partial correlation network was visualized using a network format after removing edges that did not pass a Bonferroni correction.
+CVD risk factors were log-transformed to reduce the influence of extreme values on correlations. Pearson correlations were computed between each risk factor and each CpG of interest (8 suggestive CpGs plus 4 DMR lead CpGs). Next, the full Pearson correlation matrix consisting of risk factors and these CpG sites was transformed into a partial correlation matrix using the R package *qgraph*. The partial correlation network was visualized using a network format after removing edges that did not pass a Bonferroni correction.
 
 # Supplementary Data
 
-\newcommand{\beginsupplement}{%
-\setcounter{table}{0}
-\renewcommand{\thetable}{S\arabic{table}}%
-\setcounter{figure}{0}
-\renewcommand{\thefigure}{S\arabic{figure}}%
-}
-
-\beginsupplement
-
-```{r supp-var-plots, fig.asp=2, fig.cap="Significance of regression of top PCs from methylation beta value matrix on covariates."}
-plot_grid(whiVarPlt, fhsVarPlt, nrow=2)
-```
-
-```{r supp-hachiya-plot, fig.cap="Reference interval comparison between variable sites as taken from Hachiya et al. and all other sites (RI = difference in beta value between 5th and 95th percentiles)."}
-hachiyaPlt
-```
-
-```{r supp-qq-plots, dev="png", dpi=300, fig.asp=1.5, fig.cap="QQ-plots for EWAS results, including the full set of CpG sites passing quality control steps."}
-par(mfrow=c(2,1), mar=c(3,2,2,1), mgp=c(2,0.5,0.5))
-make_qqplot(whiResFull$p, plotTitle=paste0("WHI: lambda = ", gControl(whiResFull$p)))  # Q-Q & g. control
-make_qqplot(fhsResFull$p, plotTitle=paste0("FHS: lambda = ", gControl(fhsResFull$p)))  # Q-Q & g. control
-```
-
-```{r supp-manhattan, warning=F, fig.cap="Manhattan plot of EWAS results in WHI."}
-qqman::manhattan(qqmanInput_whi, suggestiveline=F,
-                 genomewideline=-log10(0.05/nrow(whiRes)))
-```
-
-```{r supp-dmp-boxplot, fig.cap="Distribution of beta values in subjects who did and did not experience an incident CVD event."}
-dmpBoxplot
-```
-
-```{r supp-genomic-enrichment, fig.asp=1.5, fig.cap="Relative proportions of CpG sites found in (a) gene-based, and (b) CpG island-based genomic regions. The background consists of the set of variable sites examined."}
-plot_grid(geneGroupEnrichmentPlot, cpgIslandEnrichmentPlot, nrow=2, labels="auto")
-```
-
-```{r supp-gsea-table}
-# gsaTopResTblAbbrevs <- mutate(gsaTopResTbl, 
-#                               Term=ifelse(nchar(Term)<=40, Term, paste0(substr(Term,1,40),"...")))
-kable(gsaTopResTbl, row.names=F, caption="GSEA results for CpGs with FDR<0.25 in either dataset.", 
-      booktabs=T, longtable=T)
-```
-
-```{r supp-dmrs-whi}
-kable(whiDmrs, caption="Top DMRs from WHI only.", booktabs=T, longtable=T)
-```
-
-```{r supp-dmrs-fhs}
-kable(fhsDmrs, caption="Top DMRs from FHS only.", booktabs=T, longtable=T)
-```
-
-```{r supp-module-enrichment}
-kable(allModuleEnrichment, row.names=F, caption="GO enrichment of CVD-related modules from WGCNA.",
-      booktabs=T, longtable=T)
-```
-
-```{r supp-figs-and-tables, warning=F, dev="png", dpi=300, eval=F}
+```{r supp-figs-and-tables, warning=F, dev="png", dpi=300}
 whiVarPlt
 fhsVarPlt
 
@@ -1332,21 +1252,20 @@ make_qqplot(fhsResFull$p, plotTitle=paste0("FHS: lambda = ", gControl(fhsResFull
 qqman::manhattan(qqmanInput_whi, suggestiveline=F,
                  genomewideline=-log10(0.05/nrow(whiRes)), main="WHI EWAS Results")
 
-dmpBoxplot
+kable(gsaTopResTbl, caption="GSEA results for CpGs with FDR<0.25 in either dataset")
 
-geneGroupEnrichmentPlot
-cpgIslandEnrichmentPlot
+kable(whiDmrs, caption="Top DMRs from WHI only")
+kable(fhsDmrs, caption="Top DMRs from FHS only")
 
-kable(gsaTopResTbl, caption="GSEA results for CpGs with FDR<0.25 in either dataset.", booktabs=T)
-
-kable(whiDmrs, caption="Top DMRs from WHI only.", booktabs=T)
-kable(fhsDmrs, caption="Top DMRs from FHS only.", booktabs=T)
-
-kable(allModuleEnrichment, booktabs=T)
+kable(allModuleEnrichment)
 ```
 
-# References
 
+# Further development
+
+* Proportional hazards checks for each individual regression? Only for replication cohort?
+* Relate to existing findings for prevalent CVD
+* Differential variability
 
 ```{r enrichment-hypotheses, eval=F}
 vanBaakDataset <- readxl::read_excel("../int/13059_2017_1374_MOESM2_ESM.xlsx", sheet=2)
@@ -1430,45 +1349,6 @@ trainTestMRS <- function(mod, meta, meth, trainset, testset, alpha=0.5, nfolds=5
 }
 ```
 
-```{r bayesian-network, message=F, eval=F}
-library(bnlearn)
-
-sbp_cpgs <- c(PHGDH="cg14476101", TXNIP="cg19693031")
-hdl_cpgs <- c(DHCR24="cg17901584", ABCG1="cg06500161")
-tg_cpgs <- c(CPT1A_1="cg00574958", CPT1A_2="cg17058475")
-tc_cpgs <- c(SQLE="cg00285394", NLRC5="cg07839457")
-
-sbp_cpgs <- c(PHGDH="cg14476101")
-hdl_cpgs <- c(ABCG1="cg06500161")
-tg_cpgs <- c(CPT1A_1="cg00574958")
-tc_cpgs <- c(SQLE="cg00285394")
-acs_cpgs <- c(RUNX3="cg21217270", DGKQ="cg12226453", RGS3="cg14049634", ANKRD11="cg27513667")
-cvdSR_cpgs <- c(GRIP1="cg09414535", KCNJ14="cg10222534", PKD2="cg26215428", AIM2="cg10636246",
-                HRH2="cg14345676", NGEF="cg19485804", TNS1="cg18752854")
-
-rfs <- c("sbp","chol","hdl","tg")
-
-bnInputData <- cbind(select(nmd_fhs, age, sex, bmi, one_of(rfs), event, pastEvent), 
-           t(betas_fhs[unique(c(topCpgs, sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs)),])) %>%
-  na.omit() %>%
-  mutate_at(vars(one_of(rfs)), as.numeric) %>%
-  mutate(sex=factor(sex), event=factor(event), pastEvent=factor(pastEvent), age=as.numeric(age))
-
-ewasCpgs <- fhsRes$CpG[fhsRes$CpG %in% topCpgs][1:5]
-ofInterest <- c(age="age", bmi="bmi", pastEvent="pastEvent", rfs, sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs)
-
-bn <- bnlearn::rsmax2(select(bnInputData, one_of("age", "bmi", "pastEvent",
-                                                 # sbp_cpgs, hdl_cpgs, tg_cpgs, tc_cpgs,
-                                                 ewasCpgs,
-                                                 # topCpgs[grepl("dmr",names(topCpgs))],
-                                                 c("chol","hdl","tg","sbp"))))
-bnPlt <- plot(bn, 
-              highlight=ewasCpgs,
-              # highlight=topCpgs[grepl("dmr",names(topCpgs))],
-              main="Bayesian network of our CpGs, RF-related CpGs, and RFs")
-bnPlt
-```
-
 ```{r weighted-sum-score, eval=F}
 whiFdr <- na.omit(whiRes[whiRes$fdr<0.05,])
 whiEwasCoefs <- setNames(whiFdr$coef, whiFdr$CpG)
@@ -1494,10 +1374,7 @@ nriCalc <- nribin(mdl.std=frsModel, mdl.new=frsPlusMrsModel)$nri
 
 ```
 
-<!--
-* Proportional hazards checks for each individual regression? Only for replication cohort?
-* Relate to existing findings for prevalent CVD
-* Differential variability
--->
+
+
 
 

@@ -1,9 +1,12 @@
-## Miscellaneous helper functions to import functionality from relevant papers/methods
+# Miscellaneous helper functions conaining functionality from 
+# relevant papers/methods
+
 
 run_CPA <- function(RGset) {
   # Performs control probe adjustment (CPA) by running PCA on positive control probes from 450k array
   # Code adapted from Lehne et al. 2015
-  # Takes in an unnormalized minfi RGChannelSet
+  # Args: 
+  #   RGset: unnormalized minfi RGChannelSet
   
   # Type II probes
   TypeII.Name <- getProbeInfo(RGset, type = "II")$Name
@@ -129,8 +132,9 @@ run_CPA <- function(RGset) {
 }
 
 
-
-refactor <- function(betavals, k, covarfile = NULL, t = 500, numcomp = NULL, stdth = 0.02, out = "refactor") {
+refactor <- function(
+  betavals, k, covarfile=NULL, t=500, numcomp=NULL, 
+  stdth=0.02, out="refactor") {
   ## Performs sparse PCA to return k components theoretically representing cell counts or other substructure
   ## Adapted from R code based on Rahmani et al. 2016
   
@@ -228,7 +232,6 @@ refactor <- function(betavals, k, covarfile = NULL, t = 500, numcomp = NULL, std
 }
 
 
-
 calc_FRS <- function(pData) {
   # Calculation of Framingham risk score based on D'Agostino 2008 
   # doi: https://doi.org/10.1161/CIRCULATIONAHA.107.699579
@@ -257,7 +260,6 @@ calc_FRS <- function(pData) {
 }
 
 
-
 calc_zhang_mrs <- function(betas) {
   # Calculate mortality risk score from Zhang et al. 2017
   
@@ -269,5 +271,4 @@ calc_zhang_mrs <- function(betas) {
   mrs_vals <- t(zhang_subset) %*% zhang_coefs$coef
   data.frame(sampleKey=colnames(betas), zhang_mrs=mrs_vals, stringsAsFactors=F)
 }
-
 
