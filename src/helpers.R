@@ -249,12 +249,18 @@ calc_FRS <- function(pData) {
     select(sex, logAge, logTC, logHDL, ht_med, logSBP, smoking, diabetes)
 
   with(FRS_data, {
-       weightedSum <- ifelse(sex=="M",
-              3.06117*logAge + 1.12370*logTC - 0.93263*logHDL + 1.93303*logSBP*(1-ht_med) + 1.99881*logSBP*(ht_med) + 0.65451*smoking + 0.57367*diabetes,
-              2.32888*logAge + 1.20904*logTC - 0.70833*logHDL + 2.76157*logSBP*(1-ht_med) + 2.82263*logSBP*(ht_med) + 0.52973*smoking + 0.69154*diabetes)
-       frs <- ifelse(sex=="M",
-                     1 - 0.88936^(exp(weightedSum-23.9802)),
-                     1 - 0.95012^(exp(weightedSum-26.1931)))
+       weightedSum <- ifelse(
+         sex=="M",
+         (3.06117 * logAge + 1.12370 * logTC - 0.93263 * logHDL + 
+            1.93303 * logSBP * (1 - ht_med) + 1.99881 * logSBP * (ht_med) + 
+            0.65451 * smoking + 0.57367 * diabetes),
+         (2.32888 * logAge + 1.20904 * logTC - 0.70833 * logHDL + 
+            2.76157 * logSBP * (1 - ht_med) + 2.82263 * logSBP * (ht_med) + 
+            0.52973 * smoking + 0.69154 * diabetes))
+       frs <- ifelse(
+         sex=="M",
+         1 - 0.88936 ^ (exp(weightedSum - 23.9802)),
+         1 - 0.95012 ^ (exp(weightedSum - 26.1931)))
        frs
   })
 }
