@@ -148,20 +148,72 @@ labData_whi <- bind_rows(lab_data_1_whi, lab_data_2_whi) %>%
 medsData_whi_c1 <- read_tsv("../data/whi/phen/medications_c1.txt", skip=10)
 medsData_whi_c2 <- read_tsv("../data/whi/phen/medications_c2.txt", skip=10)
 medsRef_whi <- read_tsv("../data/whi/phen/medication_classes.dat")
+lipid_med_classes <- c(
+  "ANTIHYPERLIPIDEMIC", "FIBRIC ACID DERIVATIVES",
+  "INTESTINAL CHOLESTEROL ABSORPTION INHIBITORS", 
+  "HMG COA REDUCTASE INHIBITORS", "HMG COA REDUCTASE INHIBITOR COMBINATIONS",
+  "NICOTINIC ACID DERIVATIVES", "MISC. ANTIHYPERLIPIDEMICS", 
+  "ANTIHYPERLIPIDEMIC COMBINATIONS", "FIBRIC ACID DERIVATIVE COMBINATIONS",
+  "CALCIUM BLOCKER & HMG COA REDUCTASE INHIBITOR COMB"
+)
+diabetes_med_classes <- c(
+  "ANTIDIABETIC", "INSULIN", "MIXED INSULIN", "BEEF INSULIN", "PORK INSULIN",
+  "HUMAN INSULIN", "SULFONYLUREAS", "SULFONYLUREA COMBINATIONS",
+  "ANTIDIABETIC - AMINO ACID DERIVATIVES", 
+  "ANTIDIABETIC - D-PHENYLALANINE DERIVATIVES", "BIGUANIDES", 
+  "MEGLITINIDE ANALOGUES", "DIABETIC OTHER", "DIABETIC OTHER - COMBINATIONS",
+  "ALPHA-GLUCOSIDASE INHIBITORS", "INSULIN SENSITIZING AGENTS", 
+  "THIAZOLIDINEDIONES", "ANTIDIABETIC COMBINATIONS",
+  "SULFONYLUREA-BIGUANIDE COMBINATIONS",
+  "THIAZOLIDINEDIONE-BIGUANIDE COMBINATIONS"
+)
+hypertension_med_classes <- c(
+  "MINERALOCORTICOIDS", "VASOPRESSIN", "BETA BLOCKERS", 
+  "BETA BLOCKERS NON-SELECTIVE", "BETA BLOCKERS CARDIO-SELECTIVE",
+  "ALPHA-BETA BLOCKERS", "CALCIUM BLOCKERS", "ANTIHYPERTENSIVE",
+  "ACE INHIBITORS", "ANGIOTENSIN II RECEPTOR ANTAGONIST",
+  "ANTIADRENERGIC ANTIHYPERTENSIVES", "ANTIADRENERGICS - CENTRALLY ACTING",
+  "ANTIADRENERGICS - PERIPHERALLY ACTING", "RESERPINE",
+  "SELECTIVE ALDOSTERONE RECEPTOR ANTAGONISTS (SARAS)", "VASODILATORS",
+  "FLUOROQUINOLONE VASODILATORS", "DOPAMINE D1 RECEPTOR AGONISTS",
+  "ANTIHYPERTENSIVE - MAOIS", "MISC. ANTIHYPERTENSIVES",
+  "ANTIHYPERTENSIVE COMBINATIONS", "RESERPINE COMBINATIONS",
+  "ACE INHIBITORS & CALCIUM BLOCKERS", 
+  "ACE INHIBITORS & THIAZIDE/THIAZIDE-LIKE", 
+  "BETA BLOCKER & DIURETIC COMBINATIONS", 
+  "BETA BLOCKER & CALCIUM BLOCKER COMBINATIONS",
+  "ANGIOTENSIN II RECEPTOR ANTAGONISTS & THIAZIDES",
+  "ADRENOLYTICS-CENTRAL & THIAZIDE COMBINATIONS",
+  "ADRENOLYTICS-PERIPHERAL & THIAZIDES", "ANTIHYPERTENSIVES-MAOIS & THIAZIDES",
+  "ANTIHYPERTENSIVES-MISC & THIAZIDES", "VASODILATORS & THIAZIDES",
+  "DIURETICS", "CARBONIC ANHYDRASE INHIBITORS", "LOOP DIURETICS",
+  "MERCURIAL DIURETICS", "OSMOTIC DIURETICS", "POTASSIUM SPARING DIURETICS",
+  "THIAZIDES AND THIAZIDE-LIKE DIURETICS", "MISCELLANEOUS DIURETICS",
+  "COMBINATION DIURETICS", "DIURETICS & POTASSIUM", 
+  "NON PRESCRIPTION DIURETICS", "PRESSORS", "PRESSOR COMBINATIONS",
+  "PERIPHERAL VASODILATORS", "VASODILATOR COMBINATIONS",
+  "MICROVASODILATORS", "PROSTAGLANDIN VASODILATORS",
+  "VASOACTIVE NATRIURETIC PEPTIDES", "VASOCONSTRICTOR INHIBITORS",
+  "CALCIUM BLOCKER & HMG COA REDUCTASE INHIBITOR COMB"
+)
+
 medsData_whi <- bind_rows(medsData_whi_c1, medsData_whi_c2) %>%
   filter(SUBJID %in% sample_data_whi$subjID,
          F44VY == 1) %>%
   inner_join(medsRef_whi, by="TCCODE") %>%
-  mutate(ht_med=grepl(paste("DIURETIC", "CALCIUM BLOCKER", "ACE INHIBITOR", 
-                            "ANGIOTENSIN II", "BETA BLOCKER", "BETA-BLOCKER", 
-                            "ALPHA 1", "ALPHA-2", "VASODILATOR", "ALDOSTERONE", 
-                            sep="|"),
-                      TCNAME),
-         lipid_med=grepl("HMG COA REDUCTASE", TCNAME),
-         dm_med=grepl(paste("INSULIN", "GLUCOSIDASE", "BIGUANIDE", 
-                            "MEGLITINIDE", "SULFONYLUREA", 
-                            "THIAZOLIDINEDIONES", sep="|"),
-                      TCNAME)) %>%
+  mutate(ht_med=TCNAME %in% hypertension_med_classes,
+         lipid_med=TCNAME %in% lipid_med_classes,
+         dm_med=TCNAME %in% diabetes_med_classes) %>%
+  # mutate(ht_med=grepl(paste("DIURETIC", "CALCIUM BLOCKER", "ACE INHIBITOR", 
+  #                           "ANGIOTENSIN II", "BETA BLOCKER", "BETA-BLOCKER", 
+  #                           "ALPHA 1", "ALPHA-2", "VASODILATOR", "ALDOSTERONE", 
+  #                           sep="|"),
+  #                     TCNAME),
+  #        lipid_med=grepl("HMG COA REDUCTASE", TCNAME),
+  #        dm_med=grepl(paste("INSULIN", "GLUCOSIDASE", "BIGUANIDE", 
+  #                           "MEGLITINIDE", "SULFONYLUREA", 
+  #                           "THIAZOLIDINEDIONES", sep="|"),
+  #                     TCNAME)) %>%
   rename(subjID=SUBJID) %>%
   group_by(subjID) %>%
   summarise(ht_med=any(ht_med),
@@ -413,5 +465,6 @@ past_exam_data <- bind_rows(past_exams_separate, .id="exam") %>%
   dplyr::rename(subjID=shareid)
 
 past_exam_data_with_crp <- full_join(past_exam_data, past_crp_data, 
-                                     by=c("exam", "subjID"))
-saveRDS(past_exam_data_with_crp, "../int/pastExamData.rds")
+                                     by=c("exam", "subjID")) %>%
+  mutate(subjID=as.character(subjID))
+saveRDS(past_exam_data_with_crp, "../int/past_exam_data.rds")
