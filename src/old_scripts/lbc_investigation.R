@@ -2,7 +2,7 @@ library(tidyverse)
 library(survival)
 betas_lbc <- readRDS("../int/betas.qc.norm.filt_lbc.rds")
 metaData <- readRDS("../int/metaData.rds")
-estCellCounts_lbc <- readRDS("../int/estCellCounts_lbc.rds")
+estCellCounts_lbc <- readRDS("../int/est_cell_counts_lbc.rds")
 load("../int/CPACOR_lbc.RData")
 CP_PCs_lbc <- CP_PCs
 load("../int/PCA.fit_lbc.RData")
