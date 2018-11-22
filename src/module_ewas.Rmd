@@ -6,7 +6,7 @@ output:
     toc: false
     latex_engine: pdflatex
 bibliography: ../doc/module_ewas/module_ewas_refs.bib
-csl: plos.csl
+csl: bmcart.csl
 link-citations: true
 ---
 
@@ -15,7 +15,7 @@ library(knitr)
 knitr::opts_chunk$set(echo=F, fig.path="../doc/module_ewas/figures/", 
                       cache.path="../cache/module_ewas/", fig.pos="h")
 suppressMessages(silent <- lapply(
-  c("tidyverse", "minfi", "survival", "kableExtra", "doParallel", "itertools", 
+  c("tidyverse", "minfi", "survival", "kableExtra", "doParallel", "itertools",
     "gridExtra", "cowplot", "readxl", "flashpcaR", "coxme",
     "IlluminaHumanMethylation450kanno.ilmn12.hg19"), 
   library, character.only=T))
