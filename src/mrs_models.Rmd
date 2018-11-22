@@ -1,14 +1,14 @@
 ---
 title: MRS Model Experimentation
 output:
-pdf_document:
-latex_engine: pdflatex
+  pdf_document:
+    latex_engine: pdflatex
 ---
 
 ```{r prereqs, include=F, cache=F}
 library(knitr)
 opts_chunk$set(echo=F, cache.lazy=F, cache.path="../cache/mrs_models/",
-               fig.keep="high", fig.path="../output/figures/")
+               fig.keep="high", fig.path="../doc/mrs_models/figures/")
 suppressMessages(silent <- lapply(
   c("tidyverse","survival","glmnet","minfi","caret","doParallel",
     "itertools","randomForest","pROC"), library, character.only=T))
@@ -25,9 +25,9 @@ betas_lbc <- readRDS("../int/betas.qc.norm.filt_lbc.rds")
 metaData <- readRDS("../int/metaData.rds")
 
 # Load estimated cell counts
-est_cell_counts_whi <- readRDS("../int/estCellCounts_whi.rds")
-est_cell_counts_fhs <- readRDS("../int/estCellCounts_fhs.rds")
-est_cell_counts_lbc <- readRDS("../int/estCellCounts_lbc.rds")
+est_cell_counts_whi <- readRDS("../int/est_cell_counts_whi.rds")
+est_cell_counts_fhs <- readRDS("../int/est_cell_counts_fhs.rds")
+est_cell_counts_lbc <- readRDS("../int/est_cell_counts_lbc.rds")
 
 # Load CPACOR principal component adjustment factors
 load("../int/CPACOR_whi.RData")
@@ -74,9 +74,9 @@ nmd_whi <- filter(non_meth_data, study == "whi")
 nmd_fhs <- filter(non_meth_data, study == "fhs")
 nmd_lbc <- filter(non_meth_data, study %in% c("lbc21","lbc36"))
 
-betas_whi <- betas_whi[, nmd_whi]
-betas_fhs <- betas_fhs[, nmd_fhs]
-betas_lbc <- betas_lbc[, nmd_lbc]
+betas_whi <- betas_whi[, nmd_whi$sampleKey]
+betas_fhs <- betas_fhs[, nmd_fhs$sampleKey]
+betas_lbc <- betas_lbc[, nmd_lbc$sampleKey]
 stopifnot(all(colnames(betas_whi) == nmd_whi$sampleKey),
           all(colnames(betas_fhs) == nmd_fhs$sampleKey),
           all(colnames(betas_lbc) == nmd_lbc$sampleKey))  # Ensure identical number and order of samples for methylation and covariate data
@@ -1422,7 +1422,7 @@ run_cox_model_interaction <- function(probe_data, covar_data, model_spec) {
 ewis_model_whi <- paste0("survObj~meth*grs+race+age+bmi+smk_now+smk_py+CD4T+",
                          "CD8T+Bcell+NK+Mono+Gran+dnaPull")
 
-cl <- makePSOCKcluster(detectCores())
+cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
 
 ewis_res_whi_list <- foreach(meth=iter(betas_whi, by="row"), 
@@ -1444,7 +1444,7 @@ ewisModel_fhs <- paste0("survObj~meth*grs+sex+age+bmi+smk_now+smk_py+CD4T",
                         "+CD8T+Bcell+NK+Mono+Gran+center+",
                         paste0("cpPC",1:7,collapse="+"))
 
-cl <- makePSOCKcluster(detectCores())
+cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
 
 ewis_res_fhs_list <- foreach(meth=iter(betas_fhs, by="row"), 
