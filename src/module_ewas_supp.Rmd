@@ -1,0 +1,112 @@
+---
+title: "Supplementary Info: DNA methylation modules associate with incident cardiovascular disease and cumulative risk factor exposure"
+output:
+  bookdown::pdf_document2:
+    fig_caption: true
+    keep_tex: true
+    toc: false
+bibliography: ../doc/module_ewas/module_ewas_refs.bib
+csl: plos.csl
+link-citations: true
+---
+
+```{r prereqs, include=F}
+library(knitr)
+knitr::opts_chunk$set(echo=F, warning=F,
+                      fig.path="../doc/module_ewas/figures/", fig.pos="h")
+suppressMessages(silent <- lapply(
+  c("tidyverse", "survival", "kableExtra", "gridExtra", "cowplot", "coxme"), 
+  library, character.only=T))
+load("../doc/module_ewas/for_supp_info.RData")
+```
+
+\newcommand{\beginsupplement}{
+  \setcounter{table}{0}  
+  \renewcommand{\thetable}{S\arabic{table}} 
+  \setcounter{figure}{0} 
+  \renewcommand{\thefigure}{S\arabic{figure}}
+}
+
+\beginsupplement
+
+```{r workflow, fig.cap="Study overview, including module- and region-based analyses as well as follow-up."}
+include_graphics("../doc/module_ewas/workflow.pdf")
+```
+
+```{r print-scree-plots, fig.asp=0.5, fig.cap="Scree plots for PCA on the set of CpGs corresponding to each of the top modules."}
+plot_scree <- function(EVs, mod) {
+  qplot(x=1:10, y=EVs[1:10]) +
+    geom_line() +
+    labs(x="", y="Eigenvalues", title=mod) +
+    scale_x_continuous(breaks=1:10)
+}
+
+screeplots <- lapply(names(ec_res), 
+                     function(mod) plot_scree(ec_res[[mod]]$whi_EVs, mod))
+do.call(plot_grid, c(screeplots, ncol=3))
+```
+
+```{r module-rep-table, message=F}
+fhs_pedigree <- read_tsv("../data/fhs/fhs_pedigree.txt", skip=10) %>%
+  mutate(shareid=as.character(shareid)) %>%
+  select(shareid, pedno)
+nmd_fhs_with_ped <- left_join(nmd_fhs, fhs_pedigree, 
+                             by=c("subjID"="shareid"))
+nmd_fhs_with_ped$pedno[is.na(nmd_fhs_with_ped$pedno)] <- seq(
+  max(nmd_fhs_with_ped$pedno, na.rm=T) + 1, 
+  max(nmd_fhs_with_ped$pedno, na.rm=T) + sum(is.na(nmd_fhs_with_ped$pedno)))
+
+mixed_pvals <- lapply(fhs_ECs, function(eg) {
+  cox.fit <- coxme(Surv(time, event) ~ eg+center+cpPC1+cpPC2+cpPC3+cpPC4+cpPC5+cpPC6+cpPC7+CD4T+CD8T+Bcell+Mono+NK+Gran+(1|pedno), 
+                   data=nmd_fhs_with_ped)
+  eg_coef <- cox.fit$coefficients["eg"]
+  cox.fit$var
+  nfrail <- nrow(cox.fit$var) - length(cox.fit$coefficients)
+  se <- sqrt(diag(cox.fit$var)[nfrail + 1])
+  round(1 - pchisq((eg_coef / se)^2, 1), 7)
+})
+
+formatted_assoc_res <- lapply(
+  list(whi_mod_res_ccAdj_df, whi_mod_res_allAdj_df, 
+       fhs_mod_res_df, fhs_mod_res_allAdj_df),
+  function(df) select(df, module, p))
+mod_rep_tbl <- Reduce(function(x,y) inner_join(x, y, by="module"), 
+                      formatted_assoc_res) %>%
+  mutate_at(vars(contains("^p")), format.pval(3)) %>%
+  mutate(fhsRepMixed=unlist(mixed_pvals)) %>%
+  select(1, 2, 3, 4, 6, 5) %>%
+  setNames(c("Module", "Partially adjusted", "Fully adjusted", "Partially adj.",
+             "Partially adj. (mixed)", "Fully adjusted"))
+kable(mod_rep_tbl, booktabs=T, longtable=T,
+      caption=paste("P-values for module associations with incident",
+                    "CVD in discovery and replication.")) %>%
+  add_header_above(c("", "WHI (discovery)"=2, "FHS (replication)"=3)) %>%
+  footnote(number=c(paste(
+    "Partially-adjusted models are adjusted for technical covariates",
+    "(DNA pull batch in WHI and","study center + 7 control probe PCs in FHS)",
+    "and estimated cell counts. Fully-adjusted models are additionally",
+    "adjusted for age, sex, smoking status and smoking pack-years."),
+    "Mixed model contains a random intercept for each family."), 
+    threeparttable=T)
+```
+
+```{r ewas-cpgs}
+top_ewas_res <- fdr_tbl %>%
+  inner_join(select(fhs_res, CpG, p), by="CpG") %>% 
+  mutate_at(vars(direction, UCSC_RefGene_Group, UCSC_RefGene_Name), 
+            function(x) gsub(";.*", "", x)) %>%
+  mutate(p.y=format.pval(p.y, 3)) %>%
+  setNames(c("CpG", "Chromosome", "Dir. of Assoc.", "P-value", "Location", 
+             "Annotated Gene", "Replication P-value"))
+kable(top_ewas_res, booktabs=T, 
+      caption=paste("CpGs with FDR < 0.05 in the discovery set", 
+                    "(Bonferroni threshold = 1.18e-7)"))
+```
+
+```{r print-eforge-plots, fig.cap="eFORGE cell type-specificity plot for the brown4 module."}
+eforge_plt + theme(axis.text.y=element_text(size=9))
+```
+
+```{r causal-diagram-hscrp, fig.cap="Example diagram of cumulative risk factor mediation by brown4 methylation module activation. Results from 4 regressions are shown: cumulative risk factor exposure to brown4 activation, cumulative risk factor exposure to incident CVD, and brown4 activation to incident CVD with and without adjustment for cumulative risk factor exposure. Regression terms represented as: sign of coefficient (p-value)."}
+include_graphics("../doc/module_ewas/hscrp_mediation_diagram.pdf")
+```
