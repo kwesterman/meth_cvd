@@ -8,4 +8,4 @@ methylation_preprocessing: Performs sample QC, Noob preprocessing (background an
 
 substructure: Calculation of various quantities relevant to examining and adjusting for substructure in the methylation dataset. Includes cell count estimation, PCA calculation, CPACOR (PCA on control probes), and ComBat.
 
-module_ewas: RMarkdown script for generating the results/manuscript.
+module_ewas and module_ewas_supp: RMarkdown script for generating the results and supplementary information for the module-based incident CVD EWAS manuscript.
