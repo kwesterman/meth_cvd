@@ -10,8 +10,9 @@ library(knitr)
 opts_chunk$set(echo=F, cache.lazy=F, cache.path="../cache/mrs_models/",
                fig.keep="high", fig.path="../doc/mrs_models/figures/")
 suppressMessages(silent <- lapply(
-  c("tidyverse","survival","glmnet","minfi","caret","doParallel",
-    "itertools","randomForest","pROC"), library, character.only=T))
+  c("tidyverse", "survival", "glmnet", "minfi", "caret", "doParallel",
+    "itertools", "randomForest", "pROC", "ICC", "cowplot"), 
+  library, character.only=T))
 options(digits=3)
 ```
 
@@ -72,30 +73,66 @@ non_meth_data <- Reduce(function(x,y) inner_join(x, y, by="sampleKey"),
 
 nmd_whi <- filter(non_meth_data, study == "whi")
 nmd_fhs <- filter(non_meth_data, study == "fhs")
-nmd_lbc <- filter(non_meth_data, study %in% c("lbc21","lbc36"))
+nmd_lbc36 <- filter(non_meth_data, study == "lbc36")
 
 betas_whi <- betas_whi[, nmd_whi$sampleKey]
 betas_fhs <- betas_fhs[, nmd_fhs$sampleKey]
-betas_lbc <- betas_lbc[, nmd_lbc$sampleKey]
+betas_lbc36 <- betas_lbc[, nmd_lbc36$sampleKey]
 stopifnot(all(colnames(betas_whi) == nmd_whi$sampleKey),
           all(colnames(betas_fhs) == nmd_fhs$sampleKey),
-          all(colnames(betas_lbc) == nmd_lbc$sampleKey))  # Ensure identical number and order of samples for methylation and covariate data
+          all(colnames(betas_lbc36) == nmd_lbc36$sampleKey))  # Ensure identical number and order of samples for methylation and covariate data
+```
+
+```{r screening-funcs}
+my_try <- function(expr, CpG) {
+  # Captures model failures and returns successful result or vector of NAs
+  tryCatch(expr,
+           error = function(e) {print(e); return(c(CpG, rep(NA, 3)))})
+}
+
+run_cox_model <- function(probe_data, covar_data, model_spec) {
+  # Given a row of the M-value matrix (corresponding to a CpG site), bind that methylation
+  # data to the covariate data and run Cox proportional hazards regression
+  CpG <- rownames(probe_data)
+  probe_data <- as.vector(probe_data)
+  # outlierTF <- probe_data < quantile(probe_data ,0.25) - 3 * IQR(probe_data) | 
+  #   probe_data > quantile(probe_data, 0.75) + 3 * IQR(probe_data)
+  model_data <- cbind(covar_data, meth=as.numeric(probe_data),
+                     surv_obj=Surv(time=covar_data$time, event=covar_data$event))
+  my_try({
+    cox_fit <- coxph(as.formula(model_spec), data=model_data)
+    c(CpG=CpG, summary(cox_fit)$coef[c('meth'), 
+                                     c('coef', 'z', 'Pr(>|z|)')])
+  }, CpG)
+}
 ```
 
 ```{r train-test-funcs}
-construct_design_mat <- function(cpgs, betas, covars, meta, trainset) {
+construct_design_mat <- function(cpgs, betas, covars, meta) {
   covar_formula <- as.formula(paste("~", paste(covars, collapse="+")))
   covars_frame <- model.frame(covar_formula, meta, na.action=na.pass)  # To allow NAs to pass through
   covars_mat <- model.matrix(covar_formula, covars_frame)[,-1]  # Converts factors to numeric
   cbind(covars_mat, t(betas[cpgs,]))
 }
 
-test_mrs <- function(meta, mrs) {
+test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
+                     covars=c()) {
   meta$mrs <- scale(mrs)
   meta$cvd_surv <- Surv(time=meta$time, event=meta$event)  # Outcome
-  mrs_test <- coxph(cvd_surv~mrs, data=meta) # Test the MRS using a Cox model
+  covar_string <- "cvd_surv ~ mrs"
+  if (length(covars) > 0) {
+    covar_string <- paste(covar_string, "+", paste(covars, collapse=" + "))
+  } 
+  form <- as.formula(paste(c("cvd_surv ~ mrs", covars), collapse=" + "))
+  mrs_test <- coxph(form, data=meta, subset=subset)  # Test the MRS using a Cox model
   mrs_res <- summary(mrs_test)$coef["mrs",c("exp(coef)","z")]
-  tibble(HR_per_SD=mrs_res["exp(coef)"], p=2 * pnorm(-abs(mrs_res["z"])))
+  mrs_res_tbl <- tibble(HR_per_SD=mrs_res["exp(coef)"], 
+                        p=2 * pnorm(-abs(mrs_res["z"])))
+  if (return_fit) {
+    list(fit=mrs_test, tbl=mrs_res_tbl) 
+  } else {
+    mrs_res_tbl
+  }
 }
 
 test_grs <- function(grs_df) {
@@ -124,10 +161,11 @@ format_p_vals <- function(tbl) {
 ```
 
 ```{r glmnet-funcs}
-train_glmnet <- function(X, y, alpha=0.5, nfolds=5, 
+train_glmnet <- function(X, y, alpha=0.5, nfolds=5, lmr=0.01,
                          parallel=F, s="lambda.min") {
   mrs_fit_cv <- cv.glmnet(X, y, family="cox", alpha=alpha,  # Train MRS model
                           penalty.factor=ifelse(grepl("^cg", colnames(X)), 1, 0),
+                          lambda.min.ratio=lmr,
                           nfolds=nfolds, parallel=parallel)
   coefs <- coef(mrs_fit_cv, s=s)
   cpg_coefs <- coefs[grepl("^cg", rownames(coefs)),]
@@ -148,349 +186,325 @@ calc_mrs_glmnet <- function(coefs, meth) {
 }  
 ```
 
-# MRS model construction and parameter optimization
+## Methylation risk score construction
 
-## Basic first models
+```{r train-test-setup}
+nmd_all <- bind_rows(nmd_whi, nmd_fhs, nmd_lbc36) %>%
+  mutate(batch=case_when(study == "whi" ~ "whi",
+                         study == "lbc36" ~ "lbc36",
+                         TRUE ~ paste0("fhs_", center)))
+cvd_surv_all <- Surv(nmd_all$time, nmd_all$event)
 
-Basic MRS modeling -- each model is trained on a single cohort using elastic net regression on the top 50% most variable CpGs.
+common_cpgs <- Reduce(intersect, list(rownames(betas_whi),
+                                      rownames(betas_fhs),
+                                      rownames(betas_lbc36)))
+betas_all <- cbind(betas_whi[common_cpgs, ],
+                   betas_fhs[common_cpgs, ],
+                   betas_lbc36[common_cpgs, ])
 
-```{r basic-mrs, cache=1}
-variances_whi <- apply(betas_whi, 1, var)
-high_var_cpgs_whi <- rownames(betas_whi)[(
-  variances_whi > quantile(variances_whi, 0.5))]
-covars_whi <- c("dnaPull")
-design_mat_whi <- construct_design_mat(high_var_cpgs_whi, betas_whi, 
-                                       covars_whi, nmd_whi)
-cvd_surv_whi <- Surv(nmd_whi$time, nmd_whi$event)
-
-variances_fhs <- apply(betas_fhs, 1, var)
-high_var_cpgs_fhs <- rownames(betas_fhs)[(
-  variances_fhs > quantile(variances_fhs, 0.5))]
-covars_fhs <- c("center", paste0("cpPC", 1:7))
-design_mat_fhs <- construct_design_mat(high_var_cpgs_fhs, betas_fhs, 
-                                       covars_fhs, nmd_fhs)
-cvd_surv_fhs <- Surv(nmd_fhs$time, nmd_fhs$event)
-
-variances_lbc <- apply(betas_lbc, 1, var)
-high_var_cpgs_lbc <- rownames(betas_lbc)[(
-  variances_lbc > quantile(variances_lbc, 0.5))]
-covars_lbc <- c("cpPC1")
-design_mat_lbc <- construct_design_mat(high_var_cpgs_lbc, betas_lbc, 
-                                       covars_lbc, nmd_lbc)
-cvd_surv_lbc <- Surv(nmd_lbc$time, nmd_lbc$event)
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-mrs_fit_whi <- train_glmnet(design_mat_whi, cvd_surv_whi, 
-                            alpha=0.5, nfolds=3, parallel=T)
-mrs_fit_fhs <- train_glmnet(design_mat_fhs, cvd_surv_fhs, 
-                            alpha=0.5, nfolds=3, parallel=T)
-mrs_fit_lbc <- train_glmnet(design_mat_lbc, cvd_surv_lbc, 
-                            alpha=0.5, nfolds=3, parallel=T)
-
-stopCluster(cl)
+set.seed(1)
+train_val_set <- createDataPartition(factor(nmd_all$event), p=0.75)[[1]]
+trainset_idx <- createDataPartition(
+  factor(nmd_all$event[train_val_set]), p=0.66)[[1]]
+trainset <- train_val_set[trainset_idx]
+# trainset <- sample(train_val_set, size=floor(0.5 * nrow(nmd_all)))
+validationset <- setdiff(train_val_set, trainset)
+testset <- seq(1, nrow(nmd_all))[-train_val_set]
 ```
 
-```{r test-basic-mrs}
-# Test WHI
-mrs_fhs <- calc_mrs_glmnet(mrs_fit_whi$cpg_coefs, betas_fhs)
-mrs_res_fhs <- test_mrs(nmd_fhs, mrs_fhs)
-mrs_lbc <- calc_mrs_glmnet(mrs_fit_whi$cpg_coefs, betas_lbc)
-mrs_res_lbc <- test_mrs(nmd_lbc, mrs_lbc)
-kable(bind_rows(list(FHS=mrs_res_fhs), .id="testCohort"), 
-      caption="Trained in WHI")
-
-# Test FHS
-mrs_whi <- calc_mrs_glmnet(mrs_fit_fhs$cpg_coefs, betas_whi)
-mrs_res_whi <- test_mrs(nmd_whi, mrs_whi)
-mrs_lbc <- calc_mrs_glmnet(mrs_fit_fhs$cpg_coefs, betas_lbc)
-mrs_res_lbc <- test_mrs(nmd_lbc, mrs_lbc)
-kable(bind_rows(list(WHI=mrs_res_whi), .id="testCohort"), 
-      caption="Trained in FHS")
-
-# # Test LBC
-# mrs_whi <- calc_mrs_glmnet(mrs_fit_lbc$cpg_coefs, betas_whi)
-# mrs_res_whi <- test_mrs(nmd_whi, mrs_whi)
-# mrs_fhs <- calc_mrs_glmnet(mrs_fit_lbc$cpg_coefs, betas_fhs)
-# mrs_res_fhs <- test_mrs(nmd_fhs, mrs_fhs)
-# kable(bind_rows(list(WHI=mrs_res_whi, FHS=mrs_res_fhs), .id="testCohort"), 
-#       caption="Trained in LBC")
-```
-
-## Variance thresholds
-
-Training in WHI, testing in FHS & LBC.
-
-```{r variance-thresholds, cache=1, message=F}
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-var_thresh_quantiles <- c(0, 0.25, 0.5, 0.75, 0.9)
-var_fits_whi_list <- lapply(var_thresh_quantiles, function(vtq) {
-  cpg_set <- rownames(betas_whi)[variances_whi > quantile(variances_whi, vtq)]
-  design_mat <- construct_design_mat(cpg_set, betas_whi, "dnaPull", nmd_whi)
-  train_glmnet(design_mat, cvd_surv_whi, alpha=0.5, nfolds=3, parallel=T)
-})
-
-stopCluster(cl)
-```
-
-```{r test-variance-thresholds, fig.asp=1.5}
-var_res_whi_list <- lapply(var_fits_whi_list, function(fit) {
-  mrs_fhs <- test_mrs(nmd_fhs, calc_mrs_glmnet(fit$cpg_coefs, betas_fhs))
-  mrs_lbc <- test_mrs(nmd_lbc, calc_mrs_glmnet(fit$cpg_coefs, betas_lbc))
-  bind_rows(list(FHS=mrs_fhs, LBC=mrs_lbc), .id="testCohort")
-})
-
-var_res_plot_data <- bind_rows(var_res_whi_list, .id="variance_threshold") %>%
-  mutate(variance_threshold=var_thresh_quantiles[(
-    as.numeric(variance_threshold))],
-         negLogP=-log10(p)) %>%
-  dplyr::select(testCohort, variance_threshold, HR_per_SD, 
-                negLogP, testCohort) %>%
-  gather(key=metric, value=value, HR_per_SD, negLogP)
-
-ggplot(var_res_plot_data, aes(x=variance_threshold, y=value, 
-                              color=testCohort, group=testCohort)) + 
-  geom_point() +
-  geom_line() +
-  facet_wrap(~metric, nrow=2, scales="free")
-```
-
-## Manipulation of alpha
-
-Does the elastic net alpha parameter have any notable effect on the results? Try it out using 75th quantile variance threshold.
-
-```{r alphas, cache=1, message=F}
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-alphas <- c(0.25, 0.5, 0.75)
-alpha_fits_whi_list <- lapply(alphas, function(a) {
-  cpg_set <- rownames(betas_whi)[variances_whi>quantile(variances_whi, 0.75)]
-  design_mat <- construct_design_mat(cpg_set, betas_whi, "dnaPull", nmd_whi)
-  train_glmnet(design_mat, cvd_surv_whi, alpha=a, nfolds=3, parallel=T)
-})
-
-stopCluster(cl)
-```
-
-```{r test-alphas, warning=F}
-alpha_res_whi_list <- lapply(alpha_fits_whi_list, function(fit) {
-  mrs_fhs <- test_mrs(nmd_fhs, calc_mrs_glmnet(fit$cpg_coefs, betas_fhs))
-  mrs_lbc <- test_mrs(nmd_lbc, calc_mrs_glmnet(fit$cpg_coefs, betas_lbc))
-  bind_rows(list(FHS=mrs_fhs, LBC=mrs_lbc), .id="testCohort")
-})
-
-alpha_res_plot_data <- bind_rows(alpha_res_whi_list, .id="alpha") %>%
-  mutate(alpha=alphas[as.numeric(alpha)],
-         negLogP=-log10(p)) %>%
-  dplyr::select(testCohort, alpha, HR_per_SD, negLogP, testCohort) %>%
-  gather(key=metric, value=value, HR_per_SD, negLogP)
-
-ggplot(alpha_res_plot_data, aes(x=alpha, y=value, 
-                                color=testCohort, group=testCohort)) + 
-  geom_point() +
-  geom_line() +
-  facet_wrap(~metric, nrow=2, scales="free")
-```
-
-## Covariate exploration
-
-When training in WHI, does adjustment for age or cell counts impact the eventual generalization to other cohorts?
-
-```{r mrs-covariate-exploration, cache=1}
-design_mat_whi_age <- construct_design_mat(high_var_cpgs_whi, betas_whi, 
-                                           c("dnaPull","age"), nmd_whi)
-design_mat_whi_cell_counts <- construct_design_mat(
-  high_var_cpgs_whi, betas_whi, 
-  c("dnaPull","CD4T","CD8T","NK","Bcell","Mono","Gran"), nmd_whi)
-cvd_surv_whi <- Surv(nmd_whi$time, nmd_whi$event)
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-mrs_fit_whi_age <- train_glmnet(design_mat_whi_age, cvd_surv_whi, 
-                                alpha=0.5, nfolds=3, parallel=T)
-mrs_fit_whi_cell_counts <- train_glmnet(design_mat_whi_cell_counts, 
-                                        cvd_surv_whi, alpha=0.5, nfolds=3, 
-                                        parallel=T)
-
-stopCluster(cl)
-```
-
-```{r test-mrs-covariate-exploration}
-mrs_res_fhs_age_adj <- test_mrs(
-  nmd_fhs, calc_mrs_glmnet(mrs_fit_whi_age$cpg_coefs, betas_fhs))
-mrs_res_lbc_age_adj <- test_mrs(
-  nmd_lbc, calc_mrs_glmnet(mrs_fit_whi_age$cpg_coefs, betas_lbc))
-kable(bind_rows(list(FHS=mrs_res_fhs_age_adj, LBC=mrs_res_lbc_age_adj), 
-                .id="testCohort"), 
-      caption="Trained in WHI with age adjustment")
-
-mrs_res_fhs_cell_count_adj <- test_mrs(
-  nmd_fhs, calc_mrs_glmnet(mrs_fit_whi_cell_counts$cpg_coefs, betas_fhs))
-mrs_res_lbc_cell_count_adj <- test_mrs(
-  nmd_lbc, calc_mrs_glmnet(mrs_fit_whi_cell_counts$cpg_coefs, betas_lbc))
-kable(bind_rows(list(FHS=mrs_res_fhs_cell_count_adj, 
-                     LBC=mrs_res_lbc_cell_count_adj), 
-                .id="testCohort"), 
-      caption="Trained in WHI with cell count adjustment")
-```
-
-```{r ewas-mrs, dependson=c("ewas-cpacorOnly","ewas-fullAdjustment"), eval=F}
-ewas_res_df <- ewas_res_df_cpacorOnly ## FOR NOW, ADDRESS THIS LATER?
-
-cpg_num <- c(25, 50, 100, 250, 500, 1000)
-ewas_mrs_weighted_sum <- lapply(cpg_num, function(num) {
-  mrs_coefs <- setNames(ewas_res_df[seq(1, num), "coef"], 
-                        ewas_res_df[seq(1, num), "CpG"])
-  mrs_calc <- calc_mrs(mrs_coefs, betas)
-  mrs_test <- test_mrs(non_meth_data, mrs_calc, fhsSet)
-  mrs_test
-})
-ewas_mrs_weighted_sum_df <- do.call(rbind, ewas_mrs_weighted_sum) %>%
-  mutate(numberOfCpGsUsed=cpg_num)
-
-cpacor_adj_model <- paste0("~", paste0("cpPC", 1:10, "_indiv", collapse="+"))
-ewas_mrs_enet_list <- lapply(cpg_num, function(num) {
-  top_cpgs <- ewas_res_df$CpG[seq(1,num)]
-  trainTestMRS(cpacor_adj_model, non_meth_data, betas[top_cpgs, ], 
-               whiSet, fhsSet)
-})
-ewas_mrs_enet_df <- do.call(rbind, purrr::map(ewas_mrs_enet_list, "res")) %>%
-  data.frame(stringsAsFactors=F, check.names=F) %>%
-  mutate(numberOfCpGsUsed=cpg_num)
-```
-
-```{r cvd-snp-mrs, message=F, eval=F}
-cvd_gwas_associations <- read_tsv(
-  "../data/literature/gwas-association-downloaded_2017-09-18-cardiovascular disease.tsv")
-cvd_gwas_cpgs_by_pos <- cvd_gwas_associations %>%
-  mutate(chr=paste0("chr", CHR_ID),
-         snp_pos=CHR_POS) %>%
-  select(chr, snp_pos) %>%
-  inner_join(select(anno_450k, Name, chr, pos), by="chr") %>%
-  mutate(snp_pos=as.numeric(snp_pos)) %>%
-  filter(pos >= snp_pos-1000, pos <= snp_pos+1000) %>%
-  dplyr::rename(cpg=Name) %>%
-  distinct(cpg)
-cvd_cpgs <- cvd_gwas_cpgs_by_pos$cpg
-cvd_model <- trainTestMRS(cpacor_adj_model, non_meth_data, 
-                         betas[rownames(betas) %in% cvd_cpgs, ], whiSet, fhsSet)
-cvd_res <- cvd_model$res
-```
-
-```{r display-cpg-set-comparison, cache=F, dependson=c("ewas-mrs","variance-thresholds","cvd-snp-mrs"), out.width="80%", eval=F}
-
-kable(mutate(ewas_mrs_weighted_sum_df, p=as.character(format(p, digits=3))), 
-      caption="Using direct weights from EWAS")
-# ggplot(ewas_mrs_weighted_sum_df, aes(x=numberOfCpGsUsed, y=HR_per_SD)) + 
-#   geom_point() + 
-#   geom_line() +
-#   ylab("Estimated HR per SD") +
-#   ggtitle("Using direct weights from EWAS")
-
-kable(mutate(ewas_mrs_enet_df, p=as.character(format(p, digits=3))), 
-      caption="Using top CpGs from EWAS as input to elastic net")
-# ggplot(ewas_mrs_enet_df, aes(x=numberOfCpGsUsed, y=HR_per_SD)) + 
-#   geom_point() + 
-#   geom_line() +
-#   ylab("Estimated HR per SD") +
-#   ggtitle("Using top CpGs from EWAS as input to elastic net")
-
-kable(mutate(cvd_res, p=as.character(format(p, digits=3))), 
-      caption="Using ~1k CpGs near CVD GWAS loci as input to elastic net")
-
-kable(mutate(varResDF, p=as.character(format(p, digits=3))), 
-      caption="Using a naive CpG variance threshold before running elastic net")
-# ggplot(varResDF, aes(x=varThreshold_percent, y=HR_per_SD)) + 
-#   geom_point() + 
-#   geom_line() +
-#   xlab("Variance threshold (quantile)") +
-#   ylab("Estimated HR per SD") +
-#   ggtitle("Using a naive CpG variance threshold before running elastic net")
-```
-
-## Final multi-cohort methylation model
-
-```{r dual-train, cache=1, include=F}
-shared_cpgs_whiLbc <- intersect(rownames(betas_whi), rownames(betas_lbc))
-design_mat_whiLbc <- construct_design_mat(
-  intersect(high_var_cpgs_whi, high_var_cpgs_lbc),
-  cbind(betas_whi[shared_cpgs_whiLbc,], betas_lbc[shared_cpgs_whiLbc, ]),
-  c("study"), bind_rows(nmd_whi, nmd_lbc))
-cvd_surv_whiLbc <- Surv(rbind(cvd_surv_whi, cvd_surv_lbc))
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-mrs_fit_whiLbc <- train_glmnet(design_mat_whiLbc, cvd_surv_whiLbc, 
-                               alpha=0.5, nfolds=3, parallel=T)
-stopCluster(cl)
-```
-
-```{r test-dual-train, include=F}
-mrs_fhs <- calc_mrs_glmnet(mrs_fit_whiLbc$cpg_coefs, betas_fhs)
-mrs_res_fhs <- test_mrs(nmd_fhs, mrs_fhs)
-kable(mrs_res_fhs, caption="Trained in WHI & LBC")
-```
-
-Trained in WHI & FHS together.
-
-```{r train-test-split}
+```{r train-test-setup2, eval=F}
 nmd_whiFhs <- bind_rows(nmd_whi, nmd_fhs) %>% 
-  mutate(batch = ifelse(study == "whi", "whi", center))
+  mutate(batch = ifelse(study == "whi", "whi", paste0("fhs_", center)))
+cvd_surv_whiFhs <- Surv(nmd_whiFhs$time, nmd_whiFhs$event)
+
+shared_cpgs_whiFhs <- intersect(rownames(betas_whi), rownames(betas_fhs))
+betas_whiFhs <- cbind(betas_whi[shared_cpgs_whiFhs, ],
+                      betas_fhs[shared_cpgs_whiFhs, ])
 
 set.seed(1)
 trainset <- createDataPartition(factor(nmd_whiFhs$event), p=0.7)[[1]]
 testset <- seq(1, nrow(nmd_whiFhs))[-trainset]
 ```
 
-```{r train-mcmm, cache=1}
-shared_cpgs_whiFhs <- intersect(rownames(betas_whi), rownames(betas_fhs))
-design_mat_whiFhs <- construct_design_mat(
-  intersect(high_var_cpgs_whi, high_var_cpgs_fhs),
-  cbind(betas_whi[shared_cpgs_whiFhs,], betas_fhs[shared_cpgs_whiFhs,]),
-  c("batch"), nmd_whiFhs)
-cvd_surv_whiFhs <- Surv(rbind(cvd_surv_whi, cvd_surv_fhs))
+Basic setup:
 
-cl <- makePSOCKcluster(3)
+* Combine WHI/FHS/LBC36 and split into 50% training, 25% validation, and 25% testing
+* Test marginal associations of each CpG with incident CVD (training set)
+* Grid search over parameters for elastic net (# top CpGs, alpha) (training set, evaluate in validation set)
+* Train tuned model in training + validation set and evaluate performance in test set
+
+### Initial EWAS-like screening using marginal associations
+
+```{r screening, cache=1}
+cl <- makePSOCKcluster(32)
 registerDoParallel(cl)
-mrs_fit_whiFhs <- train_glmnet(design_mat_whiFhs[trainset, ], 
-                               cvd_surv_whiFhs[trainset], 
-                               alpha=0.5, nfolds=3, parallel=T)
+
+marginal_res_list <- foreach(meth=iter(betas_all, by="row"), 
+                              .packages="survival") %dopar%
+  run_cox_model(meth[, trainset, drop=F], nmd_all[trainset, ], 
+                "surv_obj ~ meth + batch")
+
 stopCluster(cl)
 ```
 
-```{r test-mcmm}
-relevant_betas <- t(design_mat_whiFhs[,grepl("^cg", colnames(design_mat_whiFhs))])
-mrs_whiFhs <- calc_mrs_glmnet(mrs_fit_whiFhs$cpg_coefs, relevant_betas[,testset])
-mrs_res_whiFhs <- test_mrs(nmd_whiFhs[testset,], mrs_whiFhs)
-kable(mrs_res_whiFhs, caption="Performance in 30% held-out test set")
+```{r screening-processing}
+marginal_res <- do.call(rbind, marginal_res_list) %>%
+  data.frame(stringsAsFactors=F, check.names=F) %>%
+  dplyr::rename(p=`Pr(>|z|)`) %>%
+  mutate_at(c("coef","z","p"), as.numeric) %>%
+  mutate(fdr=p.adjust(p, method="BH")) %>%
+  arrange(p)
 ```
 
-```{r train-mcmm-full, cache=1}
+### Tuning
+
+```{r grid-search, cache=1}
+cpg_nums <- c(100, 500, 1000, 2000, 3000, 4000, 5000)
+alphas <- c(0, 0.25, 0.5, 0.75, 1)
+
 cl <- makePSOCKcluster(3)
 registerDoParallel(cl)
-mrs_fit_whiFhs_full <- train_glmnet(design_mat_whiFhs, cvd_surv_whiFhs, 
-                                    alpha=0.5, nfolds=3, parallel=T)
+
+param_grid <- expand.grid(num_features=cpg_nums, alpha=alphas)
+grid_fits_list <- apply(param_grid, 1, function(row) {
+  design_mat <- construct_design_mat(
+    marginal_res$CpG[1:row[["num_features"]]], betas_all, "batch", nmd_all)
+  train_glmnet(design_mat[trainset, ], cvd_surv_all[trainset],
+               alpha=row[["alpha"]], nfolds=3, parallel=T)
+})
+
 stopCluster(cl)
 ```
 
-```{r test-mcmm-full}
-mrs_lbc <- calc_mrs_glmnet(mrs_fit_whiFhs_full$cpg_coefs, betas_lbc)
-mrs_res_lbc <- test_mrs(nmd_lbc, mrs_lbc)
-mrs_lbc21 <- calc_mrs_glmnet(mrs_fit_whiFhs_full$cpg_coefs, 
-                             betas_lbc[, nmd_lbc$study == "lbc21"])
-mrs_res_lbc21 <- test_mrs(filter(nmd_lbc, study == "lbc21"), mrs_lbc21)
-mrs_lbc36 <- calc_mrs_glmnet(mrs_fit_whiFhs_full$cpg_coefs, 
-                             betas_lbc[, nmd_lbc$study == "lbc36"])
-mrs_res_lbc36 <- test_mrs(filter(nmd_lbc, study == "lbc36"), mrs_lbc36)
-kable(bind_rows(list(`LBC (full)`=mrs_res_lbc, LBC21=mrs_res_lbc21, 
-                     LBC36=mrs_res_lbc36), .id="Test cohort"),
-      caption="Testing full model in LBC")
+```{r test-grid}
+grid_res_list <- lapply(grid_fits_list, function(fit) {
+  mrs <- calc_mrs_glmnet(fit$cpg_coefs, betas_all)
+  mrs_test <- test_mrs(nmd_all[validationset, ], mrs[validationset])
+  mrs_test
+})
+grid_res_df <- cbind(param_grid, bind_rows(grid_res_list))
+
+grid_plot_data <- grid_res_df %>%
+  mutate(negLogP=-log10(p)) %>%
+  dplyr::select(num_features, alpha, HR_per_SD, negLogP)
+  # gather(key=metric, value=value, HR_per_SD, negLogP)
+
+ggplot(grid_plot_data, aes(x=alpha, y=log10(num_features), 
+                           color=negLogP, size=HR_per_SD)) + 
+  geom_point(alpha=0.8) +
+  # scale_color_continuous(limits=c(0, NA)) +
+  scale_size_continuous(limits=c(1, NA)) +
+  # geom_line() +
+  labs(x="Elastic net alpha parameter")
+  # facet_wrap(~metric, nrow=2, scales="free") +
+  # theme(axis.title.y=element_blank())
 ```
+
+A grid search suggests that performance is optimized with an alpha parameter of zero (i.e. ridge regression) and use of the top 2000 CpG sites based on marginal associations with incident CVD. Using these parameters, a model was trained in the combined training + validation sets and tested on the fully held-out portion of the dataset.
+
+### Testing
+
+```{r tuned-model, cache=1}
+tuned_design_mat <- construct_design_mat(marginal_res$CpG[1:2000],
+                                         betas_all, "batch", nmd_all)
+
+cl <- makePSOCKcluster(10)
+registerDoParallel(cl)
+
+tuned_mrs_fit <- train_glmnet(tuned_design_mat[train_val_set, ],
+                              cvd_surv_all[train_val_set],
+                              alpha=0, nfolds=10)
+
+stopCluster(cl)
+```
+
+```{r test-tuned-model, warning=F}
+mrs_tuned <- calc_mrs_glmnet(tuned_mrs_fit$cpg_coefs, betas_all)
+
+nmd_all$diabetes <- nmd_all$dm_med | (nmd_all$glu > 125)
+nmd_test <- nmd_all[testset, ]
+mrs_tuned_test <- mrs_tuned[testset]
+
+covar_sets <- list(
+  none=c(),
+  age_sex=c("age", "sex"),
+  plus_cell_counts=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran"),
+  plus_bmi=c("age", "sex", "bmi"),
+  plus_diabetes=c("age", "sex", "diabetes"),
+  plus_smoking=c("age", "sex", "smk_now", "smk_py"),
+  plus_lipids_sbp=c("age", "sex", "ldl", "hdl", "tg", "sbp"),
+  full_model=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran",
+               "bmi", "diabetes", "smk_now", "smk_py", "ldl", "hdl", "tg", "sbp"))
+
+test_metrics_tbl <- map_dfr(
+  covar_sets, function(cs) test_mrs(nmd_test, mrs_tuned_test, covars=cs),
+  .id="Covariate_set")
+
+kable(test_metrics_tbl, caption="Performance of the MRS in the held-out test set.")
+```
+
+```{r var-thresh-opt, cache=1, eval=F}
+variances_whiFhs <- apply(betas_whiFhs, 1, var)
+
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
+
+var_thresh_quantiles <- c(0, 0.25, 0.5, 0.75, 0.9)
+var_fits_list <- lapply(var_thresh_quantiles, function(vtq) {
+  cpg_set <- rownames(betas_whiFhs)[(
+    variances_whiFhs >= quantile(variances_whiFhs, vtq))]
+  design_mat <- construct_design_mat(cpg_set, betas_whiFhs, 
+                                     "batch", nmd_whiFhs)
+  train_glmnet(design_mat[trainset, ], cvd_surv_whiFhs[trainset], 
+               alpha=0.5, nfolds=3, parallel=T)
+})
+
+stopCluster(cl)
+```
+```{r test-variance-thresholds, fig.asp=1.2, eval=F}
+var_res_list <- lapply(var_fits_list, function(fit) {
+  mrs <- calc_mrs_glmnet(fit$cpg_coefs, betas_whiFhs)
+  mrs_test <- test_mrs(nmd_whiFhs[testset, ], mrs[testset])
+  mrs_test
+  #bind_rows(list(FHS=mrs_fhs, LBC=mrs_lbc), .id="testCohort")
+})
+
+var_res_plot_data <- bind_rows(var_res_list, .id="variance_threshold") %>%
+  mutate(variance_threshold=var_thresh_quantiles[(
+    as.numeric(variance_threshold))],
+         negLogP=-log10(p)) %>%
+  dplyr::select(variance_threshold, HR_per_SD, negLogP) %>%
+  gather(key=metric, value=value, HR_per_SD, negLogP)
+
+ggplot(var_res_plot_data, aes(x=variance_threshold, y=value)) + 
+  geom_point() +
+  geom_line() +
+  labs(x="Variance threshold") +
+  facet_wrap(~metric, nrow=2, scales="free") + 
+  theme(axis.title.y=element_blank())
+```
+```{r alpha-opt, cache=1, eval=F}
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
+
+alphas <- c(0, 0.25, 0.5, 0.75, 1)
+alpha_fits_list <- lapply(alphas, function(a) {
+  cpg_set <- rownames(betas_whiFhs)[(
+    variances_whiFhs > quantile(variances_whiFhs, 0.5))]
+  design_mat <- construct_design_mat(cpg_set, betas_whiFhs, 
+                                     "batch", nmd_whiFhs)
+  train_glmnet(design_mat[trainset, ], cvd_surv_whiFhs[trainset], 
+               alpha=a, nfolds=3, parallel=T)
+})
+
+stopCluster(cl)
+```
+```{r test-alphas, fig.asp=1.2, eval=F}
+alpha_res_list <- lapply(alpha_fits_list, function(fit) {
+  mrs <- calc_mrs_glmnet(fit$cpg_coefs, betas_whiFhs)
+  mrs_test <- test_mrs(nmd_whiFhs[testset, ], mrs[testset])
+  mrs_test
+})
+
+alpha_plot_data <- bind_rows(alpha_res_list, .id="alpha") %>%
+  mutate(alpha=alphas[as.numeric(alpha)],
+         negLogP=-log10(p)) %>%
+  dplyr::select(alpha, HR_per_SD, negLogP) %>%
+  gather(key=metric, value=value, HR_per_SD, negLogP)
+
+ggplot(alpha_plot_data, aes(x=alpha, y=value)) + 
+  geom_point() +
+  geom_line() +
+  labs(x="Elastic net alpha parameter") +
+  facet_wrap(~metric, nrow=2, scales="free") + 
+  theme(axis.title.y=element_blank())
+```
+```{r final-train-model, cache=1, cache.vars=c("q75_cpg_set", "train_mrs_fit"), eval=F}
+q75_cpg_set <- rownames(betas_whiFhs)[(
+  variances_whiFhs >= quantile(variances_whiFhs, 0.75))]
+train_design_mat <- construct_design_mat(q75_cpg_set, betas_whiFhs, 
+                                   "batch", nmd_whiFhs)
+
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
+train_mrs_fit <- train_glmnet(train_design_mat[trainset, ], 
+                              cvd_surv_whiFhs[trainset], 
+                              alpha=0, nfolds=3, parallel=T)
+stopCluster(cl)
+```
+```{r test-final-train-model, warning=F, eval=F}
+mrs <- calc_mrs_glmnet(train_mrs_fit$cpg_coefs, betas_whiFhs)
+
+nmd_whiFhs$diabetes <- nmd_whiFhs$dm_med | (nmd_whiFhs$glu > 125)
+nmd_test <- nmd_whiFhs[testset, ]
+mrs_test <- mrs[testset]
+
+covar_sets <- list(
+  none=c(),
+  age_sex=c("age", "sex"),
+  plus_cell_counts=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran"),
+  plus_bmi=c("age", "sex", "bmi"),
+  plus_diabetes=c("age", "sex", "diabetes"),
+  plus_smoking=c("age", "sex", "smk_now", "smk_py"),
+  plus_lipids_sbp=c("age", "sex", "ldl", "hdl", "tg", "sbp"),
+  full_model=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran",
+               "bmi", "diabetes", "smk_now", "smk_py", "ldl", "hdl", "tg", "sbp"))
+
+test_metrics_tbl <- map_dfr(
+  covar_sets, function(cs) test_mrs(nmd_test, mrs_test, covars=cs),
+  .id="Covariate_set")
+
+kable(test_metrics_tbl, caption="Performance of the MRS in the held-out test set.")
+```
+
+## Final MRS construction and characterization
+
+```{r final-model, cache=1}
+final_design_mat <- construct_design_mat(marginal_res$CpG[1:2000],
+                                         betas_all, "batch", nmd_all)
+
+cl <- makePSOCKcluster(10)
+registerDoParallel(cl)
+
+final_mrs_fit <- train_glmnet(final_design_mat,
+                              cvd_surv_all,
+                              alpha=0, nfolds=10)
+
+stopCluster(cl)
+```
+
+```{r final-full-model, cache=1, cache.vars=c("full_mrs_fit"), eval=F}
+train_design_mat <- construct_design_mat(q75_cpg_set, betas_whiFhs, 
+                                   "batch", nmd_whiFhs)
+
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
+full_mrs_fit <- train_glmnet(train_design_mat, 
+                             cvd_surv_whiFhs,
+                             alpha=0, nfolds=3, parallel=T)
+stopCluster(cl)
+```
+
+```{r final-model-characterization, message=F, warning=F}
+final_coefs <- final_mrs_fit$cpg_coefs
+
+mrs_final <- calc_mrs_glmnet(final_coefs, betas_all)
+
+top_coefs <- final_coefs[abs(final_coefs) > 0.25]
+
+gsa_tbl <- missMethyl::gometh(as.vector(names(top_coefs)), 
+                              all.cpg=anno_450k$Name, collection="GO")
+
+coef_hist <- ggplot(tibble(coef=final_coefs), aes(x=coef)) +
+  geom_histogram() +
+  labs(x="CpG weight in MRS")
+coef_hist_highvals <- ggplot(tibble(coef=top_coefs), aes(x=coef)) +
+  geom_histogram()
+
+coef_hist
+```
+
+<!--Gene set enrichment analysis (based on `r length(top_coefs)` CpGs with absolute weights > 0.25) reveals strong enrichment for cell-cell adhesion.-->
 
 ```{r evaluation, cache=F, eval=F}
 source("helpers.R")
@@ -522,11 +536,639 @@ legend("bottomright",
        col=c("blue", "red", "green"), lty=1, lwd=3, cex=1.3)
 ```
 
-<!--For appropriate comparison to the Framingham Risk Score, the evaluation here is based on a binary classification of whether an incident event did or did not occur. The basic MRS shows a reasonable c-statistic (ROC area under the curve) of 0.66, comparable to that of my implementation of the FRS algorithm. There seems to be a bit of synergy between the two risk scores, as performance increases slightly when using them together. One important caveat is that the FRS is generally estimated to show a c-statistic closer to 0.75, so it is possible that FHS Offspring is not an optimal test cohort (because cholesterol is not predictive of CVD risk in this population?) or that there is some error in my coding of the FRS.-->
+### MRS stability
+
+```{r mrs-stability, cache=1, cache.vars=c("meta_lbc36_with_dups", "icc_res")}
+betas_fhs_with_dups <- readRDS("../int/betas.qc.norm.filt_fhs.rds")
+meta_fhs_with_dups <- readRDS("../int/metaData.rds") %>%
+  filter(study == "fhs",
+         sampleKey %in% colnames(betas_fhs_with_dups)) %>%
+  group_by(subjID) %>%
+  filter(n() > 1) %>%
+  ungroup()
+betas_fhs_with_dups <- betas_fhs_with_dups[, meta_fhs_with_dups$sampleKey]
+meta_fhs_with_dups$mrs <- calc_mrs_glmnet(final_mrs_fit$cpg_coefs,
+                                          betas_fhs_with_dups)
+icc_res_fhs <- ICCest(x=subjID, y=mrs, data=meta_fhs_with_dups)
+
+betas_lbc36_with_dups <- readRDS("../int/betas.qc.norm.filt_lbc.rds")
+meta_lbc36_with_dups <- readRDS("../int/metaData.rds") %>%
+  filter(study == "lbc36",
+         sampleKey %in% colnames(betas_lbc36_with_dups))
+betas_lbc36_with_dups <- betas_lbc36_with_dups[, meta_lbc36_with_dups$sampleKey]
+meta_lbc36_with_dups$mrs <- calc_mrs_glmnet(final_mrs_fit$cpg_coefs, 
+                                            betas_lbc36_with_dups)
+icc_res_lbc36 <- ICCest(x=subjID, y=mrs, data=meta_lbc36_with_dups)
+
+icc_res_tbl <- tibble(Cohort=c("FHS", "LBC36"),
+                      Group_type=c("Duplicates", "Samples over multiple visits"),
+                      ICC=c(icc_res_fhs$ICC, icc_res_lbc36$ICC))
+
+kable(icc_res_tbl, caption="MRS stability as evaluated by using multiple within-subject measurements. Generic ICC heuristics for reference: 0-0.5 = poor, 0.5-0.75 = moderate, 0.75 - 0.9 = good, 0.9-1 = excellent.")
+```
+
+## Risk score interactions with demographic and risk-based attributes
+
+The following set of results is based on models adjusting for age, sex (when not the stratifying factor), and cell counts.
+
+```{r strat-helpers}
+test_mrs_with_SE <- function(nmd, mrs, subset, covars) {
+  test_res_list <- test_mrs(nmd, mrs, subset=subset, return_fit=T,
+                            covars=covars)
+  res_tbl <- test_res_list$tbl
+  beta <- log(res_tbl$HR_per_SD)
+  se <- sqrt(diag(test_res_list$fit$var)[1])
+  res_tbl$SE_lower <- exp(beta - se)
+  res_tbl$SE_higher <- exp(beta + se)
+  res_tbl$n <- test_res_list$fit$n
+  res_tbl
+}
+
+basic_covars <- c("age", "sex", "CD4T", "CD8T", "Bcell", 
+                  "NK", "Mono", "Gran")
+
+strat_test_by_study <- function(df, test_mrs, quantile_cat) {
+  if (is.factor(df[[quantile_cat]])) {
+    unique_levels <- na.omit(levels(df[[quantile_cat]]))
+  } else {
+    unique_levels <- na.omit(unique(df[[quantile_cat]]))
+  }
+  df$mrs <- test_mrs
+  full_res <- map_dfr(unique_levels, function(q) {
+    res_per_study <- df %>%
+      nest(-study) %>%
+      mutate(res=map(data, function(d) {
+        tryCatch(test_mrs_with_SE(d, d$mrs, d[[quantile_cat]] == q,
+                                  basic_covars[basic_covars != "sex"]),
+                 error=function(e) data.frame(NA, NA, NA, NA))
+      }))
+    res_all <- test_mrs_with_SE(df, df$mrs, df[[quantile_cat]] == q,
+                                basic_covars[basic_covars != "sex"])
+    cbind(study=c(res_per_study$study, "all"), 
+          bind_rows(bind_rows(res_per_study$res), res_all))
+  }, .id="Group")
+  full_res$Group <- unique_levels[as.numeric(full_res$Group)]
+  full_res
+}
+
+plot_strat_test_by_study <- function(qres, xlab) {
+  ggplot(qres, aes(x=Group, y=HR_per_SD, group=study, color=study)) +
+    geom_point(position=position_dodge(width=0.25)) +
+    geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
+                  position=position_dodge(width=0.25)) +
+    labs(x=xlab)
+}
+```
+
+```{r study-strat, eval=F}
+study_strat_res <- map_dfr(c("whi", "fhs"), function(s) {
+  train <- test_mrs_with_SE(nmd_train, mrs_train, nmd_train$study == s,
+                            basic_covars[basic_covars != "sex"])
+  test <- test_mrs_with_SE(nmd_test, mrs_test, nmd_test$study == s,
+                           basic_covars[basic_covars != "sex"])
+  bind_rows(trainset=train, testset=test, .id="subset")
+})
+# study_strat_res <- map_dfr(c("whi", "fhs"), function(s) {
+#   male <- test_mrs_with_SE(nmd_whiFhs, full_mrs, nmd_whiFhs$study == s,
+#                            basic_covars[basic_covars != "sex"])
+#   femal
+# })
+```
+
+### Demographics
+
+* Sex (noting that the training set was considerably skewed towards females)
+* Race
+* Age
+
+```{r sex-strat, warning=F, eval=F}
+male_fhs <- test_mrs_with_SE(nmd_fhs, full_mrs[nmd_whiFhs$study == "fhs"],
+                             nmd_fhs$sex == "M",
+                             basic_covars[basic_covars != "sex"])
+female_fhs <- test_mrs_with_SE(nmd_fhs, full_mrs[nmd_whiFhs$study == "fhs"],
+                               nmd_fhs$sex == "F",
+                               basic_covars[basic_covars != "sex"])
+female_whi <- test_mrs_with_SE(nmd_whi, full_mrs[nmd_whiFhs$study == "whi"],
+                               nmd_test$sex == "F",
+                               basic_covars[basic_covars != "sex"])
+sex_strat_res <- bind_rows(male_fhs, female_fhs, female_whi)
+sex_strat_res$Sex <- c("Male", "Female (FHS)", "Female (WHI)")
+
+sex_strat_plt <- ggplot(sex_strat_res, aes(x=Sex, y=HR_per_SD)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
+  theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=30))
+
+sex_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "sex")
+sex_strat_plt <- plot_strat_test_by_study(sex_strat_res, "Sex")
+
+nmd_whiFhs$age_group <- cut(nmd_whiFhs$age,
+                            breaks=c(0, 55, 65, 75, 100))
+age_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "age_group")
+age_strat_plt <- plot_strat_test_by_study(age_strat_res, "Age") +
+  theme(axis.text.x=element_text(angle=30))
+```
+```{r race-strat, warning=F, eval=F}
+race_strat_res <- map_dfr(c("white", "black", "hispanic"), function(r) {
+  test_mrs_with_SE(nmd_whi, full_mrs[nmd_whiFhs$study == "whi"], 
+                   nmd_whi$race == r, 
+                   basic_covars[basic_covars != "sex"])
+  # test <- test_mrs_with_SE(nmd_test, mrs_test, nmd_test$race == r, 
+  #                  basic_covars[basic_covars != "sex"])
+  # bind_rows(trainset=train, testset=test, .id="subset")
+})
+race_strat_res <- bind_rows(race_strat_res,
+                            test_mrs_with_SE(nmd_fhs, 
+                                             full_mrs[nmd_whiFhs$study == "fhs"],
+                                             nmd_fhs$race == "white",
+                                             basic_covars))
+race_strat_res$Race <- c("White (WHI)", "Black", "Hispanic", "White (FHS)")
+
+race_strat_plt <- ggplot(race_strat_res, aes(x=Race, y=HR_per_SD)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
+  theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=30))
+
+race_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "race")
+race_strat_plt <- plot_strat_test_by_study(race_strat_res, "Race")
+```
+```{r whi-mrs-to-fhs-sex, eval=F}
+mrs_fhs <- calc_mrs_glmnet(mrs_fit_whi$cpg_coefs, betas_fhs)
+mrs_res_fhs_male <- test_mrs(filter(nmd_fhs, sex == "M"), 
+                             mrs_fhs[nmd_fhs$sex == "M"])
+mrs_res_fhs_female <- test_mrs(filter(nmd_fhs, sex == "F"), 
+                               mrs_fhs[nmd_fhs$sex == "F"])
+kable(bind_rows(list(Male=mrs_res_fhs_male, Female=mrs_res_fhs_female),
+                .id="Sex"), 
+      caption="WHI -> FHS sex-stratified")
+```
+
+### Traditional risk
+
+Framingham Risk Score (2008 generalized CVD version) was used to calculate cardiovascular risk. Diabetes was defined as either blood sugar medication use or measured fasting glucose > 125 mg/dL.
+
+```{r calc-frs, message=F, warning=F}
+source("helpers.R")
+
+nmd_all$diabetes <- nmd_all$dm_med | (nmd_all$glu > 125)
+nmd_all <- replace_na(nmd_all, list(diabetes=F, ht_med=F, smk_now=F))
+nmd_all$frs <- calc_FRS(nmd_all)
+```
+
+```{r test-frs, warning=F}
+test_frs <- function(frs_df) {
+  # frs_df input should have both event data and a column names "frs"
+  frs_df$frs <- scale(frs_df$frs)
+  cvd_surv <- Surv(frs_df$time, frs_df$event)
+  frs_test <- coxph(cvd_surv ~ frs, data=frs_df)
+  frs_res <- summary(frs_test)$coef["frs", c("exp(coef)", "z")]
+  frs_res_tbl <- tibble(HR_per_SD=frs_res["exp(coef)"], 
+                        p=2 * pnorm(-abs(frs_res["z"])))
+  frs_res_tbl
+}
+
+frs_res_tbl <- test_frs(nmd_all)
+```
+
+```{r frs-strat, warning=F, eval=F}
+# frs_quantiles <- quantile(nmd_test$frs, seq(0, 1, by=0.2), na.rm=T)
+# nmd_test$frs_quintile <- cut(nmd_test$frs, 
+#                              breaks=frs_quantiles,
+#                              labels=paste0("Q", 1:5),
+#                              include.lowest=T)
+
+frs_quantiles <- quantile(nmd_whiFhs$frs, seq(0, 1, by=0.2), na.rm=T)
+nmd_whiFhs$frs_quintile <- cut(nmd_whiFhs$frs, 
+                             # breaks=frs_quantiles,
+                             breaks=seq(0, 1, 0.2),
+                             labels=paste0("Q", 1:5),
+                             include.lowest=T)
+
+nmd_whiFhs$frs_group <- cut(nmd_whiFhs$frs,
+                            breaks=c(0, 0.1, 0.2, 0.3, 1),
+                            labels=c("0-0.2", "0.1-0.2", "0.2-0.4",
+                                     "0.4+"),
+                            include.lowest=T)
+
+frs_strat_res <- map_dfr(levels(nmd_whiFhs$frs_quantile), function(q) {
+  test_mrs_with_SE(nmd_whiFhs, full_mrs, nmd_whiFhs$frs_quantile == q,
+                   basic_covars)
+  # test <- test_mrs_with_SE(nmd_whiFhs, mrs_test, nmd_whiFhs$frs_quintile == q,
+  #                  basic_covars[basic_covars != "sex"])
+  # bind_rows(trainset=train, testset=test, .id="subset")
+}, .id="FRS Quantile")
+# frs_strat_res$`FRS Quantile` <- c("0-0.2", "0.2-0.4", "0.4-0.6", "0.6+")
+
+frs_strat_plt <- ggplot(frs_strat_res, 
+                        aes(x=`FRS Quantile`, y=HR_per_SD)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
+  labs(x="FRS-based 10-year risk estimate")
+
+frs_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "frs_group")
+frs_strat_plt <- plot_strat_test_by_study(frs_strat_res, "FRS 10-yr risk") +
+  theme(axis.text.x=element_text(angle=30))
+```
+
+### Genetic risk
+
+A genetic risk score (GRS) was calculated based on the genome-wide polygenic model used by Khera et al. 2018 for prediction of coronary heart disease (~6M SNPs). This GRS was first tested to confirm its associations in WHI and FHS (both of which had about 80% of the full set of GRS SNPs available after imputation and QC; table in Supplementary Info). While all CVD cases are incident in WHI, past and incident events were merged into a single binary variable for FHS in order to test the GRS.
+
+```{r calc-grs, message=F, warning=F}
+read_sscore <- function(filename) {
+  read_tsv(filename) %>%
+    dplyr::rename(subjID=IID,
+                  grs=SCORE1_AVG) %>%
+    mutate(grs=grs * 1e6) %>%  # So values are more reasonable
+    select(subjID, grs)
+}
+
+grs_whi <- read_sscore("../int/whi_grs.sscore")
+nmd_whi <- left_join(nmd_whi, grs_whi, by="subjID", suffix=c("",".2"))
+
+# grs_fhs <- read_sscore("../int/fhs_grs.sscore") %>%
+# grs_fhs <- read_sscore("../int/fhs_scores_nofilter.sscore") %>%
+grs_fhs <- read_sscore("../int/test2.sscore") %>%
+  mutate(subjID=as.character(subjID))
+nmd_fhs <- left_join(nmd_fhs, grs_fhs, by="subjID", suffix=c("",".2"))
+
+nmd_all <- left_join(nmd_all, rbind(grs_whi, grs_fhs),
+                         by="subjID", suffix=c("",".2"))
+
+grs_quantiles_fhs <- quantile(nmd_all$grs[nmd_all$study == "fhs"], 
+                              seq(0, 1, by=0.2), na.rm=T)
+grs_quantiles_whi <- quantile(nmd_all$grs[nmd_all$study =="whi"],
+                              seq(0, 1, by=0.2), na.rm=T)
+# source("helpers.R")
+# 
+# genotype.df.fhs <- read_table2("../int/grs_genos/grs_genos_fhs.vcf", skip=6)
+# grs_df.fhs <- tibble(subjID=as.character(colnames(genotype.df.fhs)[-(1:9)]),
+#                      grs=calc_khera2016grs(genotype.df.fhs))
+# 
+# genotype.df.whi <- read_table2("../int/grs_genos/grs_genos_whi.vcf", skip=6)
+# imputedSampleInfo_whi <- read_tsv("../data/whi/gen/imputedSampleInfo.txt", skip=15)
+# grs.ids.whi <- imputedSampleInfo_whi$SubjectID[match(colnames(genotype.df.whi)[-(1:9)],
+#                                                      imputedSampleInfo_whi$SampleID)]
+# 
+# grs_df.whi <- tibble(subjID=as.character(grs.ids.whi), 
+#                      grs=calc_khera2016grs(genotype.df.whi))
+# 
+# grs_df <- bind_rows(grs_df.fhs, grs_df.whi)
+# 
+# # genotype.df <- read_csv("../int/cvd_grs_genos.csv")
+# # genotype.mat <- as.matrix(genotype.df[-1])
+# # grs_df <- tibble(subjID=as.character(genotype.df[[1]]), grs=calc_khera2016grs(genotype.mat))
+```
+
+```{r test-grs, warning=F}
+whi_grs_test_df <- nmd_whi
+grs_res_whi <- test_grs(whi_grs_test_df)
+
+fhs_grs_test_df <- mutate(nmd_fhs, event=pastEvent | event)
+grs_res_fhs <- test_grs(fhs_grs_test_df)
+```
+
+```{r grs-strat, warning=F, eval=F}
+nmd_test$grs <- nmd_whiFhs$grs[match(nmd_test$subjID, 
+                                     nmd_whiFhs$subjID)]
+grs_quantiles <- quantile(nmd_test$grs, seq(0, 1, by=0.2), na.rm=T)
+nmd_test$grs_quintile <- cut(nmd_test$grs, 
+                             breaks=grs_quantiles,
+                             labels=paste0("Q", 1:5),
+                             include.lowest=T)
+
+grs_quantiles_fhs <- quantile(nmd_whiFhs$grs[nmd_whiFhs$study == "fhs"], 
+                              seq(0, 1, by=0.2), na.rm=T)
+grs_quantiles_whi <- quantile(nmd_whiFhs$grs[nmd_whiFhs$study =="whi"], 
+                              seq(0, 1, by=0.2), na.rm=T)
+nmd_whiFhs$grs_group <- ifelse(nmd_whiFhs$study =="fhs",
+                               cut(nmd_whiFhs$grs,
+                                   breaks=grs_quantiles_fhs,
+                                   labels=paste0("Q", 1:5),
+                                   include.lowest=T),
+                               cut(nmd_whiFhs$grs,
+                                   breaks=grs_quantiles_whi,
+                                   labels=paste0("Q", 1:5),
+                                   include.lowest=T))
+# nmd_whiFhs$grs_group <- cut(nmd_whiFhs$grs, 
+#                             breaks=grs_quantiles,
+#                             labels=paste0("Q", 1:5),
+#                             include.lowest=T)
+
+
+# grs_strat_res <- map_dfr(paste0("Q", 1:5), function(q) {
+#   test_mrs_with_SE(nmd_whiFhs, full_mrs, 
+#                    nmd_whiFhs$grs_quintile == q,
+#                    basic_covars[basic_covars != "sex"])
+#   # test <- test_mrs_with_SE(nmd_whiFhs, mrs_test, 
+#   #                          nmd_whiFhs$grs_quintile == q,
+#   #                          basic_covars[basic_covars != "sex"])
+#   # bind_rows(trainset=train, testset=test, .id="subset")
+# }, .id="GRS Quintile")
+# nmd_whiFhs$`GRS Quintile` <- paste0("Q", 1:5)
+# 
+# grs_strat_plt <- ggplot(grs_strat_res, 
+#                         aes(x=`GRS Quintile`, y=HR_per_SD)) +
+#   geom_point() +
+#   geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0)
+
+grs_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "grs_group")
+grs_strat_plt <- plot_strat_test_by_study(grs_strat_res, 
+                                          "Genetic risk score quintile")
+```
+```{r interaction-plots, fig.asp=1.4, fig.cap="Interactions between MRS performance and subject characteristics. Hazard ratios per MRS standard deviation (based on Cox models) are shown after stratifying by a) sex, b) race, c) genetic risk score, or d) Framingham Risk Score.", eval=F}
+plot_grid(sex_strat_plt, race_strat_plt, 
+          age_strat_plt + coord_cartesian(ylim=c(1.5,5)), 
+          frs_strat_plt, grs_strat_plt,
+          labels=c("a", "b", "c", "d", "e"), nrow=3)
+```
+
+### Stratified plots
+
+```{r all-thing-ints, fig.asp=1.4, warning=F}
+# nmd_all$frs <- ifelse(nmd_all$study == "lbc36",
+#                       nmd_lbc$frs[match(nmd_all$subjID, nmd_lbc$subjID)],
+#                       nmd_whiFhs$frs[match(nmd_all$subjID, nmd_whiFhs$subjID)])
+# nmd_all$grs <- nmd_whiFhs$grs[match(nmd_all$subjID, 
+#                                     nmd_whiFhs$subjID)]
+
+nmd_all$frs_group <- cut(nmd_all$frs,
+                         breaks=c(0, 0.1, 0.2, 0.4, 1),
+                         # breaks=quantile(nmd_all$frs, seq(0, 1, 0.2), na.rm=T),
+                         # labels=c("0-0.1", "0.1-0.2", "0.2-0.3",
+                         #          "0.3-0.4", "0.4+"),
+                               include.lowest=T)
+nmd_all$age_group <- cut(nmd_all$age,
+                         breaks=c(0,55,65,75,100),
+                         #labels=c("<55", "55-65", "65-75", ">75"),
+                         # breaks=quantile(nmd_all$age, seq(0, 1, 0.2)),
+                         include.lowest=T)
+
+nmd_all$grs_group <- ifelse(nmd_all$study =="fhs",
+                               cut(nmd_all$grs,
+                                   breaks=grs_quantiles_fhs,
+                                   labels=paste0("Q", 1:5),
+                                   include.lowest=T),
+                               cut(nmd_all$grs,
+                                   breaks=grs_quantiles_whi,
+                                   labels=paste0("Q", 1:5),
+                                   include.lowest=T))
+
+age_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "age_group") %>%
+  mutate(Group=factor(Group, levels=unique(Group)))
+frs_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "frs_group") %>%
+  mutate(Group=factor(Group, levels=unique(Group)))
+grs_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "grs_group")
+race_res <- strat_test_by_study(nmd_all, mrs_final, "race")
+sex_res <- strat_test_by_study(nmd_all, mrs_final, "sex")
+
+age_quantile_plt <- plot_strat_test_by_study(age_quantile_res, "Age") +
+  theme(axis.text.x=element_text(angle=30))
+frs_quantile_plt <- plot_strat_test_by_study(frs_quantile_res, "FRS 10-yr risk") +
+  theme(axis.text.x=element_text(angle=30))
+grs_quantile_plt <- plot_strat_test_by_study(grs_quantile_res, "Genetic risk score")
+race_plt <- plot_strat_test_by_study(race_res, "Race")
+sex_plt <- plot_strat_test_by_study(sex_res, "Sex")
+
+plot_grid(sex_plt, race_plt, age_quantile_plt, 
+          frs_quantile_plt, grs_quantile_plt, nrow=3)
+```
+
+## Replication in LBC
+
+We sought to replicate these findings in individuals from the Lothian Birth Cohorts (LBC 1921 and LBC 1936).
+
+```{r lbc-replication, eval=F}
+lbc_mrs <- calc_mrs_glmnet(full_mrs_fit$cpg_coefs, betas_lbc)
+nmd_lbc$mrs <- lbc_mrs
+nmd_lbc_forFRScalc <- nmd_lbc %>%
+  mutate(ht_med=ifelse(!is.na(ht_med), ht_med, 0),
+         hdl=ifelse(!is.na(hdl), hdl, 50),
+         smk_now=ifelse(!is.na(smk_now), smk_now, F),
+         diabetes=ifelse(!is.na(diabetes), diabetes, F))
+nmd_lbc$frs <- calc_FRS(nmd_lbc_forFRScalc)
+
+nmd_lbc21 <- filter(nmd_lbc, study == "lbc21")
+nmd_lbc36 <- filter(nmd_lbc, study == "lbc36")
+
+lbc21_res <- test_mrs(nmd_lbc21, lbc_mrs[nmd_lbc$study == "lbc21"],
+         covars=basic_covars)
+lbc36_res <- test_mrs(nmd_lbc36, lbc_mrs[nmd_lbc$study == "lbc36"],
+         covars=basic_covars)
+lbc_res <- bind_rows(list(LBC21=lbc21_res, LBC36=lbc36_res), .id="Cohort")
+kable(lbc_res, caption="Replication of MRS performance in Lothian Birth Cohorts")
+```
+
+We also sought to confirm (in LBC36) the interactions with respect to sex and Framingham Risk Score observed in the training dataset. It does appear that the same patterns are observed in this age-matched cohort. 
+
+```{r lbc-sex-interaction, eval=F}
+male <- test_mrs_with_SE(nmd_lbc36, nmd_lbc36$mrs,
+                         nmd_lbc36$sex == "M",
+                         basic_covars[basic_covars != "sex"])
+female <- test_mrs_with_SE(nmd_lbc36, nmd_lbc36$mrs,
+                           nmd_lbc36$sex == "F",
+                           basic_covars[basic_covars != "sex"])
+sex_strat_res_lbc36 <- bind_rows(male, female)
+sex_strat_res_lbc36$Sex <- c("Male", "Female")
+sex_strat_plt_lbc36 <- ggplot(sex_strat_res_lbc36, aes(x=Sex, y=HR_per_SD)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
+  theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=30))
+```
+
+```{r lbc-frs-interaction, eval=F}
+frs_bucket_labels <- c("0-0.1", "0.1-0.2", "0.2-0.4", "0.4+")
+nmd_lbc36$frs_quantile <- cut(nmd_lbc36$frs,
+                              breaks=c(0, 0.1, 0.2, 0.4, 1),
+                              labels=frs_bucket_labels,
+                              include.lowest=T)
+frs_strat_res_lbc36 <- map_dfr(unique(frs_bucket_labels), 
+                               function(q) {
+  test_mrs_with_SE(nmd_lbc36, nmd_lbc36$mrs, 
+                   nmd_lbc36$frs_quantile == q,
+                   basic_covars)
+}, .id="FRS Quantile")
+frs_strat_res_lbc36$`FRS Quantile` <- frs_bucket_labels
+frs_strat_plt_lbc36 <- ggplot(frs_strat_res_lbc36, 
+                        aes(x=`FRS Quantile`, y=HR_per_SD)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
+  labs(x="FRS-based 10-year risk estimate")
+```
+
+```{r lbc-interaction-plots, eval=F}
+plot_grid(sex_strat_plt_lbc36, frs_strat_plt_lbc36, ncol=2)
+```
+
+* The LBC datasets are complicated: they are somewhat older, and have non-intuitive relationships between traditional CVD risk factors and CVD prevalence/incidence. At the very least, the two cohorts (1921 and 1936) should be modeled separately.
+
+## Replication in REGICOR
+
+* Age & sex-balanced but not incident and MI only
+* Look for sex, age, and FRS interactions here
+
+## Replication in KORA/InCHIANTI
+
+* Look for sex, age, FRS, and genetic interactions here
+
+
+<!--
+## Alternate formulation: train with LBC36 included
+
+```{r train-test-setup-2, eval=F}
+nmd_all <- bind_rows(nmd_whi, nmd_fhs, 
+                     nmd_lbc[nmd_lbc$study == "lbc36", ]) %>% 
+  mutate(batch=case_when(study == "whi" ~ "whi",
+                         study == "lbc36" ~ "lbc36",
+                         TRUE ~ paste0("fhs_", center)))
+cvd_surv_all <- Surv(nmd_all$time, nmd_all$event)
+
+shared_cpgs_all <- intersect(
+  intersect(rownames(betas_whi), rownames(betas_fhs)),
+  rownames(betas_lbc))
+betas_all <- cbind(betas_whi[shared_cpgs_all, ],
+                   betas_fhs[shared_cpgs_all, ],
+                   betas_lbc[shared_cpgs_all, 
+                             nmd_lbc$study == "lbc36"])
+
+set.seed(1)
+trainset2 <- createDataPartition(factor(nmd_all$event), p=0.7)[[1]]
+testset2 <- seq(1, nrow(nmd_all))[-trainset2]
+```
+
+```{r final-train-model-2, cache=1, cache.vars=c("q75_cpg_set2", "train_mrs_fit_all"), eval=F}
+variances_all <- apply(betas_all[, trainset2], 1, var)
+
+q75_cpg_set2 <- rownames(betas_all)[(
+  variances_all >= quantile(variances_all, 0.75))]
+train_design_mat2 <- construct_design_mat(q75_cpg_set2, betas_all, 
+                                   "batch", nmd_all)
+
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
+train_mrs_fit_all <- train_glmnet(train_design_mat2[trainset2, ], 
+                              cvd_surv_all[trainset2], 
+                              alpha=0, nfolds=3, parallel=T)
+stopCluster(cl)
+```
+
+```{r test-final-train-model-2, warning=F, fig.asp=1.8, eval=F}
+mrs2 <- calc_mrs_glmnet(train_mrs_fit_all$cpg_coefs, betas_all)
+
+nmd_all$diabetes <- nmd_all$dm_med | (nmd_all$glu > 125)
+
+nmd_test2 <- nmd_all[testset2, ]
+mrs_test2 <- mrs2[testset2]
+
+covar_sets <- list(
+  none=c(),
+  age_sex=c("age", "sex"),
+  plus_cell_counts=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran"),
+  plus_bmi=c("age", "sex", "bmi"),
+  plus_diabetes=c("age", "sex", "diabetes"),
+  plus_smoking=c("age", "sex", "smk_now", "smk_py"),
+  plus_lipids_sbp=c("age", "sex", "ldl", "hdl", "tg", "sbp"),
+  full_model=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran",
+               "bmi", "diabetes", "smk_now", "smk_py", "ldl", "hdl", "tg", "sbp"))
+
+test_metrics_tbl2 <- map_dfr(
+  covar_sets, function(cs) test_mrs(nmd_test2, mrs_test2, covars=cs),
+  .id="Covariate_set")
+
+kable(test_metrics_tbl2, caption="Performance of the MRS in the held-out test set when training set includes LBC21 and LBC36.")
+```
+
+```{r all-thing-ints-old, fig.asp=1.4, eval=F}
+nmd_all$frs <- ifelse(nmd_all$study == "lbc36",
+                      nmd_lbc$frs[match(nmd_all$subjID, nmd_lbc$subjID)],
+                      nmd_whiFhs$frs[match(nmd_all$subjID, nmd_whiFhs$subjID)])
+nmd_all$grs <- nmd_whiFhs$grs[match(nmd_all$subjID, 
+                                    nmd_whiFhs$subjID)]
+
+nmd_all$frs_group <- cut(nmd_all$frs,
+                         breaks=c(0, 0.1, 0.2, 0.4, 1),
+                         # breaks=quantile(nmd_all$frs, seq(0, 1, 0.2), na.rm=T),
+                         # labels=c("0-0.1", "0.1-0.2", "0.2-0.3",
+                         #          "0.3-0.4", "0.4+"),
+                               include.lowest=T)
+nmd_all$age_group <- cut(nmd_all$age,
+                         breaks=c(0,55,65,75,100),
+                         #labels=c("<55", "55-65", "65-75", ">75"),
+                         # breaks=quantile(nmd_all$age, seq(0, 1, 0.2)),
+                         include.lowest=T)
+# grs_quintiles <- quantile(nmd_all$grs, seq(0, 1, by=0.2), na.rm=T)
+# nmd_all$grs_quantile <- cut(nmd_all$grs, 
+#                             breaks=grs_quintiles,
+#                             labels=paste0("Q", 1:5),
+#                             include.lowest=T)
+
+nmd_all$grs_group <- ifelse(nmd_all$study =="fhs",
+                               cut(nmd_all$grs,
+                                   breaks=grs_quantiles_fhs,
+                                   labels=paste0("Q", 1:5),
+                                   include.lowest=T),
+                               cut(nmd_all$grs,
+                                   breaks=grs_quantiles_whi,
+                                   labels=paste0("Q", 1:5),
+                                   include.lowest=T))
+
+# test_study_quantiles <- function(df, quantile_cat) {
+#   if (is.factor(nmd_all[[quantile_cat]])) {
+#     unique_levels <- levels(nmd_all[[quantile_cat]])
+#   } else {
+#     unique_levels <- unique(nmd_all[[quantile_cat]])
+#   }
+#   full_res <- map_dfr(unique_quantiles, function(q) {
+#     res_per_study <- df %>%
+#       nest(-study) %>%
+#       mutate(res=map(data, function(d) {
+#         tryCatch(test_mrs_with_SE(d, d$mrs2, d[[quantile_cat]] == q,
+#                                   basic_covars[basic_covars != "sex"]),
+#                  error=function(e) data.frame(NA, NA, NA, NA))
+#       }))
+#     cbind(study=res_per_study$study, bind_rows(res_per_study$res))
+#   }, .id="Group")
+#   full_res$Group <- unique_quantiles[as.numeric(full_res$Group)]
+#   full_res
+# }
+# 
+# plot_study_quantiles <- function(qres) {
+#   ggplot(qres, aes(x=Group, y=HR_per_SD, group=study, color=study)) +
+#     geom_point(position=position_dodge(width=0.2)) +
+#     geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
+#                   position=position_dodge(width=0.2)) +
+#     labs(x="Group")
+# }
+
+age_quantile_res <- strat_test_by_study(nmd_all, mrs2, "age_group")
+frs_quantile_res <- strat_test_by_study(nmd_all, mrs2, "frs_group")
+grs_quantile_res <- strat_test_by_study(nmd_all, mrs2, "grs_group")
+race_res <- strat_test_by_study(nmd_all, mrs2, "race")
+sex_res <- strat_test_by_study(nmd_all, mrs2, "sex")
+
+age_quantile_plt <- plot_strat_test_by_study(age_quantile_res, "Age") +
+  theme(axis.text.x=element_text(angle=30))
+frs_quantile_plt <- plot_strat_test_by_study(frs_quantile_res, "FRS 10-yr risk") +
+  theme(axis.text.x=element_text(angle=30))
+grs_quantile_plt <- plot_strat_test_by_study(grs_quantile_res, "Genetic risk score")
+race_plt <- plot_strat_test_by_study(race_res, "Race")
+sex_plt <- plot_strat_test_by_study(sex_res, "Sex")
+
+plot_grid(sex_plt, race_plt, age_quantile_plt, 
+          frs_quantile_plt, grs_quantile_plt, nrow=3)
+```
 
 
 
-<!--Though the MRS above is trained in a female-only cohort, there is no evidence here of any bias of the MRS towards predicting events in females. Based on previous results, there was also reason to believe that prior CVD could be an important confounder -- this could manifest as a much better performance of the classifier in those who experienced prior CVD events, but there doesn't seem to be any such effect here.-->
+
+
+
+
+
+
+
+
+
 
 
 
@@ -602,151 +1244,6 @@ stopCluster(cl)
 mvalRes_binTest <- test_mrs_binary(non_meth_data, mvalModel$values, fhsSet)
 ```
 
-```{r display-Mvals, eval=F}
-kable(mutate(mvalRes_binTest, p=as.character(format(p,digits=3))), caption="Using M-values instead of beta values")
-```
-
-```{r random-forest, message=F, eval=F}
-testTrain_RF <- function(mod, meta, meth, trainset, testset, ntree, ncores, seed=1) {
-set.seed(seed)
-covars_frame <- model.frame(as.formula(mod), meta, na.action=na.pass)  # To allow NAs to pass through
-covars_mat <- model.matrix(as.formula(mod), covars_frame)[,-1]  # Converts factors to numeric
-design_mat <- t(meth)
-rf.fit <- foreach(nt=rep(ntree/ncores,ncores), .combine=randomForest::combine, .packages="randomForest") %dopar%
-randomForest(design_mat[trainset,], factor(meta$event)[trainset], ntree=nt)
-rf_mrs <- predict(rf.fit, newdata=design_mat, type="prob")[,"TRUE"]
-rf_test <- test_mrs(meta, rf_mrs, testset)
-list(res=rf_test, fit=rf.fit, values=rf_mrs)
-}
-
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-rfModel <- testTrain_RF(cpacor_adj_model, non_meth_data, betas[beta_variances>quantile(beta_variances,0.75),], 
-whiSet, fhsSet, ntree=80*8, ncores=8)
-stopCluster(cl)
-
-rfRes <- rfModel$res
-```
-
-```{r display-rf, eval=F}
-# Hack for now
-rfRes <- test_mrs_binary(non_meth_data, rfModel$values, fhsSet) %>%
-mutate(p=as.character(format(p,digits=3)))
-kable(rfRes, caption="Random forest model")
-```
-
-The first two tables above compare models that are both tested using binary classifiers, but one is trained using a Cox model while the other is trained through a logistic model. As might be expected, a notable increase in performance is achieved by the Cox model, as it is able to take advantage of additional time-to-event information.
-
-Performance of the full training and testing procedure using M-values does not seem to improve performance.
-
-A random forest model trained on the same set of CpGs and a binary event outcome shows a comparably high OR, but the p-value doesn't indicate notable predictive ability -- what is going on here? To investigate, here are the distributions of the probabilities output by the random forest algorithm (used here as the MRS).
-
-```{r rf-mrs-distributions, cache=F, fig.show="hold", out.width="50%", eval=F}
-hist(rfModel$values[whiSet], main="RF prob. distribution (training set)")
-hist(rfModel$values[fhsSet], main="RF prob. distribution (test set)")
-hist(varRes.list[[3]]$values[whiSet], main="Regression-based MRS distribution in training \nset, for comparison ")
-```
-
-Clearly, the random forest is overfitting -- it is way too good at classifying incident events in the training set. Likely it is identifying WHI-specific population specific or batch effects, especially since I was not able to adjust for control probe PCs in the random forest model training. So, it may be helpful to combine my two datasets before creating a train-test split in order to mitigate these population-specific patterns.
-
-## Cross-cohort training
-
-Here, the populations were combined and the full dataset was randomly divided into a 70/30 train/test split, while ensuring proportional numbers of incident events in each set.
-
-```{r enet-combined, eval=F}
-beta_variances_trainset <- apply(betas[,trainset], 1, var)
-
-cl <- makePSOCKcluster(5)
-registerDoParallel(cl)
-enetCombined <- trainTestMRS(cpacor_adj_model, non_meth_data, 
-betas[beta_variances_trainset>quantile(beta_variances_trainset,0.75),],
-trainset, testset, parallel=T)
-stopCluster(cl)
-
-enetCombined_binTest <- test_mrs_binary(non_meth_data, enetCombined$values, testset)
-```
-
-```{r rf-combined, eval=F}
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-rfModelCombined <- testTrain_RF(cpacor_adj_model, non_meth_data, 
-betas[beta_variances_trainset>quantile(beta_variances_trainset,0.75),], 
-trainset, testset, ntree=80*8, ncores=8)
-stopCluster(cl)
-
-rfResCombined <- rfModelCombined$res
-```
-
-```{r display-combined-models, eval=F}
-sep_vs_combined_regression <- rbind(binTestOnlyRes, enetCombined_binTest) %>%
-mutate(model=c("WHI train, FHS test","Combined 70/30 split"),
-p=as.character(format(p,digits=3)))
-kable(sep_vs_combined_regression, caption="Elastic net regression")
-
-## For now....
-rfCombined_binTest <- test_mrs_binary(non_meth_data, rfModelCombined$values, testset)
-
-sep_vs_combined_rf <- rbind(rfRes, rfCombined_binTest) %>%
-mutate(model=c("WHI train, FHS test","Combined 70/30 split"),
-p=as.character(format(p,digits=3)))
-kable(sep_vs_combined_rf, caption="Random forest")
-```
-
-### Evaluation of cross-cohort trained models
-
-```{r evaluate-combined-models, cache=F, out.width="50%", eval=F}
-library(pROC)
-
-enetROC <- roc(non_meth_data$event[testset], enetCombined$values[testset])
-plot(enetROC, print.auc=T, main="Regression-based MRS")
-
-rfROC <- roc(non_meth_data$event[testset], rfModelCombined$values[testset])
-plot(rfROC, print.auc=T, main="Random forest-based MRS")
-```
-
-### Is this model fitting only dataset-specific patterns?
-
-Try to evaluate this by fitting separate models in WHI and FHS.
-
-```{r dataset-specific, eval=F}
-fhsMeta <- non_meth_data[fhsSet,]
-set.seed(1)
-fhsTrain <- createDataPartition(factor(fhsMeta$event), p=0.7)[[1]]
-fhsTest <- seq(1,nrow(fhsMeta))[-fhsTrain]
-beta_variances_fhsTrain <- apply(betas[,fhsSet[fhsTrain]], 1, var)
-cl <- makePSOCKcluster(5)
-registerDoParallel(cl)
-dsFHSModel <- trainTestMRS(cpacor_adj_model, fhsMeta, 
-betas[beta_variances_fhsTrain>quantile(beta_variances_fhsTrain,0.75),fhsSet], 
-fhsTrain, fhsTest, parallel=T)
-dsFHSRes <- test_mrs_binary(fhsMeta, dsFHSModel$values, fhsTest)
-stopCluster(cl)
-
-whiMeta <- non_meth_data[whiSet,]
-set.seed(1)
-whiTrain <- createDataPartition(factor(whiMeta$event), p=0.7)[[1]]
-whiTest <- seq(1,nrow(whiMeta))[-whiTrain]
-beta_variances_whiTrain <- apply(betas[,whiSet[whiTrain]], 1, var)
-cl <- makePSOCKcluster(5)
-registerDoParallel(cl)
-dsWHIModel <- trainTestMRS(cpacor_adj_model, whiMeta, 
-betas[beta_variances_whiTrain>quantile(beta_variances_whiTrain,0.75),whiSet], 
-whiTrain, whiTest, parallel=T)
-dsWHIRes <- test_mrs_binary(whiMeta, dsWHIModel$values, whiTest)
-stopCluster(cl)
-```
-
-```{r display-dataset-specific, eval=F}
-kable(dsFHSRes, caption="Train and test in FHS only")
-kable(dsWHIRes, caption="train and test in WHI only")
-```
-
-Though ideally there would be a fully independent validation set available, the mediocre within-cohort cross-validation results don't indicate any population-specific effects of a strength that would dominate the above combined regression results.
-
-
-
-# Biological significance of the MRS
-
 ## Biological covariates
 
 The intent to this point was to determine the "maximum predictive power" of microarray-based methylation data in predicting CVD events. However, known associations of methylation with sex, age, white blood cell proportions, etc. may explain a substantial fraction of this predictive power. 
@@ -782,204 +1279,12 @@ adjROC <- roc(non_meth_data$event[testset], mrs_resids[testset])
 ```
 
 
-## Specific CpG components/weights
-
-```{r cpg-literature, eval=F}
-cpg_custom_annotations <- c(
-cg09741592="smoking",
-cg18181703="metabolic syndrome",
-cg00534468="cholesterol efflux capacity",
-cg16867657="aging (strongly)",
-cg19693031="T2D",
-cg00854392="high-fat overfeeding in subQ AT",
-cg23287661="T2D in AT",
-cg23289079="cancer"
-)
-cpg_custom_annotations_DF <- tibble(CpG=names(cpg_custom_annotations), "Literature association"=cpg_custom_annotations)
-```
-
-```{r mrs-components, eval=F}
-components <- enetCombined$components
-components <- components[components!=0]
-componentsDF <- tibble(CpG=names(components), weight=components) %>%
-inner_join(cpg_to_gene, by=c("CpG"="cpg")) %>%
-left_join(cpg_custom_annotations_DF, by="CpG") %>%
-replace_na(list(`Literature association`="")) %>%
-arrange(desc(abs(weight)))
-kable(componentsDF, caption="MRS components CpGs and associated genes")
-```
-
-## ...the catch, or "Batch effects: 1, Kenny: 0"
-
-```{r 2enet-combined, eval=F}
-cl <- makePSOCKcluster(5)
-registerDoParallel(cl)
-cpacor_adj_model_withStudy <- paste0(cpacor_adj_model, "+study")
-TwoenetCombined <- trainTestMRS(cpacor_adj_model_withStudy, non_meth_data, 
-betas[beta_variances_trainset>quantile(beta_variances_trainset,0.75),],
-trainset, testset, parallel=T)
-stopCluster(cl)
-
-TwoenetCombined_binTest <- test_mrs_binary(non_meth_data, TwoenetCombined$values, testset)
-```
-
-```{r study-adjust, eval=F}
-mrsStudyResids <- lm(mrs~study, data=non_meth_data)$residuals
-studyAdjROC <- roc(non_meth_data$event[testset], mrsStudyResids[testset])
-```
-
-It seems that I eventually got bitten by the class imbalance between FHS (mostly controls) and WHI (half cases) -- MRS residuals after adjustment for study lose much of their predictive power...
-
--# Alternate prediction strategies-
-
-```{r gene-set-activations, cache.vars=c("msigdb","sig_to_cpgs","pca_from_cpg_set","geneSetLoadings","geneSetActivationsMat"), eval=F}
-msigdb_file <- file("../data/misc/gsea/c2.cp.v6.0.symbols.gmt")  # MSigDB file from http://software.broadinstitute.org/gsea/msigdb/collections.jsp#C2
-msigdb <- strsplit(readLines(msigdb_file), split="\t")  # File is tab-separated with gene lists immediately following their names and URLs
-names(msigdb) <- purrr::map(msigdb, 1)  # First element of each msig vector is name
-msigdb <- purrr::map(msigdb, function(sig) sig[-c(1,2)])  # No need for name or URL
-
-genes_to_cpgs_df <- anno_450k %>%
-dplyr::rename(gene=UCSC_RefGene_Name, cpg=Name) %>%
-dplyr::select(gene, cpg) %>%
-separate_rows(gene, sep=";") %>%
-distinct() %>% 
-filter(!is.na(gene), gene!="") %>%
-nest(-gene) %>%
-mutate(cpgs=purrr::map(data, function(d) unique(d$cpg))) %>%
-dplyr::select(-data)
-genes_to_cpgs <- setNames(genes_to_cpgs_df$cpgs, genes_to_cpgs_df$gene)  # List of associated CpGs on 450k array for each gene
-
-sig_to_cpgs <- purrr::map(msigdb, function(sig) unique(unlist(genes_to_cpgs[sig])))
-
-library(flashpcaR)
-
-pca_from_cpg_set <- function(cpgs, testset) {
-cpgs_trimmed <- cpgs[cpgs %in% rownames(betas)]
-pcaMat <- t(betas[cpgs_trimmed,testset])
-pca.fit <- flashpca(pcaMat, stand="sd", ndim=2, do_loadings=T)
-pc1_loadings <- pca.fit$loadings[,1]
-setNames(pc1_loadings, cpgs_trimmed)
-}
-
-geneSetLoadings <- lapply(sig_to_cpgs, pca_from_cpg_set, testset)
-
-t_betas_scaled <- scale(t(betas))
-geneSetActivations <- lapply(geneSetLoadings, function(loading) t_betas_scaled[,names(loading)] %*% loading)
-geneSetActivationsMat <- do.call(cbind, geneSetActivations)
-colnames(geneSetActivationsMat) <- names(geneSetActivations)
-```
-
-```{r gene-set-mrs, include=F, eval=F}
-stopifnot(all(rownames(geneSetActivationsMat) == non_meth_data$sampleKey))
-design_mat <- geneSetActivationsMat
-cvd_surv <- Surv(time=non_meth_data$time, event=non_meth_data$event)
-geneset.fit.cv <- cv.glmnet(design_mat[trainset,], cvd_surv[trainset], family="cox", alpha=0.5,  # Train MRS model
-penalty.factor=ifelse(colnames(design_mat) %in% names(sig_to_cpgs), 1, 0), nfolds=5)
-coefs <- coef(geneset.fit.cv, s="lambda.min")[,1]
-coefs_meth <- coefs[coefs!=0 & (names(coefs) %in% names(sig_to_cpgs))]  # Methylation coefficients only
-geneset_mrs_calc <- as.vector(design_mat[,names(coefs_meth)] %*% coefs_meth)  # Calculate the MRS for all samples
-mrs_test <- test_mrs_binary(non_meth_data, geneset_mrs_calc, testset)
-print(mrs_test)
-```
-
-```{r gene-set-rf, include=F, eval=F}
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-rfGeneSetModel <- testTrain_RF(cpacor_adj_model, non_meth_data, t(geneSetActivationsMat), 
-trainset, testset, ntree=80*8, ncores=8)
-stopCluster(cl)
-
-geneSetRF_binTest <- test_mrs_binary(non_meth_data, rfGeneSetModel$values, testset)
-print(geneSetRF_binTest)
-```
 
 
 
 
 
-
-
-
-
--
--->
-
-<!--
-# Below is old stuff
-## Hypothesis-driven CpG sets based on WBC biology
-
-```{r hypothesis-driven, eval=F}
-# See how pre-selection of specific CpG sets affects model performance
-print("Test pre-selected CpG sets with biological relevance...")
-library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
-mon_to_mac <- suppressWarnings(read_csv("../data/literature/mon_to_mac_DMRs_Wallner2016.csv")) %>%
-filter(!is.na(Location)) %>%
-mutate(chr=gsub(":.*", "", Location),
-start=as.integer(gsub("-.*", "", gsub(".*:", "", Location))),
-end=as.integer(gsub(".*-", "", Location))) %>%
-select(chr, start, end)
-
-mon_var_schroder <- read_csv("../data/literature/variable_monocyte_DMRs_Schroder2017.csv") %>%
-mutate(chr=paste0("chr", gsub(":.*", "", location)),
-start=as.integer(gsub("-.*", "", gsub(".*:", "", location))),
-end=as.integer(gsub(".*-", "", location))) %>%
-select(chr, start, end)
-
-cpgAnnot <- Locations %>%
-data.frame(stringsAsFactors=F) %>%
-rownames_to_column(var="cpg")
-
-mon_to_mac_cpgs <- inner_join(cpgAnnot, mon_to_mac, by="chr") %>%
-filter(pos>=start, pos<=end)
-
-mon_var_schroder_cpgs <- inner_join(cpgAnnot, mon_var_schroder, by="chr") %>%
-filter(pos>=start, pos<=end)
-
-# Read in Ecker variable CpGs (more than one sheet, each separately)
-library(readxl)
-variable_monSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx", sheet="Monocytes")
-variable_neutSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx", sheet="Neutrophils")
-variable_tcellSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx", sheet="T cells")
-variable_monNeutSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx",
-sheet="Monocytes + neutrophils")
-
-# CVD GWAS SNP-based
-library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
-anno_450k <- data.frame(getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19), stringsAsFactors=F)
-cvd_gwas_associations <- read_tsv("../data/literature/gwas-association-downloaded_2017-09-18-cardiovascular disease.tsv")
-cvd_gwas_genes <- unique(unlist(strsplit(cvd_gwas_associations$`REPORTED GENE(S)`, split=", ")))
-
-cvd_gwas_cpgs_by_pos <- cvd_gwas_associations %>%
-mutate(chr=paste0("chr", CHR_ID),
-snp_pos=CHR_POS) %>%
-select(chr, snp_pos) %>%
-inner_join(select(anno_450k, Name, chr, pos), by="chr") %>%
-mutate(snp_pos=as.numeric(snp_pos)) %>%
-filter(pos>=snp_pos-1000, pos<=snp_pos+1000) %>%
-dplyr::rename(cpg=Name) %>%
-distinct(cpg)
-
-cvd_gwas_cpgs_byGene <- anno_450k %>%
-filter(toupper(UCSC_RefGene_Name) %in% cvd_gwas_genes) %>%
-dplyr::rename(cpg=Name) %>%
-distinct(cpg)
-
-trainTest_cpg_set <- function(cpg_set, cpg_setName) {
-print(paste0(cpg_setName, " (", length(cpg_set), " CpGs)"))
-kable(trainTestMRS(cpacor_adj_model, non_meth_data, betas[rownames(betas) %in% cpg_set,],
-whiSet, fhsSet)$res)
-}
-
-trainTest_cpg_set(mon_to_mac_cpgs$cpg, "Monocyte-to-macrophage DMRs, Wallner 2016")
-trainTest_cpg_set(mon_var_schroder_cpgs$cpg, "Variable CpGs in monocytes, Schroder 2017")
-trainTest_cpg_set(variable_monSpecific$`Probe ID`, "Variable CpGs in monocytes only, Ecker 2017")
-trainTest_cpg_set(variable_neutSpecific$`Probe ID`, "Variable CpGs in neutrophils only, Ecker 2017")
-trainTest_cpg_set(variable_tcellSpecific$`Probe ID`, "Variable CpGs in T-cells only, Ecker 2017")
-trainTest_cpg_set(variable_monNeutSpecific$`Probe ID`, "Variable CpGs in monocytes and neutrophils only, Ecker 2017")
-trainTest_cpg_set(cvd_gwas_cpgs_by_pos$cpg, "CpGs +/- 1kb from GWAS catalog CVD SNPs")
-trainTest_cpg_set(cvd_gwas_cpgs_byGene$cpg, 
-"CpGs annotated to genes to which GWAS catalog CVD SNPs are annotated")
-```
+# Alternate prediction strategies-
 
 ```{r gene-set-activations_old, eval=F}
 msigdb_file <- file("../data/misc/gsea/c2.cp.v6.0.symbols.gmt")  # MSigDB file from http://software.broadinstitute.org/gsea/msigdb/collections.jsp#C2
@@ -1020,459 +1325,55 @@ geneSetActivationsMat <- do.call(cbind, geneSetActivations)
 colnames(geneSetActivationsMat) <- names(geneSetActivations)
 ```
 
-```{r gene-set-mrs_old, eval=F}
-trainset <- which(non_meth_data$study == "whi")
-testset <- which(non_meth_data$study == "fhs")
+```{r hypothesis-driven, eval=F}
+# See how pre-selection of specific CpG sets affects model performance
+print("Test pre-selected CpG sets with biological relevance...")
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+mon_to_mac <- suppressWarnings(read_csv("../data/literature/mon_to_mac_DMRs_Wallner2016.csv")) %>%
+filter(!is.na(Location)) %>%
+mutate(chr=gsub(":.*", "", Location),
+start=as.integer(gsub("-.*", "", gsub(".*:", "", Location))),
+end=as.integer(gsub(".*-", "", Location))) %>%
+select(chr, start, end)
 
-mod <- "~age+smk_now+CD4T+NK+Bcell+Mono+Gran+PC1_combat+PC2_combat"
-covars_frame <- model.frame(mod, non_meth_data, na.action=na.pass)  # To allow NAs to pass through
-covars_mat <- model.matrix(as.formula(mod), covars_frame)[,-1]  # Converts factors to numeric
-stopifnot(all(rownames(geneSetActivationsMat) == non_meth_data$sampleKey))
-design_mat <- cbind(covars_mat, geneSetActivationsMat)
-cvd_surv <- Surv(time=non_meth_data$time, event=non_meth_data$event)
-mrs_fit <- glmnet(design_mat[trainset,], cvd_surv[trainset], family="cox", alpha=0.5,  # Train MRS model
-penalty.factor=ifelse(colnames(design_mat) %in% names(sig_to_cpgs), 1, 0))
-coefs <- mrs_fit$beta[,ncol(mrs_fit$beta)]  # Extract coefficients
-coefs_meth <- coefs[coefs!=0 & (names(coefs) %in% names(sig_to_cpgs))]  # Methylation coefficients only
-mrs_calc <- as.vector(design_mat[,names(coefs_meth)] %*% coefs_meth)  # Calculate the MRS for all samples
-mrs_test <- coxph(cvd_surv~mrs, data=cbind(cvd_surv=cvd_surv, mrs=mrs_calc,  # Test the predictivity of the MRS using a basic Cox model
-non_meth_data), subset=testset)
-hr_per_sd <- exp(sd(mrs_calc[testset])*summary(mrs_test)$coef[,"coef"])
-print(cbind(HR_per_SD=hr_per_sd, p=summary(mrs_test)$coef[,"Pr(>|z|)"]))
+mon_var_schroder <- read_csv("../data/literature/variable_monocyte_DMRs_Schroder2017.csv") %>%
+mutate(chr=paste0("chr", gsub(":.*", "", location)),
+start=as.integer(gsub("-.*", "", gsub(".*:", "", location))),
+end=as.integer(gsub(".*-", "", location))) %>%
+select(chr, start, end)
+
+cpgAnnot <- Locations %>%
+data.frame(stringsAsFactors=F) %>%
+rownames_to_column(var="cpg")
+
+mon_to_mac_cpgs <- inner_join(cpgAnnot, mon_to_mac, by="chr") %>%
+filter(pos>=start, pos<=end)
+
+mon_var_schroder_cpgs <- inner_join(cpgAnnot, mon_var_schroder, by="chr") %>%
+filter(pos>=start, pos<=end)
+
+# Read in Ecker variable CpGs (more than one sheet, each separately)
+library(readxl)
+variable_monSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx", sheet="Monocytes")
+variable_neutSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx", sheet="Neutrophils")
+variable_tcellSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx", sheet="T cells")
+variable_monNeutSpecific <- read_excel("../data/literature/variable_cpgs_Ecker2017.xlsx",
+sheet="Monocytes + neutrophils")
+
+trainTest_cpg_set <- function(cpg_set, cpg_setName) {
+print(paste0(cpg_setName, " (", length(cpg_set), " CpGs)"))
+kable(trainTestMRS(cpacor_adj_model, non_meth_data, betas[rownames(betas) %in% cpg_set,],
+whiSet, fhsSet)$res)
+}
+
+trainTest_cpg_set(mon_to_mac_cpgs$cpg, "Monocyte-to-macrophage DMRs, Wallner 2016")
+trainTest_cpg_set(mon_var_schroder_cpgs$cpg, "Variable CpGs in monocytes, Schroder 2017")
+trainTest_cpg_set(variable_monSpecific$`Probe ID`, "Variable CpGs in monocytes only, Ecker 2017")
+trainTest_cpg_set(variable_neutSpecific$`Probe ID`, "Variable CpGs in neutrophils only, Ecker 2017")
+trainTest_cpg_set(variable_tcellSpecific$`Probe ID`, "Variable CpGs in T-cells only, Ecker 2017")
+trainTest_cpg_set(variable_monNeutSpecific$`Probe ID`, "Variable CpGs in monocytes and neutrophils only, Ecker 2017")
+trainTest_cpg_set(cvd_gwas_cpgs_by_pos$cpg, "CpGs +/- 1kb from GWAS catalog CVD SNPs")
+trainTest_cpg_set(cvd_gwas_cpgs_byGene$cpg, 
+"CpGs annotated to genes to which GWAS catalog CVD SNPs are annotated")
 ```
-
-```{r ewas-mrs-out, dependson=-1, eval=F}
-ewasResTbl <- map_dfr(ewasmrs_res, function(res) data.frame(res$ewas)) %>%
-mutate(numCpGsUsed=cpg_num, p=format(p, scientific=T))
-ewasEnetResTbl <- map_dfr(ewasmrs_res, function(res) data.frame(matrix(res$ewasEnet,1,2))) %>%
-setNames(c("HR_per_SD","p")) %>%
-mutate(numCpGsUsed=cpg_num, p=format(p, scientific=T))
-
-print("EWAS weighted sum approach:")
-kable(ewasResTbl)
-print("Elastic net regression on EWAS CpGs:")
-kable(ewasEnetResTbl)
-```
-
-
-## Basic model -- train in WHI, test in FHS
-
-```{r basic-model2, dependson="misc", eval=F}
-print("Beta-values")
-trainTestMRS(basic_model, non_meth_data, betas,
-trainset=which(non_meth_data$study == "whi"),
-testset=which(non_meth_data$study == "fhs"))$res
-
-Mvals <- logit2(betas)
-print("M-values")
-trainTestMRS(basic_model, non_meth_data, Mvals,
-trainset=which(non_meth_data$study == "whi"),
-testset=which(non_meth_data$study == "fhs"))$res
-rm(Mvals)
-
-print("Test only in males")
-trainTestMRS(basic_model, non_meth_data, betas,
-trainset=which(non_meth_data$study == "whi"),
-testset=which(non_meth_data$study == "fhs" & non_meth_data$sex == "M"))$res
-
-print("Test only in females")
-trainTestMRS(basic_model, non_meth_data, betas,
-trainset=which(non_meth_data$study == "whi"),
-testset=which(non_meth_data$study == "fhs" & non_meth_data$sex == "F"))$res
-
-print("Train in FHS, test in WHI")
-trainTestMRS(basic_model, non_meth_data, betas,
-trainset=which(non_meth_data$study == "fhs"),
-testset=which(non_meth_data$study == "whi"))$res
-```
-
-```{r basic-model-combatWO, eval=F}
-betas_combatWO <- readRDS("../int/betas.qc.norm.filt.combat_eventAdj.rds")
-print("With outcome-adjusted ComBat")
-trainTestMRS(basic_model, non_meth_data, betas_combatWO,
-trainset=which(non_meth_data$study == "whi"),
-testset=which(non_meth_data$study == "fhs"))$res
-rm(betas_combatWO)
-```
-
-
-```{r variance-thresholds-out, cache=F, eval=F}
-kable(varThreshTbl)
-
-ggplot(data=mutate(varThreshTbl, negLogP=-log(p)), 
-aes(x=varThreshold, y=negLogP)) +
-geom_point() + 
-geom_line()
-```
-
-## Variance thresholds after ComBat
-
-```{r VTC, eval=F}
-library(flashpcaR)
-
-betas_C <- readRDS("../int/betas.qc.norm.filt.combat.rds")
-betas_C <- betas_C[,colnames(betas)]
-beta_variances_C <- apply(betas_C[,non_meth_data$study == "whi"], 1, var)
-
-print("25 and 75 %iles of variance threshold with basic ComBat")
-varThresh_C <- quantile(beta_variances_C, probs=c(0.25,0.75))
-varThreshRes_C <- lapply(varThresh_C, function(thresh) {
-trainTestMRS(basic_model, non_meth_data, betas_C[beta_variances_C>thresh,],
-which(non_meth_data$study == "whi"),
-which(non_meth_data$study == "fhs"))
-})
-varThreshTbl_C <- map_dfr(varThreshRes_C, function(res) data.frame(res$res)) %>%
-mutate(varThreshold=varThresh_C)
-
-kable(varThreshTbl_C)
-rm(betas_C)
-
-betas_CE <- readRDS("../int/betas.qc.norm.filt.combat_eventAdj.rds")
-betas_CE <- betas_CE[,colnames(betas)]
-beta_variances_CE <- apply(betas_CE[,non_meth_data$study == "whi"], 1, var)
-
-print("25 and 75 %iles of variance threshold with outcome-adjusted ComBat")
-varThresh_CE <- quantile(beta_variances_CE, probs=c(0.25,0.75))
-varThreshRes_CE <- lapply(varThresh_CE, function(thresh) {
-trainTestMRS(basic_model, non_meth_data, betas_CE[beta_variances_CE>thresh,],
-which(non_meth_data$study == "whi"),
-which(non_meth_data$study == "fhs"))
-})
-varThreshTbl_CE <- map_dfr(varThreshRes_CE, function(res) data.frame(res$res)) %>%
-mutate(varThreshold=varThresh_CE)
-
-kable(varThreshTbl_CE)
-rm(betas_CE)
-```
-
-
-## Within-study testing and training
-```{r within-study, eval=F}
-# Define train/test split
-print("FHS only with variance threshold of 75th percentile")
-set.seed(1)
-nmd_fhs <- non_meth_data[non_meth_data$study == "fhs",]
-trainset <- createDataPartition(factor(nmd_fhs$event), p=0.6)[[1]]  # Set up train/test partition
-testset <- setdiff(1:nrow(nmd_fhs), trainset)
-kable(trainTestMRS(basic_model, nmd_fhs, 
-betas[beta_variances>quantile(beta_variances, 0.75),non_meth_data$study == "fhs"],
-trainset, testset)$res)
-
-print("FHS only with variance threshold of 75th percentile")
-set.seed(1)
-nmd_whi <- non_meth_data[non_meth_data$study == "whi",]
-trainset <- createDataPartition(factor(nmd_whi$event), p=0.6)[[1]]  # Set up train/test partition
-testset <- setdiff(1:nrow(nmd_whi), trainset)
-kable(trainTestMRS(basic_model, nmd_whi, 
-betas[beta_variances>quantile(beta_variances, 0.75),non_meth_data$study == "whi"],
-trainset, testset)$res)
-```
-
-## What about random sets of 500 CpGs for comparison?
-```{r random-cpg-sets, eval=F}
-set.seed(1)
-randomSets <- lapply(1:5, function(iter) 
-trainTestMRS(basic_model, non_meth_data, Mvals[sample(1:nrow(Mvals), 500),], trainset, testset))
-randomSetsRes <- map_dfr(randomSets, function(set) data.frame(set$res))
-```
-
-```{r random-cpg-sets-out, dependson=-1, eval=F}
-kable(randomSetsRes)
-```
-
-
-
-## Male/female differences
-```{r male-female, eval=F}
-maleTrainSet <- trainset[non_meth_data$sex[trainset] == "M"]
-femaleTrainSet <- trainset[non_meth_data$sex[trainset] == "F"] 
-maleTestSet <- testset[non_meth_data$sex[testset] == "M"]
-femaleTestSet <- testset[non_meth_data$sex[testset] == "F"]
-print(paste0("Train on males only (n = ", length(maleTrainSet), "), then test on..."))
-
-print(paste0("Males (n = ", length(maleTestSet), "):"))
-res <- trainTestMRS(basic_model, non_meth_data, Mvals[Mval_variances>0.4,], maleTrainSet, maleTestSet)
-print(res$res)
-print(paste0("Females (n = ", length(femaleTestSet), "):"))
-res <- trainTestMRS(basic_model, non_meth_data, Mvals[Mval_variances>0.4,], maleTrainSet, femaleTestSet)
-print(res$res)
-
-print(paste0("Train on females only (n = ", length(femaleTrainSet), "), then test on..."))
-print(paste0("Males (n = ", length(maleTestSet), "):"))
-res <- trainTestMRS(basic_model, non_meth_data, Mvals[Mval_variances>0.4,], femaleTrainSet, maleTestSet)
-print(res$res)
-print(paste0("Females (n = ", length(femaleTestSet), "):"))
-res <- trainTestMRS(basic_model, non_meth_data, Mvals[Mval_variances>0.4,], femaleTrainSet, femaleTestSet)
-print(res$res)
-```
-
-## Stability of the MRS in duplicate samples
-
-```{r mrs-stability-old, eval=F}
-print("ICC of the MRS (trained on entire dataset):")
-res <- trainTestMRS(basic_model, non_meth_data, Mvals[Mval_variances>0.4,],
-trainset=seq(1,nrow(non_meth_data)), testset=seq(1,nrow(non_meth_data)))
-mrsValues <- t(Mvals_full[names(res$components),]) %*% res$components
-library(ICC)
-metaData <- readRDS("../int/metaData.rds")
-iccData <- data.frame(shareid=factor(metaData$shareid[match(colnames(Mvals_full), metaData$sampleKey)]),
-mrs=mrsValues)
-icc_res <- ICCest(x=shareid, y=mrs, data=iccData)
-print(icc_res$ICC)
-```
-
-
-
 -->
-
-## Tentative conclusions
-
-* A variance threshold of 50% reaches an approximate asymptote in performance while keeping the computational burden under control.
-* There is not strong evidence to suggest that a change in alpha from 0.5 will provide notably better performance.
-* The LBC datasets are complicated: they are somewhat older, and have non-intuitive relationships between traditional CVD risk factors and CVD prevalence/incidence. At the very least, the two cohorts (1921 and 1936) should be modeled separately.
-
-# Genetic risk in the same cohorts
-
-A genetic risk score (GRS) was calculated based on the model used by Khera et al. 2016 -- currently, ~48 of the 50 constituent genotypes are available for entry into the model. This GRS was first tested to confirm its associations in these datasets (genotypes available for WHI and FHS). While all CVD cases are incident in WHI, past and incident events were merged into a single binary variable for FHS in order to test the GRS.
-
-```{r calc-grs, message=F, warning=F}
-source("helpers.R")
-
-genotype.df.fhs <- read_table2("../int/grs_genos/grs_genos_fhs.vcf", skip=6)
-grs_df.fhs <- tibble(subjID=as.character(colnames(genotype.df.fhs)[-(1:9)]),
-                     grs=calc_khera2016grs(genotype.df.fhs))
-
-genotype.df.whi <- read_table2("../int/grs_genos/grs_genos_whi.vcf", skip=6)
-imputedSampleInfo_whi <- read_tsv("../data/whi/gen/imputedSampleInfo.txt", skip=15)
-grs.ids.whi <- imputedSampleInfo_whi$SubjectID[match(colnames(genotype.df.whi)[-(1:9)],
-                                                     imputedSampleInfo_whi$SampleID)]
-
-grs_df.whi <- tibble(subjID=as.character(grs.ids.whi), 
-                     grs=calc_khera2016grs(genotype.df.whi))
-
-grs_df <- bind_rows(grs_df.fhs, grs_df.whi)
-
-# genotype.df <- read_csv("../int/cvd_grs_genos.csv")
-# genotype.mat <- as.matrix(genotype.df[-1])
-# grs_df <- tibble(subjID=as.character(genotype.df[[1]]), grs=calc_khera2016grs(genotype.mat))
-```
-
-```{r test-grs}
-whi_grs_test_df <- left_join(nmd_whi, grs_df, by="subjID") %>%
-  distinct(subjID, .keep_all=T)
-grsRes.whi <- test_grs(whi_grs_test_df)
-
-fhs_grs_test_df <- nmd_fhs %>%
-  left_join(grs_df, by="subjID") %>%
-  mutate(event=pastEvent | event)
-grsRes.fhs <- test_grs(fhs_grs_test_df)
-
-kable(bind_rows(list(WHI=grsRes.whi, FHS=grsRes.fhs), .id="cohort"), caption="GRS results")
-```
-
-# MRS performance across demographic and risk-based strata
-
-Also worth checking this in REGICOR.
-
-## Across sexes
-
-```{r whi-mrs-to-fhs-sex}
-mrs_fhs <- calc_mrs_glmnet(mrs_fit_whi$cpg_coefs, betas_fhs)
-mrs_res_fhs_male <- test_mrs(filter(nmd_fhs, sex == "M"), 
-                             mrs_fhs[nmd_fhs$sex == "M"])
-mrs_res_fhs_female <- test_mrs(filter(nmd_fhs, sex == "F"), 
-                               mrs_fhs[nmd_fhs$sex == "F"])
-kable(bind_rows(list(Male=mrs_res_fhs_male, Female=mrs_res_fhs_female),
-                .id="Sex"), 
-      caption="WHI -> FHS sex-stratified")
-```
-
-```{r double-mrs-to-double-sex}
-relevant_betas <- t(
-  design_mat_whiFhs[, grepl("^cg", colnames(design_mat_whiFhs))])
-mrs_whiFhs <- calc_mrs_glmnet(mrs_fit_whiFhs_full$cpg_coefs, relevant_betas)
-mrs_res_whiFhs_male <- test_mrs(filter(nmd_whiFhs, sex == "M"), 
-                                mrs_whiFhs[nmd_whiFhs$sex == "M"])
-mrs_res_whiFhs_female <- test_mrs(filter(nmd_whiFhs, sex == "F"), 
-                                  mrs_whiFhs[nmd_whiFhs$sex == "F"])
-kable(bind_rows(list(Male=mrs_res_whiFhs_male, Female=mrs_res_whiFhs_female), 
-                .id="Sex"), 
-      caption="WHI + FHS -> WHI + FHS sex-stratified (Note: doesn't use an external validation set)")
-```
-
-## Based on race
-
-```{r fhs-mrs-to-whi-race}
-mrs_whi <- calc_mrs_glmnet(mrs_fit_fhs$cpg_coefs, betas_whi)
-mrs_res_whi_white <- test_mrs(filter(nmd_whi, race == "white"), 
-                              mrs_whi[nmd_whi$race == "white"])
-mrs_res_whi_black <- test_mrs(filter(nmd_whi, race == "black"), 
-                              mrs_whi[nmd_whi$race == "black"])
-mrs_res_whi_hispanic <- test_mrs(filter(nmd_whi, race == "hispanic"), 
-                                 mrs_whi[nmd_whi$race == "hispanic"])
-kable(bind_rows(list(White=mrs_res_whi_white, Black=mrs_res_whi_black, 
-                     Hispanic=mrs_res_whi_hispanic),
-                .id="Race"), caption="FHS -> WHI race-stratified")
-```
-
-## Based on history of CVD
-
-```{r whi-mrs-to-fhs-past-event}
-mrs_fhs <- calc_mrs_glmnet(mrs_fit_whi$cpg_coefs, betas_fhs)
-mrs_res_fhs_pastEvent <- test_mrs(filter(nmd_fhs, pastEvent == T), 
-                                  mrs_fhs[nmd_fhs$pastEvent == T])
-mrs_res_fhs_noPastEvent <- test_mrs(filter(nmd_fhs, pastEvent == F), 
-                                    mrs_fhs[nmd_fhs$pastEvent == F])
-kable(bind_rows(list(Yes=mrs_res_fhs_pastEvent, No=mrs_res_fhs_noPastEvent), 
-                .id="Past event"), 
-      caption="WHI -> FHS stratified by history of CVD")
-```
-
-## Across tertiles of genetic risk
-
-```{r whi-mrs-to-fhs-grs-tertiles}
-fhs_grs_tertile_cuts <- quantile(fhs_grs_test_df$grs, c(0.333, 0.666), na.rm=T)
-mrs_fhs <- calc_mrs_glmnet(mrs_fit_whi$cpg_coefs, betas_fhs)
-
-fhs_by_grs <- fhs_grs_test_df %>%
-  mutate(mrs=mrs_fhs,
-         tertile=findInterval(grs, fhs_grs_tertile_cuts) + 1) %>%
-  nest(-tertile)
-fhs_grs_tert_res <- map(fhs_by_grs$data, function(d) test_mrs(d, d$mrs))
-names(fhs_grs_tert_res) <- as.character(1:3)
-kable(bind_rows(fhs_grs_tert_res, .id="Tertile"), 
-      caption="WHI -> FHS stratified by genetic risk score")
-```
-
-```{r fhs-mrs-to-whi-grs-tertiles}
-whi_grs_tertile_cuts <- quantile(whi_grs_test_df$grs, c(0.333,0.666), na.rm=T)
-mrs_whi <- calc_mrs_glmnet(mrs_fit_fhs$cpg_coefs, betas_whi)
-
-whi_by_grs <- whi_grs_test_df %>%
-  mutate(mrs=mrs_whi,
-         tertile=findInterval(grs, whi_grs_tertile_cuts) + 1) %>%
-  nest(-tertile)
-whi_grs_tert_res <- map(whi_by_grs$data, function(d) test_mrs(d, d$mrs))
-names(whi_grs_tert_res) <- as.character(1:3)
-kable(bind_rows(whi_grs_tert_res, .id="Tertile"), 
-      caption="FHS -> WHI stratified by genetic risk score")
-```
-
-# MRS stability
-
-```{r mrs-stability, cache=1, cache.vars=c("meta_lbc36_with_dups","icc_res")}
-betas_lbc36_with_dups <- readRDS("../int/betas.qc.norm.filt_lbc.rds")
-meta_lbc36_with_dups <- readRDS("../int/metaData.rds") %>%
-  filter(study == "lbc36",
-         sampleKey %in% colnames(betas_lbc36_with_dups))
-betas_lbc36_with_dups <- betas_lbc36_with_dups[, meta_lbc36_with_dups$sampleKey]
-
-library(ICC)
-meta_lbc36_with_dups$mrs <- calc_mrs_glmnet(mrs_fit_whiFhs_full$cpg_coefs, 
-                                            betas_lbc36_with_dups)
-icc_res <- ICCest(x=subjID, y=mrs, data=meta_lbc36_with_dups)
-print(paste("ICC:", icc_res$ICC))
-
-#############################
-
-# print("ICC of the MRS (trained on entire dataset):")
-# res <- trainTestMRS(basic_model, non_meth_data, Mvals[Mval_variances>0.4,],
-#                     trainset=seq(1,nrow(non_meth_data)), testset=seq(1,nrow(non_meth_data)))
-# mrsValues <- t(Mvals_full[names(res$components),]) %*% res$components
-# library(ICC)
-# metaData <- readRDS("../int/metaData.rds")
-# iccData <- data.frame(shareid=factor(metaData$shareid[match(colnames(Mvals_full), metaData$sampleKey)]),
-#                       mrs=mrsValues)
-# icc_res <- ICCest(x=shareid, y=mrs, data=iccData)
-# print(icc_res$ICC)
-```
-
-# Validation of MRS with respect to prevalent CVD (MI) in REGICOR
-
-Quite predictive alone and with adjustment for cell counts/technical factors/smoking, marginally significant in the presence of traditional risk factors.
-
-# GWIS with MRS
-
-# EWIS with GRS
-
-```{r ewis-prep}
-my_try <- function(expr, CpG) {
-  # Captures model failures and returns successful result or vector of NAs
-  tryCatch(expr,
-           error = function(e) {print(e); return(c(CpG, rep(NA, 3)))})
-}
-
-run_cox_model_interaction <- function(probe_data, covar_data, model_spec) {
-  # Given a row of the M-value matrix (corresponding to a CpG site), bind that methylation
-  # data to the covariate data and run Cox proportional hazards regression
-  CpG <- rownames(probe_data)
-  probe_data <- as.vector(probe_data)
-  outlierTF <- (probe_data < quantile(probe_data,0.25) - 3 * IQR(probe_data) | 
-    probe_data > quantile(probe_data, 0.75) + 3 * IQR(probe_data))
-  model_data <- cbind(covar_data, meth=as.numeric(probe_data),
-                     survObj=Surv(time=covar_data$time, event=covar_data$event))
-  my_try({
-    cox_fit <- coxph(as.formula(model_spec), data=model_data, subset=!outlierTF)
-    c(CpG=CpG, summary(cox_fit)$coef['meth:grs', c('coef', 'z', 'Pr(>|z|)')])
-  }, CpG)
-}
-```
-
-```{r ewis-whi, cache=1}
-ewis_model_whi <- paste0("survObj~meth*grs+race+age+bmi+smk_now+smk_py+CD4T+",
-                         "CD8T+Bcell+NK+Mono+Gran+dnaPull")
-
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-
-ewis_res_whi_list <- foreach(meth=iter(betas_whi, by="row"), 
-                            .packages="survival") %dopar%
-  run_cox_model_interaction(meth, whi_grs_test_df, ewis_model_whi)
-
-stopCluster(cl)
-
-ewis_res_whi <- do.call(rbind, ewis_res_whi_list) %>%
-  data.frame(stringsAsFactors=F, check.names=F) %>%
-  dplyr::rename(p=`Pr(>|z|)`) %>%
-  mutate_at(c("coef", "z", "p"), as.numeric) %>%
-  mutate(fdr=p.adjust(p, method="BH")) %>%
-  arrange(p)
-```
-
-```{r ewis-fhs, cache=1}
-ewisModel_fhs <- paste0("survObj~meth*grs+sex+age+bmi+smk_now+smk_py+CD4T",
-                        "+CD8T+Bcell+NK+Mono+Gran+center+",
-                        paste0("cpPC",1:7,collapse="+"))
-
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-
-ewis_res_fhs_list <- foreach(meth=iter(betas_fhs, by="row"), 
-                             .packages="survival") %dopar%
-  run_cox_model_interaction(meth, fhs_grs_test_df, ewisModel_fhs)
-
-stopCluster(cl)
-
-ewis_res_fhs <- do.call(rbind, ewis_res_fhs_list) %>%
-  data.frame(stringsAsFactors=F, check.names=F) %>%
-  dplyr::rename(p=`Pr(>|z|)`) %>%
-  mutate_at(c("coef", "z", "p"), as.numeric) %>%
-  mutate(fdr=p.adjust(p, method="BH")) %>%
-  arrange(p)
-```
-
-```{r print-temp}
-kable(head(ewis_res_whi, 10), caption="EWIS results in WHI")
-kable(head(ewis_res_fhs, 10), caption="EWIS results in FHS")
-```
-
-
-# Full modeling of genetic plus epigenetic risk
-
-Start with a standard ML model (random forest for example?) and try:
-
-* Methylation only
-* Genotypes only
-* Risk factors only
-* All three together
-* Different groups of two depending on the results
