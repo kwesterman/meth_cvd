@@ -38,11 +38,14 @@ plot_scree <- function(EVs, mod) {
   qplot(x=1:10, y=EVs[1:10]) +
     geom_line() +
     labs(x="", y="Eigenvalues", title=mod) +
-    scale_x_continuous(breaks=1:10)
+    scale_x_continuous(breaks=1:10) +
+    theme(panel.background=element_blank())
 }
 
+mod_titles <- c(blue="blue", brown4="brown", lavenderblush3="purple")
 screeplots <- lapply(names(ec_res), 
-                     function(mod) plot_scree(ec_res[[mod]]$whi_EVs, mod))
+                     function(mod) plot_scree(ec_res[[mod]]$whi_EVs, 
+                                              mod_titles[mod]))
 do.call(plot_grid, c(screeplots, ncol=3))
 ```
 
@@ -103,10 +106,10 @@ kable(top_ewas_res, booktabs=T,
                     "(Bonferroni threshold = 1.18e-7)"))
 ```
 
-```{r print-eforge-plots, fig.cap="eFORGE cell type-specificity plot for the brown4 module."}
+```{r print-eforge-plots, fig.cap="eFORGE cell type-specificity plot for the brown module."}
 eforge_plt + theme(axis.text.y=element_text(size=9))
 ```
 
-```{r causal-diagram-hscrp, fig.cap="Example diagram of cumulative risk factor mediation by brown4 methylation module activation. Results from 4 regressions are shown: cumulative risk factor exposure to brown4 activation, cumulative risk factor exposure to incident CVD, and brown4 activation to incident CVD with and without adjustment for cumulative risk factor exposure. Regression terms represented as: sign of coefficient (p-value)."}
+```{r causal-diagram-hscrp, fig.cap="Example diagram of cumulative risk factor mediation by brown methylation module activation. Results from 4 regressions are shown: cumulative risk factor exposure to brown activation, cumulative risk factor exposure to incident CVD, and brown activation to incident CVD with and without adjustment for cumulative risk factor exposure. Regression terms represented as: sign of coefficient (p-value)."}
 include_graphics("../doc/module_ewas/hscrp_mediation_diagram.pdf")
 ```

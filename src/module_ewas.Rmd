@@ -6,14 +6,29 @@ output:
     toc: false
     latex_engine: pdflatex
 bibliography: ../doc/module_ewas/module_ewas_refs.bib
-csl: bmcart.csl
+documentclass: article
+csl: nature.csl
 link-citations: true
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{array}
+  - \usepackage{multirow}
+  - \usepackage{wrapfig}
+  - \usepackage{float}
+  - \usepackage{pdflscape}
+  - \usepackage{tabu}
+  - \usepackage{threeparttable}
+  - \usepackage{threeparttablex}
+  - \usepackage[normalem]{ulem}
+  - \usepackage{makecell}
 ---
 
 ```{r prereqs, include=F}
 library(knitr)
 knitr::opts_chunk$set(echo=F, fig.path="../doc/module_ewas/figures/", 
                       cache.path="../cache/module_ewas/", fig.pos="h")
+options(kableExtra.latex.load_packages = FALSE)
 suppressMessages(silent <- lapply(
   c("tidyverse", "minfi", "survival", "kableExtra", "doParallel", "itertools",
     "gridExtra", "cowplot", "readxl", "flashpcaR", "coxme",
@@ -110,14 +125,7 @@ Jos\'e M. Ordov\'as\textsuperscript{1,5,6*}
 
 # Abstract
 
-**Background**
-Epigenome-wide association studies using DNA methylation have the potential to uncover novel biomarkers and mechanisms of cardiovascular disease (CVD) risk. However, the direction of causation for these associations is not always clear, and investigations to-date have generally failed to replicate at the level of individual loci. Here, we undertook module- and region-based DNA methylation analyses of incident CVD in the Women's Health Initiative (WHI) and Framingham Heart Study Offspring Cohort (FHS) in order to find more robust epigenetic biomarkers for cardiovascular risk.
-
-**Methods and Findings**
-We applied weighted gene correlation network analysis (WGCNA) and the Comb-p algorithm to find methylation modules and regions associated with incident CVD in the WHI dataset. We discovered two modules whose activation correlated with CVD risk and replicated across cohorts. One of these modules was enriched for development-related processes and overlaps strongly with epigenetic aging sites. For the other, we showed preliminary evidence for monocyte-specific effects and statistical links to cumulative exposure to traditional cardiovascular risk factors. Additionally, we found three regions (associated with the genes SLC9A1, SLC1A5, and TNRC6C) whose methylation associates with CVD risk.
-
-**Conclusions**
-In sum, we present several epigenetic associations with incident CVD that reveal disease mechanisms related to development and monocyte biology. Furthermore, we show that epigenetic modules may act as a molecular readout of cumulative cardiovascular risk factor exposure, with implications for the improvement of clinical risk prediction.
+Epigenome-wide association studies using DNA methylation have the potential to uncover novel biomarkers and mechanisms of cardiovascular disease (CVD) risk. However, the direction of causation for these associations is not always clear, and investigations to-date have generally failed to replicate at the level of individual loci. Here, we undertook module- and region-based DNA methylation analyses of incident CVD in the Women's Health Initiative (WHI) and Framingham Heart Study Offspring Cohort (FHS) in order to find more robust epigenetic biomarkers for cardiovascular risk.We applied weighted gene correlation network analysis (WGCNA) and the Comb-p algorithm to find methylation modules and regions associated with incident CVD in the WHI dataset. We discovered two modules whose activation correlated with CVD risk and replicated across cohorts. One of these modules was enriched for development-related processes and overlaps strongly with epigenetic aging sites. For the other, we showed preliminary evidence for monocyte-specific effects and statistical links to cumulative exposure to traditional cardiovascular risk factors. Additionally, we found three regions (associated with the genes SLC9A1, SLC1A5, and TNRC6C) whose methylation associates with CVD risk. In sum, we present several epigenetic associations with incident CVD that reveal disease mechanisms related to development and monocyte biology. Furthermore, we show that epigenetic modules may act as a molecular readout of cumulative cardiovascular risk factor exposure, with implications for the improvement of clinical risk prediction.
 
 # Introduction
 
@@ -1331,6 +1339,8 @@ To more directly test this proposal, we used a basic mediation approach in which
 
 A few limitations should be acknowledged in intepreting the results of this study. First, its observational nature made it impossible to clearly determine causality of the relationships between methylation and cardiovascular risk. While the examination of incident CVD reduced concerns about reverse causation, the discovered associations may only be markers of other disease-causing processes (such as cumulative risk factor exposure, as discussed above). Second, assessment of methylation in blood samples prevented the understanding of potentially causal epigenetic effects in other CVD-relevant tissues. Although some studies report promising findings with respect to blood as a proxy tissue [@Bacos2016; @Huang2016], and although development-related epialleles may persist across tissues, there is a certain gap in our ability to discover non-blood-related epigenetic patterns in this analysis. Finally, longitudinal methylation measurements were not available in these datasets, preventing an analysis of the intra-individual stability of methylation sites and modules that may be predictive of CVD risk.
 
+# Conclusions
+
 The modules and regions discovered in this investigation provide insights into the complex relationships between DNA methylation and cardiovascular disease risk. We show that epigenetic modules track with diverse biological sources of CVD risk, ranging from development- to immune-related processes, and may provide a molecular readout of past exposure to cardiovascular risk factors. We further discover specific differentially methylated regions that may be related to monocyte activation in response to biological stimuli. This work opens the door to further investigation of the epigenetic basis of CVD risk as well as the ability of DNA methylation to act as a biomarker of prior exposures that may be important for disease-relevant prognosis and interventions.
 
 # Methods
@@ -1381,6 +1391,24 @@ Next, linear models were used to assess these same module-risk factor correlatio
 
 Finally, the relationship between cumulative risk factors, the brown4 module, and incident CVD was examined, using the same Cox regression setup as in the EWAS to perform a basic mediation analysis for BMI, hsCRP, and triglycerides. Here, cumulative risk factor exposure (as defined above) acted as the exposure, brown4 methylation module activation (represented by the brown4 eigenCpG) acted as the mediator, and incident CVD acted as the outcome. Having established the strong exposure-mediator links, three subsequent Cox models were examined: cumulative risk factors only, brown4 eigenCpG only, and both simultaneously. All models adjusted for the full set of technical and biological covariates as well as the "current" level (i.e. at Exam 8) of the risk factor in question.
 
+
+# Declarations
+
+## Ethics approval
+
+This research was approved by the Tufts Health Sciences Campus Institutional Review Board (protocol 12592).
+
+## Data availability
+
+The main phenotype and genotype datasets are available from dbGaP: WHI (phs000200.v11.p3) and FHS (phs000007.v29.p10). Roadmap epigenomics data can be accessed at https://egg2.wustl.edu/roadmap/web_portal/. Code supporting the analyses described can be found at https://github.com/kwesterman/meth_cvd.
+
+## Author contributions
+
+KW, DD, and JO conceived of the analysis. KW performed all analyses. PS, PJ, DD, and JO supervised the research project. KW drafted the manuscript. PS, PJ, SL, DD, and JO provided substantive review and edits to the manusript. All authors read and approved the final manuscript.
+
+## Competing interests
+
+The authors declare that they have no competing interests.
 
 # References
 
