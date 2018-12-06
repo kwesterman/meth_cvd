@@ -305,6 +305,8 @@ calc_khera2016grs <- function(grs_vcf) {
   
   vcf_anno_portion <- dplyr::select(grs_vcf, ID, REF, ALT)
   grs_calculator.df <- inner_join(vcf_anno_portion, khera2016grs, by=c("ID"="snp")) %>%
+    
+    a <- khera2016grs %>%
     mutate(riskAlleleCorrected=case_when(riskAllele==REF | riskAllele==ALT ~ riskAllele,
                                          ID %in% names(manualRiskAnnotations) ~ 
                                            manualRiskAnnotations[ID],

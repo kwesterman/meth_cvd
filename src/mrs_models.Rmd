@@ -212,20 +212,6 @@ validationset <- setdiff(train_val_set, trainset)
 testset <- seq(1, nrow(nmd_all))[-train_val_set]
 ```
 
-```{r train-test-setup2, eval=F}
-nmd_whiFhs <- bind_rows(nmd_whi, nmd_fhs) %>% 
-  mutate(batch = ifelse(study == "whi", "whi", paste0("fhs_", center)))
-cvd_surv_whiFhs <- Surv(nmd_whiFhs$time, nmd_whiFhs$event)
-
-shared_cpgs_whiFhs <- intersect(rownames(betas_whi), rownames(betas_fhs))
-betas_whiFhs <- cbind(betas_whi[shared_cpgs_whiFhs, ],
-                      betas_fhs[shared_cpgs_whiFhs, ])
-
-set.seed(1)
-trainset <- createDataPartition(factor(nmd_whiFhs$event), p=0.7)[[1]]
-testset <- seq(1, nrow(nmd_whiFhs))[-trainset]
-```
-
 Basic setup:
 
 * Combine WHI/FHS/LBC36 and split into 50% training, 25% validation, and 25% testing
@@ -343,169 +329,6 @@ test_metrics_tbl <- map_dfr(
 kable(test_metrics_tbl, caption="Performance of the MRS in the held-out test set.")
 ```
 
-```{r var-thresh-opt, cache=1, eval=F}
-variances_whiFhs <- apply(betas_whiFhs, 1, var)
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-var_thresh_quantiles <- c(0, 0.25, 0.5, 0.75, 0.9)
-var_fits_list <- lapply(var_thresh_quantiles, function(vtq) {
-  cpg_set <- rownames(betas_whiFhs)[(
-    variances_whiFhs >= quantile(variances_whiFhs, vtq))]
-  design_mat <- construct_design_mat(cpg_set, betas_whiFhs, 
-                                     "batch", nmd_whiFhs)
-  train_glmnet(design_mat[trainset, ], cvd_surv_whiFhs[trainset], 
-               alpha=0.5, nfolds=3, parallel=T)
-})
-
-stopCluster(cl)
-```
-```{r test-variance-thresholds, fig.asp=1.2, eval=F}
-var_res_list <- lapply(var_fits_list, function(fit) {
-  mrs <- calc_mrs_glmnet(fit$cpg_coefs, betas_whiFhs)
-  mrs_test <- test_mrs(nmd_whiFhs[testset, ], mrs[testset])
-  mrs_test
-  #bind_rows(list(FHS=mrs_fhs, LBC=mrs_lbc), .id="testCohort")
-})
-
-var_res_plot_data <- bind_rows(var_res_list, .id="variance_threshold") %>%
-  mutate(variance_threshold=var_thresh_quantiles[(
-    as.numeric(variance_threshold))],
-         negLogP=-log10(p)) %>%
-  dplyr::select(variance_threshold, HR_per_SD, negLogP) %>%
-  gather(key=metric, value=value, HR_per_SD, negLogP)
-
-ggplot(var_res_plot_data, aes(x=variance_threshold, y=value)) + 
-  geom_point() +
-  geom_line() +
-  labs(x="Variance threshold") +
-  facet_wrap(~metric, nrow=2, scales="free") + 
-  theme(axis.title.y=element_blank())
-```
-```{r alpha-opt, cache=1, eval=F}
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-alphas <- c(0, 0.25, 0.5, 0.75, 1)
-alpha_fits_list <- lapply(alphas, function(a) {
-  cpg_set <- rownames(betas_whiFhs)[(
-    variances_whiFhs > quantile(variances_whiFhs, 0.5))]
-  design_mat <- construct_design_mat(cpg_set, betas_whiFhs, 
-                                     "batch", nmd_whiFhs)
-  train_glmnet(design_mat[trainset, ], cvd_surv_whiFhs[trainset], 
-               alpha=a, nfolds=3, parallel=T)
-})
-
-stopCluster(cl)
-```
-```{r test-alphas, fig.asp=1.2, eval=F}
-alpha_res_list <- lapply(alpha_fits_list, function(fit) {
-  mrs <- calc_mrs_glmnet(fit$cpg_coefs, betas_whiFhs)
-  mrs_test <- test_mrs(nmd_whiFhs[testset, ], mrs[testset])
-  mrs_test
-})
-
-alpha_plot_data <- bind_rows(alpha_res_list, .id="alpha") %>%
-  mutate(alpha=alphas[as.numeric(alpha)],
-         negLogP=-log10(p)) %>%
-  dplyr::select(alpha, HR_per_SD, negLogP) %>%
-  gather(key=metric, value=value, HR_per_SD, negLogP)
-
-ggplot(alpha_plot_data, aes(x=alpha, y=value)) + 
-  geom_point() +
-  geom_line() +
-  labs(x="Elastic net alpha parameter") +
-  facet_wrap(~metric, nrow=2, scales="free") + 
-  theme(axis.title.y=element_blank())
-```
-```{r final-train-model, cache=1, cache.vars=c("q75_cpg_set", "train_mrs_fit"), eval=F}
-q75_cpg_set <- rownames(betas_whiFhs)[(
-  variances_whiFhs >= quantile(variances_whiFhs, 0.75))]
-train_design_mat <- construct_design_mat(q75_cpg_set, betas_whiFhs, 
-                                   "batch", nmd_whiFhs)
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-train_mrs_fit <- train_glmnet(train_design_mat[trainset, ], 
-                              cvd_surv_whiFhs[trainset], 
-                              alpha=0, nfolds=3, parallel=T)
-stopCluster(cl)
-```
-```{r test-final-train-model, warning=F, eval=F}
-mrs <- calc_mrs_glmnet(train_mrs_fit$cpg_coefs, betas_whiFhs)
-
-nmd_whiFhs$diabetes <- nmd_whiFhs$dm_med | (nmd_whiFhs$glu > 125)
-nmd_test <- nmd_whiFhs[testset, ]
-mrs_test <- mrs[testset]
-
-covar_sets <- list(
-  none=c(),
-  age_sex=c("age", "sex"),
-  plus_cell_counts=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran"),
-  plus_bmi=c("age", "sex", "bmi"),
-  plus_diabetes=c("age", "sex", "diabetes"),
-  plus_smoking=c("age", "sex", "smk_now", "smk_py"),
-  plus_lipids_sbp=c("age", "sex", "ldl", "hdl", "tg", "sbp"),
-  full_model=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran",
-               "bmi", "diabetes", "smk_now", "smk_py", "ldl", "hdl", "tg", "sbp"))
-
-test_metrics_tbl <- map_dfr(
-  covar_sets, function(cs) test_mrs(nmd_test, mrs_test, covars=cs),
-  .id="Covariate_set")
-
-kable(test_metrics_tbl, caption="Performance of the MRS in the held-out test set.")
-```
-
-## Final MRS construction and characterization
-
-```{r final-model, cache=1}
-final_design_mat <- construct_design_mat(marginal_res$CpG[1:2000],
-                                         betas_all, "batch", nmd_all)
-
-cl <- makePSOCKcluster(10)
-registerDoParallel(cl)
-
-final_mrs_fit <- train_glmnet(final_design_mat,
-                              cvd_surv_all,
-                              alpha=0, nfolds=10)
-
-stopCluster(cl)
-```
-
-```{r final-full-model, cache=1, cache.vars=c("full_mrs_fit"), eval=F}
-train_design_mat <- construct_design_mat(q75_cpg_set, betas_whiFhs, 
-                                   "batch", nmd_whiFhs)
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-full_mrs_fit <- train_glmnet(train_design_mat, 
-                             cvd_surv_whiFhs,
-                             alpha=0, nfolds=3, parallel=T)
-stopCluster(cl)
-```
-
-```{r final-model-characterization, message=F, warning=F}
-final_coefs <- final_mrs_fit$cpg_coefs
-
-mrs_final <- calc_mrs_glmnet(final_coefs, betas_all)
-
-top_coefs <- final_coefs[abs(final_coefs) > 0.25]
-
-gsa_tbl <- missMethyl::gometh(as.vector(names(top_coefs)), 
-                              all.cpg=anno_450k$Name, collection="GO")
-
-coef_hist <- ggplot(tibble(coef=final_coefs), aes(x=coef)) +
-  geom_histogram() +
-  labs(x="CpG weight in MRS")
-coef_hist_highvals <- ggplot(tibble(coef=top_coefs), aes(x=coef)) +
-  geom_histogram()
-
-coef_hist
-```
-
-<!--Gene set enrichment analysis (based on `r length(top_coefs)` CpGs with absolute weights > 0.25) reveals strong enrichment for cell-cell adhesion.-->
-
 ```{r evaluation, cache=F, eval=F}
 source("helpers.R")
 
@@ -534,6 +357,41 @@ legend("bottomright",
                      round(as.numeric(c(mrs_ROC$auc, frs_ROC$auc, 
                                         combined_ROC$auc)), 2)), 
        col=c("blue", "red", "green"), lty=1, lwd=3, cex=1.3)
+```
+
+## Final MRS construction and characterization
+
+```{r final-model, cache=1}
+final_design_mat <- construct_design_mat(marginal_res$CpG[1:2000],
+                                         betas_all, "batch", nmd_all)
+
+cl <- makePSOCKcluster(10)
+registerDoParallel(cl)
+
+final_mrs_fit <- train_glmnet(final_design_mat,
+                              cvd_surv_all,
+                              alpha=0, nfolds=10)
+
+stopCluster(cl)
+```
+
+```{r final-model-characterization, message=F, warning=F}
+final_coefs <- final_mrs_fit$cpg_coefs
+
+mrs_final <- calc_mrs_glmnet(final_coefs, betas_all)
+
+top_coefs <- final_coefs[abs(final_coefs) > 0.25]
+
+gsa_tbl <- missMethyl::gometh(as.vector(names(top_coefs)), 
+                              all.cpg=anno_450k$Name, collection="GO")
+
+coef_hist <- ggplot(tibble(coef=final_coefs), aes(x=coef)) +
+  geom_histogram() +
+  labs(x="CpG weight in MRS")
+coef_hist_highvals <- ggplot(tibble(coef=top_coefs), aes(x=coef)) +
+  geom_histogram()
+
+coef_hist
 ```
 
 ### MRS stability
@@ -620,88 +478,11 @@ plot_strat_test_by_study <- function(qres, xlab) {
 }
 ```
 
-```{r study-strat, eval=F}
-study_strat_res <- map_dfr(c("whi", "fhs"), function(s) {
-  train <- test_mrs_with_SE(nmd_train, mrs_train, nmd_train$study == s,
-                            basic_covars[basic_covars != "sex"])
-  test <- test_mrs_with_SE(nmd_test, mrs_test, nmd_test$study == s,
-                           basic_covars[basic_covars != "sex"])
-  bind_rows(trainset=train, testset=test, .id="subset")
-})
-# study_strat_res <- map_dfr(c("whi", "fhs"), function(s) {
-#   male <- test_mrs_with_SE(nmd_whiFhs, full_mrs, nmd_whiFhs$study == s,
-#                            basic_covars[basic_covars != "sex"])
-#   femal
-# })
-```
-
 ### Demographics
 
 * Sex (noting that the training set was considerably skewed towards females)
 * Race
 * Age
-
-```{r sex-strat, warning=F, eval=F}
-male_fhs <- test_mrs_with_SE(nmd_fhs, full_mrs[nmd_whiFhs$study == "fhs"],
-                             nmd_fhs$sex == "M",
-                             basic_covars[basic_covars != "sex"])
-female_fhs <- test_mrs_with_SE(nmd_fhs, full_mrs[nmd_whiFhs$study == "fhs"],
-                               nmd_fhs$sex == "F",
-                               basic_covars[basic_covars != "sex"])
-female_whi <- test_mrs_with_SE(nmd_whi, full_mrs[nmd_whiFhs$study == "whi"],
-                               nmd_test$sex == "F",
-                               basic_covars[basic_covars != "sex"])
-sex_strat_res <- bind_rows(male_fhs, female_fhs, female_whi)
-sex_strat_res$Sex <- c("Male", "Female (FHS)", "Female (WHI)")
-
-sex_strat_plt <- ggplot(sex_strat_res, aes(x=Sex, y=HR_per_SD)) +
-  geom_point() +
-  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
-  theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=30))
-
-sex_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "sex")
-sex_strat_plt <- plot_strat_test_by_study(sex_strat_res, "Sex")
-
-nmd_whiFhs$age_group <- cut(nmd_whiFhs$age,
-                            breaks=c(0, 55, 65, 75, 100))
-age_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "age_group")
-age_strat_plt <- plot_strat_test_by_study(age_strat_res, "Age") +
-  theme(axis.text.x=element_text(angle=30))
-```
-```{r race-strat, warning=F, eval=F}
-race_strat_res <- map_dfr(c("white", "black", "hispanic"), function(r) {
-  test_mrs_with_SE(nmd_whi, full_mrs[nmd_whiFhs$study == "whi"], 
-                   nmd_whi$race == r, 
-                   basic_covars[basic_covars != "sex"])
-  # test <- test_mrs_with_SE(nmd_test, mrs_test, nmd_test$race == r, 
-  #                  basic_covars[basic_covars != "sex"])
-  # bind_rows(trainset=train, testset=test, .id="subset")
-})
-race_strat_res <- bind_rows(race_strat_res,
-                            test_mrs_with_SE(nmd_fhs, 
-                                             full_mrs[nmd_whiFhs$study == "fhs"],
-                                             nmd_fhs$race == "white",
-                                             basic_covars))
-race_strat_res$Race <- c("White (WHI)", "Black", "Hispanic", "White (FHS)")
-
-race_strat_plt <- ggplot(race_strat_res, aes(x=Race, y=HR_per_SD)) +
-  geom_point() +
-  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
-  theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=30))
-
-race_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "race")
-race_strat_plt <- plot_strat_test_by_study(race_strat_res, "Race")
-```
-```{r whi-mrs-to-fhs-sex, eval=F}
-mrs_fhs <- calc_mrs_glmnet(mrs_fit_whi$cpg_coefs, betas_fhs)
-mrs_res_fhs_male <- test_mrs(filter(nmd_fhs, sex == "M"), 
-                             mrs_fhs[nmd_fhs$sex == "M"])
-mrs_res_fhs_female <- test_mrs(filter(nmd_fhs, sex == "F"), 
-                               mrs_fhs[nmd_fhs$sex == "F"])
-kable(bind_rows(list(Male=mrs_res_fhs_male, Female=mrs_res_fhs_female),
-                .id="Sex"), 
-      caption="WHI -> FHS sex-stratified")
-```
 
 ### Traditional risk
 
@@ -728,46 +509,6 @@ test_frs <- function(frs_df) {
 }
 
 frs_res_tbl <- test_frs(nmd_all)
-```
-
-```{r frs-strat, warning=F, eval=F}
-# frs_quantiles <- quantile(nmd_test$frs, seq(0, 1, by=0.2), na.rm=T)
-# nmd_test$frs_quintile <- cut(nmd_test$frs, 
-#                              breaks=frs_quantiles,
-#                              labels=paste0("Q", 1:5),
-#                              include.lowest=T)
-
-frs_quantiles <- quantile(nmd_whiFhs$frs, seq(0, 1, by=0.2), na.rm=T)
-nmd_whiFhs$frs_quintile <- cut(nmd_whiFhs$frs, 
-                             # breaks=frs_quantiles,
-                             breaks=seq(0, 1, 0.2),
-                             labels=paste0("Q", 1:5),
-                             include.lowest=T)
-
-nmd_whiFhs$frs_group <- cut(nmd_whiFhs$frs,
-                            breaks=c(0, 0.1, 0.2, 0.3, 1),
-                            labels=c("0-0.2", "0.1-0.2", "0.2-0.4",
-                                     "0.4+"),
-                            include.lowest=T)
-
-frs_strat_res <- map_dfr(levels(nmd_whiFhs$frs_quantile), function(q) {
-  test_mrs_with_SE(nmd_whiFhs, full_mrs, nmd_whiFhs$frs_quantile == q,
-                   basic_covars)
-  # test <- test_mrs_with_SE(nmd_whiFhs, mrs_test, nmd_whiFhs$frs_quintile == q,
-  #                  basic_covars[basic_covars != "sex"])
-  # bind_rows(trainset=train, testset=test, .id="subset")
-}, .id="FRS Quantile")
-# frs_strat_res$`FRS Quantile` <- c("0-0.2", "0.2-0.4", "0.4-0.6", "0.6+")
-
-frs_strat_plt <- ggplot(frs_strat_res, 
-                        aes(x=`FRS Quantile`, y=HR_per_SD)) +
-  geom_point() +
-  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
-  labs(x="FRS-based 10-year risk estimate")
-
-frs_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "frs_group")
-frs_strat_plt <- plot_strat_test_by_study(frs_strat_res, "FRS 10-yr risk") +
-  theme(axis.text.x=element_text(angle=30))
 ```
 
 ### Genetic risk
@@ -828,64 +569,9 @@ fhs_grs_test_df <- mutate(nmd_fhs, event=pastEvent | event)
 grs_res_fhs <- test_grs(fhs_grs_test_df)
 ```
 
-```{r grs-strat, warning=F, eval=F}
-nmd_test$grs <- nmd_whiFhs$grs[match(nmd_test$subjID, 
-                                     nmd_whiFhs$subjID)]
-grs_quantiles <- quantile(nmd_test$grs, seq(0, 1, by=0.2), na.rm=T)
-nmd_test$grs_quintile <- cut(nmd_test$grs, 
-                             breaks=grs_quantiles,
-                             labels=paste0("Q", 1:5),
-                             include.lowest=T)
-
-grs_quantiles_fhs <- quantile(nmd_whiFhs$grs[nmd_whiFhs$study == "fhs"], 
-                              seq(0, 1, by=0.2), na.rm=T)
-grs_quantiles_whi <- quantile(nmd_whiFhs$grs[nmd_whiFhs$study =="whi"], 
-                              seq(0, 1, by=0.2), na.rm=T)
-nmd_whiFhs$grs_group <- ifelse(nmd_whiFhs$study =="fhs",
-                               cut(nmd_whiFhs$grs,
-                                   breaks=grs_quantiles_fhs,
-                                   labels=paste0("Q", 1:5),
-                                   include.lowest=T),
-                               cut(nmd_whiFhs$grs,
-                                   breaks=grs_quantiles_whi,
-                                   labels=paste0("Q", 1:5),
-                                   include.lowest=T))
-# nmd_whiFhs$grs_group <- cut(nmd_whiFhs$grs, 
-#                             breaks=grs_quantiles,
-#                             labels=paste0("Q", 1:5),
-#                             include.lowest=T)
-
-
-# grs_strat_res <- map_dfr(paste0("Q", 1:5), function(q) {
-#   test_mrs_with_SE(nmd_whiFhs, full_mrs, 
-#                    nmd_whiFhs$grs_quintile == q,
-#                    basic_covars[basic_covars != "sex"])
-#   # test <- test_mrs_with_SE(nmd_whiFhs, mrs_test, 
-#   #                          nmd_whiFhs$grs_quintile == q,
-#   #                          basic_covars[basic_covars != "sex"])
-#   # bind_rows(trainset=train, testset=test, .id="subset")
-# }, .id="GRS Quintile")
-# nmd_whiFhs$`GRS Quintile` <- paste0("Q", 1:5)
-# 
-# grs_strat_plt <- ggplot(grs_strat_res, 
-#                         aes(x=`GRS Quintile`, y=HR_per_SD)) +
-#   geom_point() +
-#   geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0)
-
-grs_strat_res <- strat_test_by_study(nmd_whiFhs, mrs, "grs_group")
-grs_strat_plt <- plot_strat_test_by_study(grs_strat_res, 
-                                          "Genetic risk score quintile")
-```
-```{r interaction-plots, fig.asp=1.4, fig.cap="Interactions between MRS performance and subject characteristics. Hazard ratios per MRS standard deviation (based on Cox models) are shown after stratifying by a) sex, b) race, c) genetic risk score, or d) Framingham Risk Score.", eval=F}
-plot_grid(sex_strat_plt, race_strat_plt, 
-          age_strat_plt + coord_cartesian(ylim=c(1.5,5)), 
-          frs_strat_plt, grs_strat_plt,
-          labels=c("a", "b", "c", "d", "e"), nrow=3)
-```
-
 ### Stratified plots
 
-```{r all-thing-ints, fig.asp=1.4, warning=F}
+```{r all-strats, fig.asp=1.4, warning=F}
 # nmd_all$frs <- ifelse(nmd_all$study == "lbc36",
 #                       nmd_lbc$frs[match(nmd_all$subjID, nmd_lbc$subjID)],
 #                       nmd_whiFhs$frs[match(nmd_all$subjID, nmd_whiFhs$subjID)])
@@ -921,6 +607,7 @@ frs_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "frs_group") %>%
 grs_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "grs_group")
 race_res <- strat_test_by_study(nmd_all, mrs_final, "race")
 sex_res <- strat_test_by_study(nmd_all, mrs_final, "sex")
+past_event_res <- strat_test_by_study(nmd_all, mrs_final, "pastEvent")
 
 age_quantile_plt <- plot_strat_test_by_study(age_quantile_res, "Age") +
   theme(axis.text.x=element_text(angle=30))
@@ -929,248 +616,23 @@ frs_quantile_plt <- plot_strat_test_by_study(frs_quantile_res, "FRS 10-yr risk")
 grs_quantile_plt <- plot_strat_test_by_study(grs_quantile_res, "Genetic risk score")
 race_plt <- plot_strat_test_by_study(race_res, "Race")
 sex_plt <- plot_strat_test_by_study(sex_res, "Sex")
+past_event_plt <- plot_strat_test_by_study(past_event_res, "Past event")
 
 plot_grid(sex_plt, race_plt, age_quantile_plt, 
-          frs_quantile_plt, grs_quantile_plt, nrow=3)
+          frs_quantile_plt, grs_quantile_plt, past_event_plt, nrow=3)
 ```
 
-## Replication in LBC
-
-We sought to replicate these findings in individuals from the Lothian Birth Cohorts (LBC 1921 and LBC 1936).
-
-```{r lbc-replication, eval=F}
-lbc_mrs <- calc_mrs_glmnet(full_mrs_fit$cpg_coefs, betas_lbc)
-nmd_lbc$mrs <- lbc_mrs
-nmd_lbc_forFRScalc <- nmd_lbc %>%
-  mutate(ht_med=ifelse(!is.na(ht_med), ht_med, 0),
-         hdl=ifelse(!is.na(hdl), hdl, 50),
-         smk_now=ifelse(!is.na(smk_now), smk_now, F),
-         diabetes=ifelse(!is.na(diabetes), diabetes, F))
-nmd_lbc$frs <- calc_FRS(nmd_lbc_forFRScalc)
-
-nmd_lbc21 <- filter(nmd_lbc, study == "lbc21")
-nmd_lbc36 <- filter(nmd_lbc, study == "lbc36")
-
-lbc21_res <- test_mrs(nmd_lbc21, lbc_mrs[nmd_lbc$study == "lbc21"],
-         covars=basic_covars)
-lbc36_res <- test_mrs(nmd_lbc36, lbc_mrs[nmd_lbc$study == "lbc36"],
-         covars=basic_covars)
-lbc_res <- bind_rows(list(LBC21=lbc21_res, LBC36=lbc36_res), .id="Cohort")
-kable(lbc_res, caption="Replication of MRS performance in Lothian Birth Cohorts")
-```
-
-We also sought to confirm (in LBC36) the interactions with respect to sex and Framingham Risk Score observed in the training dataset. It does appear that the same patterns are observed in this age-matched cohort. 
-
-```{r lbc-sex-interaction, eval=F}
-male <- test_mrs_with_SE(nmd_lbc36, nmd_lbc36$mrs,
-                         nmd_lbc36$sex == "M",
-                         basic_covars[basic_covars != "sex"])
-female <- test_mrs_with_SE(nmd_lbc36, nmd_lbc36$mrs,
-                           nmd_lbc36$sex == "F",
-                           basic_covars[basic_covars != "sex"])
-sex_strat_res_lbc36 <- bind_rows(male, female)
-sex_strat_res_lbc36$Sex <- c("Male", "Female")
-sex_strat_plt_lbc36 <- ggplot(sex_strat_res_lbc36, aes(x=Sex, y=HR_per_SD)) +
-  geom_point() +
-  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
-  theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=30))
-```
-
-```{r lbc-frs-interaction, eval=F}
-frs_bucket_labels <- c("0-0.1", "0.1-0.2", "0.2-0.4", "0.4+")
-nmd_lbc36$frs_quantile <- cut(nmd_lbc36$frs,
-                              breaks=c(0, 0.1, 0.2, 0.4, 1),
-                              labels=frs_bucket_labels,
-                              include.lowest=T)
-frs_strat_res_lbc36 <- map_dfr(unique(frs_bucket_labels), 
-                               function(q) {
-  test_mrs_with_SE(nmd_lbc36, nmd_lbc36$mrs, 
-                   nmd_lbc36$frs_quantile == q,
-                   basic_covars)
-}, .id="FRS Quantile")
-frs_strat_res_lbc36$`FRS Quantile` <- frs_bucket_labels
-frs_strat_plt_lbc36 <- ggplot(frs_strat_res_lbc36, 
-                        aes(x=`FRS Quantile`, y=HR_per_SD)) +
-  geom_point() +
-  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) +
-  labs(x="FRS-based 10-year risk estimate")
-```
-
-```{r lbc-interaction-plots, eval=F}
-plot_grid(sex_strat_plt_lbc36, frs_strat_plt_lbc36, ncol=2)
-```
-
-* The LBC datasets are complicated: they are somewhat older, and have non-intuitive relationships between traditional CVD risk factors and CVD prevalence/incidence. At the very least, the two cohorts (1921 and 1936) should be modeled separately.
 
 ## Replication in REGICOR
 
 * Age & sex-balanced but not incident and MI only
+* Have already verified that a risk score trained in WHI & FHS discriminates between cases and controls fairly well
 * Look for sex, age, and FRS interactions here
 
-## Replication in KORA/InCHIANTI
+## Replication in InCHIANTI
 
+* Will a cohort of ~600 be large enough?
 * Look for sex, age, FRS, and genetic interactions here
-
-
-<!--
-## Alternate formulation: train with LBC36 included
-
-```{r train-test-setup-2, eval=F}
-nmd_all <- bind_rows(nmd_whi, nmd_fhs, 
-                     nmd_lbc[nmd_lbc$study == "lbc36", ]) %>% 
-  mutate(batch=case_when(study == "whi" ~ "whi",
-                         study == "lbc36" ~ "lbc36",
-                         TRUE ~ paste0("fhs_", center)))
-cvd_surv_all <- Surv(nmd_all$time, nmd_all$event)
-
-shared_cpgs_all <- intersect(
-  intersect(rownames(betas_whi), rownames(betas_fhs)),
-  rownames(betas_lbc))
-betas_all <- cbind(betas_whi[shared_cpgs_all, ],
-                   betas_fhs[shared_cpgs_all, ],
-                   betas_lbc[shared_cpgs_all, 
-                             nmd_lbc$study == "lbc36"])
-
-set.seed(1)
-trainset2 <- createDataPartition(factor(nmd_all$event), p=0.7)[[1]]
-testset2 <- seq(1, nrow(nmd_all))[-trainset2]
-```
-
-```{r final-train-model-2, cache=1, cache.vars=c("q75_cpg_set2", "train_mrs_fit_all"), eval=F}
-variances_all <- apply(betas_all[, trainset2], 1, var)
-
-q75_cpg_set2 <- rownames(betas_all)[(
-  variances_all >= quantile(variances_all, 0.75))]
-train_design_mat2 <- construct_design_mat(q75_cpg_set2, betas_all, 
-                                   "batch", nmd_all)
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-train_mrs_fit_all <- train_glmnet(train_design_mat2[trainset2, ], 
-                              cvd_surv_all[trainset2], 
-                              alpha=0, nfolds=3, parallel=T)
-stopCluster(cl)
-```
-
-```{r test-final-train-model-2, warning=F, fig.asp=1.8, eval=F}
-mrs2 <- calc_mrs_glmnet(train_mrs_fit_all$cpg_coefs, betas_all)
-
-nmd_all$diabetes <- nmd_all$dm_med | (nmd_all$glu > 125)
-
-nmd_test2 <- nmd_all[testset2, ]
-mrs_test2 <- mrs2[testset2]
-
-covar_sets <- list(
-  none=c(),
-  age_sex=c("age", "sex"),
-  plus_cell_counts=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran"),
-  plus_bmi=c("age", "sex", "bmi"),
-  plus_diabetes=c("age", "sex", "diabetes"),
-  plus_smoking=c("age", "sex", "smk_now", "smk_py"),
-  plus_lipids_sbp=c("age", "sex", "ldl", "hdl", "tg", "sbp"),
-  full_model=c("age", "sex", "CD4T", "CD8T", "NK", "Bcell", "Mono", "Gran",
-               "bmi", "diabetes", "smk_now", "smk_py", "ldl", "hdl", "tg", "sbp"))
-
-test_metrics_tbl2 <- map_dfr(
-  covar_sets, function(cs) test_mrs(nmd_test2, mrs_test2, covars=cs),
-  .id="Covariate_set")
-
-kable(test_metrics_tbl2, caption="Performance of the MRS in the held-out test set when training set includes LBC21 and LBC36.")
-```
-
-```{r all-thing-ints-old, fig.asp=1.4, eval=F}
-nmd_all$frs <- ifelse(nmd_all$study == "lbc36",
-                      nmd_lbc$frs[match(nmd_all$subjID, nmd_lbc$subjID)],
-                      nmd_whiFhs$frs[match(nmd_all$subjID, nmd_whiFhs$subjID)])
-nmd_all$grs <- nmd_whiFhs$grs[match(nmd_all$subjID, 
-                                    nmd_whiFhs$subjID)]
-
-nmd_all$frs_group <- cut(nmd_all$frs,
-                         breaks=c(0, 0.1, 0.2, 0.4, 1),
-                         # breaks=quantile(nmd_all$frs, seq(0, 1, 0.2), na.rm=T),
-                         # labels=c("0-0.1", "0.1-0.2", "0.2-0.3",
-                         #          "0.3-0.4", "0.4+"),
-                               include.lowest=T)
-nmd_all$age_group <- cut(nmd_all$age,
-                         breaks=c(0,55,65,75,100),
-                         #labels=c("<55", "55-65", "65-75", ">75"),
-                         # breaks=quantile(nmd_all$age, seq(0, 1, 0.2)),
-                         include.lowest=T)
-# grs_quintiles <- quantile(nmd_all$grs, seq(0, 1, by=0.2), na.rm=T)
-# nmd_all$grs_quantile <- cut(nmd_all$grs, 
-#                             breaks=grs_quintiles,
-#                             labels=paste0("Q", 1:5),
-#                             include.lowest=T)
-
-nmd_all$grs_group <- ifelse(nmd_all$study =="fhs",
-                               cut(nmd_all$grs,
-                                   breaks=grs_quantiles_fhs,
-                                   labels=paste0("Q", 1:5),
-                                   include.lowest=T),
-                               cut(nmd_all$grs,
-                                   breaks=grs_quantiles_whi,
-                                   labels=paste0("Q", 1:5),
-                                   include.lowest=T))
-
-# test_study_quantiles <- function(df, quantile_cat) {
-#   if (is.factor(nmd_all[[quantile_cat]])) {
-#     unique_levels <- levels(nmd_all[[quantile_cat]])
-#   } else {
-#     unique_levels <- unique(nmd_all[[quantile_cat]])
-#   }
-#   full_res <- map_dfr(unique_quantiles, function(q) {
-#     res_per_study <- df %>%
-#       nest(-study) %>%
-#       mutate(res=map(data, function(d) {
-#         tryCatch(test_mrs_with_SE(d, d$mrs2, d[[quantile_cat]] == q,
-#                                   basic_covars[basic_covars != "sex"]),
-#                  error=function(e) data.frame(NA, NA, NA, NA))
-#       }))
-#     cbind(study=res_per_study$study, bind_rows(res_per_study$res))
-#   }, .id="Group")
-#   full_res$Group <- unique_quantiles[as.numeric(full_res$Group)]
-#   full_res
-# }
-# 
-# plot_study_quantiles <- function(qres) {
-#   ggplot(qres, aes(x=Group, y=HR_per_SD, group=study, color=study)) +
-#     geom_point(position=position_dodge(width=0.2)) +
-#     geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
-#                   position=position_dodge(width=0.2)) +
-#     labs(x="Group")
-# }
-
-age_quantile_res <- strat_test_by_study(nmd_all, mrs2, "age_group")
-frs_quantile_res <- strat_test_by_study(nmd_all, mrs2, "frs_group")
-grs_quantile_res <- strat_test_by_study(nmd_all, mrs2, "grs_group")
-race_res <- strat_test_by_study(nmd_all, mrs2, "race")
-sex_res <- strat_test_by_study(nmd_all, mrs2, "sex")
-
-age_quantile_plt <- plot_strat_test_by_study(age_quantile_res, "Age") +
-  theme(axis.text.x=element_text(angle=30))
-frs_quantile_plt <- plot_strat_test_by_study(frs_quantile_res, "FRS 10-yr risk") +
-  theme(axis.text.x=element_text(angle=30))
-grs_quantile_plt <- plot_strat_test_by_study(grs_quantile_res, "Genetic risk score")
-race_plt <- plot_strat_test_by_study(race_res, "Race")
-sex_plt <- plot_strat_test_by_study(sex_res, "Sex")
-
-plot_grid(sex_plt, race_plt, age_quantile_plt, 
-          frs_quantile_plt, grs_quantile_plt, nrow=3)
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
