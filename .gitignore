@@ -4,6 +4,9 @@ cache/*
 *.RData
 *.pptx
 *cover_letter*
-src/*.sty
-src/*.cls
-src/*.csl
+*.sty
+*.cls
+*.csl
+doc/module_ewas/plos_med/*
+doc/module_ewas/genome_biology/*
+doc/module_ewas/nature_comm/*
