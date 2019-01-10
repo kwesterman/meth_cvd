@@ -43,16 +43,20 @@ merge_chromosomes () {
 
 	#cat $GENODIR/whi_${group}_chr*_low_qual_snps.txt > $GENODIR/whi_${group}_low_qual_snps.txt
 
-	# Read-in, SNP annotations and R2 filtering, and pfile output using plink2
+	# Read-in, and pfile output using plink2
 	plink2 --import-dosage $GENODIR/whi_$group.pdat \
 		--psam $GENODIR/whi_$group.pfam \
 		--make-pgen \
 		--out $GENODIR/whi_${group}_tmp
-	# ...while plink2 --alleleACGT is not yet operational
-	echo "$(sed 's/\b1\b/A/g' $GENODIR/whi_${group}_tmp.pvar)" > $GENODIR/whi_${group}_tmp.pvar
-	echo "$(sed 's/\b2\b/C/g' $GENODIR/whi_${group}_tmp.pvar)" > $GENODIR/whi_${group}_tmp.pvar
-	echo "$(sed 's/\b3\b/G/g' $GENODIR/whi_${group}_tmp.pvar)" > $GENODIR/whi_${group}_tmp.pvar
-	echo "$(sed 's/\b4\b/T/g' $GENODIR/whi_${group}_tmp.pvar)" > $GENODIR/whi_${group}_tmp.pvar
+
+	## ...while plink2 --alleleACGT is not yet operational
+	mv $GENODIR/whi_${group}_tmp.pvar $GENODIR/whi_${group}_tmp.pvartmp
+	awk '{gsub(1,"A",$4); gsub(2,"C",$4); gsub(3,"G",$4); gsub(4,"T",$4); \
+		gsub(1,"A",$5); gsub(2,"C",$5); gsub(3,"G",$5); gsub(4,"T",$5); print}' \
+		< $GENODIR/whi_${group}_tmp.pvartmp \
+		> $GENODIR/whi_${group}_tmp.pvar
+
+	# Update rsIDs and reference alleles (from dbSNP) and apply R2 filter
 	plink2 --pfile $GENODIR/whi_${group}_tmp \
 		--exclude $GENODIR/whi_${group}_low_qual_snps.txt \
 		--update-name $SNPANNO 3 6 \

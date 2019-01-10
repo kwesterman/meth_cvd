@@ -39,8 +39,14 @@ SNPANNO=../int/snp_annotations/snp_annot_hg19_nodups.txt  # Contains 1000 Genome
 plink2 --import-dosage $GENODIR/fhs.pdat \
 	--psam $GENODIR/fhs_chr1.pfam \
 	--exclude $GENODIR/fhs_low_qual_snps.txt \
-	--update-name $SNPANNO 3 6 \
-	--ref-allele $SNPANNO 4 3 \
 	--keep ../int/meth_ids.txt \
 	--make-pgen \
+	--out $GENODIR/tmp_fhs
+
+plink2 --pfile $GENODIR/tmp_fhs \
+	--update-name $SNPANNO 3 6 \
+	--ref-allele $SNPANNO 4 3 \
+	--make-pgen \
 	--out $GENODIR/fhs
+
+rm $GENODIR/tmp_fhs*

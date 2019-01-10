@@ -21,23 +21,22 @@ grs_weights.to_csv("../int/grs_weights.txt", sep="\t", header=False, index=False
 EOF
 
 # FHS
-#plink2 --pfile $GENODIR/fhs \
-#       --score ../int/grs_weights.txt 1 2 3 \
-#       --out ../int/fhs_grs
-#
-#plink2 --pfile $GENODIR/fhs \
-#	--score ../int/khera_50snp_score_weights.txt 1 2 3 \
-#	--out ../int/fhs_grs_50snp
+plink2 --pfile $GENODIR/fhs \
+       --score ../int/grs_weights.txt 1 2 3 \
+       --out ../int/fhs_grs
 
-# WHI
+plink2 --pfile $GENODIR/fhs \
+	--score ../int/khera_50snp_score_weights.txt 1 2 3 \
+	--out ../int/fhs_grs_50snp
+
+## WHI
 #declare -a groups=("as264" "garnet" "gecco_cyto" "gecco_init" "hipfx" "whims" "share_aa" "share_ha")
-declare -a groups=("share_ha")
-
-for group in ${groups[@]}; do
+#
+#for group in ${groups[@]}; do
 #	plink2 --pfile $GENODIR/whi_${group} \
 #		--score ../int/grs_weights.txt 1 2 3 \
 #		--out ../int/whi_${group}_grs
-	plink2 --pfile $GENODIR/whi_${group} \
-		--score ../int/khera_50snp_score_weights.txt 1 2 3 \
-		--out ../int/whi_${group}_grs_50snp
-done
+#	plink2 --pfile $GENODIR/whi_${group} \
+#		--score ../int/khera_50snp_score_weights.txt 1 2 3 \
+#		--out ../int/whi_${group}_grs_50snp
+#done
