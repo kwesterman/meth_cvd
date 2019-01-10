@@ -1,0 +1,55 @@
+---
+output: 
+  pdf_document:
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: pdflatex
+    # template: ~/Dropbox/miscelanea/svm-r-markdown-templates/svm-latex-ms.tex
+title: "Placeholder title: MRS for CVD"
+# thanks: "Replication files are available on the author's Github account..."
+# author:
+# - name: Steven V. Miller
+#   affiliation: Clemson University
+# - name: Mary Margaret Albright
+#   affiliation: Pendelton State University
+abstract: "This is the abstract..."
+# keywords: "pandoc, r markdown, knitr"
+# date: "`r format(Sys.time(), '%B %d, %Y')`"
+# geometry: margin=1in
+# fontfamily: mathpazo
+# fontsize: 11pt
+# # spacing: double
+bibliography: mrs_manuscript.bib
+# biblio-style: apsr
+# see http://svmiller.com/blog/2016/02/svm-r-markdown-manuscript/ for details on this .Rmd template
+---
+
+```{r setup, include=F}
+knitr::opts_chunk$set(echo=F, fig.path="figures/")
+suppressMessages(silent <- lapply(
+  c("knitr", "tidyverse", "cowplot"), library, character.only=T))
+```
+
+# Introduction
+
+* Methylation for prognosis --> risk score
+    - Pathway by which genetics + environment impact disease risk [@Richardson2017; @Tobi2018] (mQTLs as enriched in GWAS hits citation, DOHaD citation)
+    - Marker of risk even in other tissues [@Bacos 2016]
+    - Risk scores allow genome-wide aggregation of info
+          - As proxy for RFs [@Levine2018; @Wahl2016] (PhenoAge citation, Wahl BMI CpGs --> T2D risk citation)
+          - Directly [@Hao2017] (cancer prognosis citation)
+* CVD risk scores
+    - Many CVD cross-sectional associations (Alba's review) [@Fernandez-Sanles2017]]
+    - Some single-CpG associations (Hedman citation, JAMA cardio. TNFa citation) [@Hedman2017; @Aslibekyan2018]
+    - Few studies looking at directly modeling incidence (Baccarelli 2010, the 2013 paper) but have mixed results [@Baccarelli2010; @Guarrera2015]
+    - Additionally, unclear how the meth. risk interacts with other sources of risk (e.g. genetic) [@Khera2018]
+* Multistudy stuff
+    - Important to combine signal to avoid study-specific biases/confounding and increase sample size
+    - Batch effects present a problem for direct combination
+    - Linear models can be adjusted for but still susceptible to higher-order interactions (and non-linear are hard to adjust)
+    - Meta-analysis requires the analysis to be univariate (investigate this claim more thoroughly and moderate as necessary)
+    - Patil et al. 2018 -- CSL method as an approach to overcoming these obstacles, allows arbitrarily complex modeling of an arbitrary # of studies [@Patil2018]
+* To create robust predictors of CVD risk while combining info across cohorts, we did...
+
+
