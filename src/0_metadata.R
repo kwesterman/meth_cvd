@@ -74,14 +74,20 @@ crp_fhs <- bind_rows(crp_fhs_c1, crp_fhs_c2) %>%
 questionnaire_fhs_c1 <- read_tsv("../data/fhs/phen/exam8Data_fhs_c1.txt", skip=10)
 questionnaire_fhs_c2 <- read_tsv("../data/fhs/phen/exam8Data_fhs_c2.txt", skip=10)
 questionnaire_fhs <- bind_rows(questionnaire_fhs_c1, questionnaire_fhs_c2) %>%
-  rename(subjID=shareid, cig_start_age=H065) %>%
-  select(subjID, cig_start_age)
+  rename(subjID=shareid, smk_now=H062, cig_per_day=H063, cig_start_age=H065, 
+         cig_stop_age=H066) %>%
+  select(subjID, cig_start_age, cig_stop_age)
 
 pheno_data_fhs <- phenos_fhs %>%
   left_join(crp_fhs, by="subjID") %>%
   left_join(questionnaire_fhs, by="subjID") %>%
   mutate(subjID=as.character(subjID),
-         smk_py=ifelse(smk_now, cig_per_day / 20 * (age - cig_start_age), 0))  # Rough -- assumes no one has quit
+         smk_py=case_when(smk_now == 0 & cig_stop_age == 0 ~ 0,
+                          smk_now == 0 & cig_stop_age != 0 ~ 15 / 20 *  # Assumes ~ median cig/d for those who have quit
+                            (cig_stop_age - cig_start_age),
+                          smk_now == 1 ~ cig_per_day / 20 * (age - cig_start_age),
+                          TRUE ~ as.numeric(NA)))
+         # smk_py=ifelse(smk_now, cig_per_day / 20 * (age - cig_start_age), 0))  # Rough -- assumes no one has quit
 
 ## WHI
 basic_data_whi_c1 <- read_tsv("../data/whi/phen/basic_whi_c1.txt", skip=10)
@@ -179,7 +185,7 @@ hypertension_med_classes <- c(
   "ANTIHYPERTENSIVE - MAOIS", "MISC. ANTIHYPERTENSIVES",
   "ANTIHYPERTENSIVE COMBINATIONS", "RESERPINE COMBINATIONS",
   "ACE INHIBITORS & CALCIUM BLOCKERS", 
-  "ACE INHIBITORS & THIAZIDE/THIAZIDE-LIKE", 
+  "ACE INHIBITORS & THIAZIDE/THIAZIDE-LIKE",
   "BETA BLOCKER & DIURETIC COMBINATIONS", 
   "BETA BLOCKER & CALCIUM BLOCKER COMBINATIONS",
   "ANGIOTENSIN II RECEPTOR ANTAGONISTS & THIAZIDES",
@@ -248,6 +254,22 @@ pheno_data_lbc21 <- read.spss("../data/lbc/phen/LBC1921_MethylationCardioVascula
   select(subjID, sex, age, race, bmi, smk_now, sbp, chol, tg, ht_med, lipid_med)
 
 ## LBC 1936
+statin_strings <- c("statin", "zocor", "lipitor")
+statin_regex <- paste(statin_strings, collapse="|")
+other_lipid_med_strings <- c("ezetimibe")
+other_lipid_med_regex <- paste(other_lipid_med_strings, collapse="|")
+ht_med_strings <- c(
+  "zide", "bumetanide", "amiloride", "emide",  # diuretics
+  "diltiazem", "dipine",  # Ca channel blockers
+  "pril",  # ACE inhibitors
+  "artan",  # Angiotensin II inhibitors
+  "lol",  # Beta blockers
+  "zosin", "indoramin",  # Alpha blockers
+  "lactone"  # Aldosterone receptor agonists
+  # Alpha-2 receptor agonists
+)
+ht_med_regex <- paste(ht_med_strings, collapse="|")
+
 pheno_data_lbc36 <- read.spss("../data/lbc/phen/LBC1936_MethylationCardioVascularRiskMeditereanDiet_JO_TUFTS_02FEB2018.sav") %>%
   as.data.frame(stringsAsFactors=F) %>%
   mutate(subjID=trimws(lbc36no),
@@ -261,12 +283,15 @@ pheno_data_lbc36 <- read.spss("../data/lbc/phen/LBC1936_MethylationCardioVascula
          hdl=bld_hdlchol_w1 * 38.67,
          tg=bld_triglyc_w1 * 88.57,
          hscrp=bld_crprot_w1,
-         diabetes=diab_w1 == "Yes",
-         tg=bld_triglyc_w1) %>%
+         diabetes=diab_w1 == "Yes") %>%
+  unite(all_drugs, matches("drug.+w1")) %>%
+  mutate(statin=grepl(statin_regex, all_drugs, ignore.case=T),
+         other_lipid_med=grepl(other_lipid_med_regex, all_drugs, ignore.case=T),
+         lipid_med=statin | other_lipid_med,
+         ht_med=grepl(ht_med_regex, all_drugs, ignore.case=T)) %>%
   select(subjID, sex, age, race, bmi, smk_now, sbp, 
-         chol, hdl, tg, hscrp, diabetes)
-# Hypertension and lipid medications still to be added
-# (requires scraping of the many drug columns)
+         chol, hdl, tg, hscrp, diabetes,
+         statin, lipid_med, ht_med, other_lipid_med)
 
 pheno_data <- bind_rows(list(fhs=pheno_data_fhs, whi=pheno_data_whi, 
                              lbc21=pheno_data_lbc21, lbc36=pheno_data_lbc36), 
@@ -325,7 +350,8 @@ outcome_data_fhs <- left_join(surv2014_fhs, soe2015_fhs_clean, by="shareid") %>%
   mutate(time=case_when(event == T ~ timeToEvent,  # Experienced an event after Exam 8 -> use that follow-up time
                         death == T ~ timeToDeath,  # Didn't experience an event but died -> censor at death
                         cvd == 0 ~ cvddate,  # No event and no CVD in surv file -> censoring time from surv file
-                        TRUE ~ as.integer(timeToExam9))) %>%  # No event and CVD in surv file -> use exam 9 date for censor time
+                        TRUE ~ timeToExam9),
+         time=as.integer(time)) %>%  # No event and CVD in surv file -> use exam 9 date for censor time
   filter(!is.na(time)) %>%  # Remove those individuals with no Exam 9 date and thus no known censorship time
   mutate(subjID=as.character(shareid)) %>%
   select(subjID, pastEvent, event, eventType, time, incCHD, incStroke)
