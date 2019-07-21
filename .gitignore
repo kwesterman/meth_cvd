@@ -1,12 +1,27 @@
+# Data and R files
 data/*
 int/*
 cache/*
 *.RData
-*.pptx
-*cover_letter*
+*.rds
+*.Rhistory
+
+# LaTeX helper files
 *.sty
 *.cls
 *.csl
-doc/module_ewas/plos_med/*
-doc/module_ewas/genome_biology/*
-doc/module_ewas/nature_comm/*
+*.aux
+*.log
+*.out
+*.synctex.gz
+
+$ Microsoft Office files
+*.docx
+*.pptx
+
+# Submissions
+doc/module_ewas/past_submissions/*
+*cover_letter*
+
+# Mac-specific
+*.DS_Store
