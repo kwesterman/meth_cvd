@@ -79,6 +79,8 @@
     \preauthor{}\postauthor{}
     \date{}
     \predate{}\postdate{}
+    
+\providecommand{\DIFaddtex}[1]{{\protect\color{blue}\uwave{#1}}} %DIF PREAMBLE
   
 \usepackage{booktabs}
 \usepackage{longtable}
@@ -382,7 +384,7 @@ manually using the UCSC Genome Browser {[}63{]} and a dbSNP-based
 annotation track displaying common (\textgreater{}=1\% minor allele
 frequency) variants.
 
-Mendelian randomization (MR) analyses were undertaken for the 4 DMR CpGs
+\DIFaddtex{Mendelian randomization (MR) analyses were undertaken for the 4 DMR CpGs
 that participated in mQTLs in whole blood in the mQTLdb {[}21{]}.
 Relevant mQTL SNPs were retrieved from mQTLdb and used as input to the
 MR-Base platform {[}22{]}. MR analysis was run using MR-Egger, weighted
@@ -392,7 +394,7 @@ Outcome summary statistics for MI and CHD were taken from GWAS in the
 CARDIoGRAMplusC4D consortium {[}64{]}. LD-based clumping was used to
 prune correlated SNPs prior to analysis, with default values used for
 all other parameters. For follow-up of one SNP of interest,
-tissue-specific eQTL data were explored in the GTEx Portal (release v7).
+tissue-specific eQTL data were explored in the GTEx Portal (release v7).}
 
 \subsection{Module enrichment
 analyses}\label{module-enrichment-analyses}
@@ -446,7 +448,7 @@ this method borrows from the permutation-based eFORGE tool methodology
 module. However, we confirmed similarity of our results to those from
 the eFORGE method for the brown module (Supp. Fig. S3).
 
-Cell type-module interaction analyses were undertaken using a similar
+\DIFaddtex{Cell type-module interaction analyses were undertaken using a similar
 approach to that of the CellDMC algorithm for cell type-specific
 differentially-methylated cytosine discovery {[}25{]}. Current
 implementations of CellDMC do not support time-to-event models.
@@ -455,7 +457,7 @@ module-CVD replication, while including interaction terms between the
 brown module and each of 5 estimated cell type fractions (leaving out
 estimated granulocytes). The reported interaction term of interest was
 that between the brown module and monocyte fractions as influences
-time-to-event for CVD.
+time-to-event for CVD.}
 
 \subsection{Risk factor integration}\label{risk-factor-integration}
 
@@ -647,7 +649,7 @@ translational repression. Of the three WGCNA modules identified above,
 brown CpG sites constituted part of 2 DMRs (at SLC9A1 \& SLC1A5), while
 a single CpG from the blue module was also a member of the SLC9A1 DMR.
 
-Of CpGs in these 3 identified DMRs, 4 (2 in SLC1A5 and 1 each in SLC9A1
+\DIFaddtex{Of CpGs in these 3 identified DMRs, 4 (2 in SLC1A5 and 1 each in SLC9A1
 and TNRC6C) were involved in methylation-quantitative trait loci (mQTL)
 based on the mQTLdb {[}21{]}. For these 4 CpGs, a Mendelian
 randomization analysis was undertaken using the MR-Base platform
@@ -659,7 +661,7 @@ relationship linked a cis-mQTL for cg22304262 with MI (p=0.013) and CHD
 expression levels in whole blood based on the GTEx database {[}23{]}.
 Taken together, these data are consistent with a small effect of DNA
 methylation at SLC1A5 on CVD, possibly acting through regulation of
-SLC1A5 gene expression.
+SLC1A5 gene expression.}
 
 \subsection{Exploration of the brown and blue
 modules}\label{exploration-of-the-brown-and-blue-modules}
@@ -686,14 +688,14 @@ enhancer-associated chromatin annotations, DNase hypersensitivity sites
 (DHS) and H3K4me1 histone peaks, from monocytes compared to other blood
 cell subtypes (Fig. 2c). This could point towards monocyte-related
 biology and inflammatory processes as an important shared mechanism for
-cardiovascular risk between the two cohorts examined here. To validate
+cardiovascular risk between the two cohorts examined here. \DIFaddtex{To validate
 this observation, an additional analysis based on the CellDMC method
 {[}25{]} was undertaken, based on the idea that cell type-specific
 epigenetic changes will result in statistical interactions between cell
 types and epigenetic quantities. Adapting this method to the epigenetic
 module level and applying it using partially-adjusted Cox models in FHS,
 no meaningful statistical interaction between monocyte fractions and
-brown module activation were observed (positive interaction; p=0.83). In
+brown module activation were observed (positive interaction; p=0.83).} In
 contrast to the monocyte-related enrichments for the brown module, blue
 CpGs were enriched for DHS and promoter-associated H3K4me3 histone peaks
 from hematopoietic stem cells (HSCs), providing a link to the observed
@@ -891,11 +893,11 @@ transition upon exposure to CSF-1{[}40{]}. Common to these three DMRs is
 a potential involvement in monocyte biology specific to a stimulus
 response. This concept of ``priming'' for subsequent response to
 stimulus has been observed with respect to both monocyte activity in CVD
-{[}41{]} and DNA methylation in general {[}42{]}. While a two-step
+{[}41{]} and DNA methylation in general {[}42{]}. \DIFaddtex{While a two-step
 Mendelian randomization analysis here found modest potential causal
 evidence for CVD for only one DMR constituent CpG (in SLC1A5), a lack of
 available mQTL SNPs for the full set of relevant CpGs prevented a full
-exploration.
+exploration.}
 
 Based on the module- and region-level replication in FHS, we further
 explored the characteristics of the brown and blue modules. Enrichment
@@ -997,12 +999,34 @@ cardiovascular disease risk. We show that epigenetic modules track with
 diverse biological sources of CVD risk, ranging from development- to
 immune-related processes, and may provide a molecular readout of past
 exposure to cardiovascular risk factors. We further discover specific
-differentially methylated regions that show limited evidence for a
-causal impact on CVD but may be related to monocyte activation in
+differentially methylated regions that \DIFaddtex{show limited evidence for a
+causal impact on CVD but may be related} to monocyte activation in
 response to biological stimuli. This work opens the door to further
 investigation of the epigenetic basis of CVD risk as well as the ability
 of DNA methylation to act as a biomarker of prior exposures that may be
 important for disease-relevant prognosis and interventions.
+
+\section{Abbreviations}\label{abbreviations}
+
+\textbf{BMI:} body mass index
+\textbf{CHD:} coronary heart disease
+\textbf{Chol:} cholesterol
+\textbf{CpG:} cytosine-phosphate-guanine
+\textbf{CVD:} cardiovascular disease
+\textbf{DMR:} differentially-methylated region
+\textbf{EWAS:} epigenome-wide association study
+\textbf{FHS:} Framingham Heart Study Offspring Cohort
+\textbf{Glu:} glucose
+\textbf{HDL:} high-density lipoprotein cholesterol
+\textbf{HSC:} hemtopoietic stem cell
+\textbf{hsCRP:} high-sensitivity C-reactive protein
+\textbf{LDL:} low-density lipoprotein cholesterol
+\textbf{MI:} myocardial infarction
+\textbf{SBP:} systolic blood pressure
+\textbf{Smoking-PY:} pack-years of smoking 
+\textbf{TG:} serum triglycerides
+\textbf{WGCNA:} Weighted Gene Correlation Network Analysis
+\textbf{WHI:} Women's Health Initiative
 
 \section{Declarations}\label{declarations}
 
@@ -1043,11 +1067,11 @@ to the manuscript. All authors read and approved the final manuscript.
 
 \subsection{Acknowledgements}\label{acknowledgements}
 
-The Genotype-Tissue Expression (GTEx) Project was supported by the
+\DIFaddtex{The Genotype-Tissue Expression (GTEx) Project was supported by the
 Common Fund of the Office of the Director of the National Institutes of
 Health, and by NCI, NHGRI, NHLBI, NIDA, NIMH, and NINDS. The data used
 for the analyses described in this manuscript were obtained from the
-GTEx Portal on 06/28/2019.
+GTEx Portal on 06/28/2019.}
 
 \section{References}\label{references}
 
@@ -1055,6 +1079,7 @@ GTEx Portal on 06/28/2019.
 
 \begin{figure}[htbp]
 \centering
+\includegraphics{../doc/module_ewas/figures/print-combp-plots-1.pdf}
 \caption{\label{fig:print-combp-plots}DMRs identified by Comb-p in WHI and
 validated in FHS at the (a) SLC9A1, (b) SLC1A5, and (c) TNRC6C loci.
 Negative logarithms of EWAS p-values are shown as a function of the
@@ -1066,6 +1091,7 @@ incident CVD.}
 
 \begin{figure}[htbp]
 \centering
+\includegraphics{../doc/module_ewas/figures/brown-and-blue-plots-1.pdf}
 \caption{\label{fig:brown-and-blue-plots}Genomic and epigenomic annotations
 of the brown and blue modules. a,b) Relative proportions of module CpGs
 compared to the full set of CpGs tested, with respect to gene-based (a)
@@ -1079,6 +1105,7 @@ blood cell types, for each of the modules of interest.}
 
 \begin{figure}[htbp]
 \centering
+\includegraphics{../doc/module_ewas/figures/risk-factor-correlation-plots-1.pdf}
 \caption{\label{fig:risk-factor-correlation-plots}Risk factor-module
 relationships. (a) Pearson correlations between a series of traditional
 cardiovascular risk factors and module eigenCpGs (blue and brown) are

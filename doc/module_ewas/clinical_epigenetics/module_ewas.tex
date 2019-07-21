@@ -64,7 +64,7 @@
 \usepackage{titling}
 
 % Create subtitle command for use in maketitle
-\providecommand{\subtitle}[1]{
+\newcommand{\subtitle}[1]{
   \posttitle{
     \begin{center}\large#1\end{center}
     }
@@ -93,6 +93,20 @@
 \usepackage[normalem]{ulem}
 \usepackage{makecell}
 
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}{Lemma}[section]
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{corollary}{Corollary}[section]
+\newtheorem{proposition}{Proposition}[section]
+\theoremstyle{definition}
+\newtheorem{example}{Example}[section]
+\theoremstyle{definition}
+\newtheorem{exercise}{Exercise}[section]
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+\newtheorem*{solution}{Solution}
 \begin{document}
 
 
@@ -177,21 +191,21 @@ outcomes {[}2{]}.
 A series of recent epigenome-wide association studies (EWAS) have
 examined relationships between DNA methylation at
 cytosine-phosphate-guanine (CpG) sites and various subtypes of CVD,
-including prior myocardial infarction (MI) {[}3{]}, acute coronary
-syndrome {[}4{]}, and atherosclerosis {[}5{]}. These cross-sectional
-studies may reveal important mechanistic insights, but are susceptible
-to reverse causation, i.e.~methylation being influenced by the presence
-of CVD. Indeed, Mendelian randomization approaches across multiple
-phenotypes have suggested that reverse causation is more common
-{[}6,7{]} than the causal methylation effect that is often implicitly
-assumed. One approach to this problem is to examine epigenetic
-associations with cardiovascular risk factors. Multiple investigations
-have explored these relationships genome-wide {[}8,9{]}, and have even
-uncovered prognostic CpG sites for incident coronary heart disease (CHD)
-in the process {[}10,11{]}. A few studies looking directly at incident
-CVD as a binary variable have found relationships with global DNA
-methylation (as approximated by LINE-1 methylation levels) and with a
-specific cluster of CpG sites in the ZBTB12 gene {[}12,13{]}.
+including prior myocardial infarction {[}3{]}, acute coronary syndrome
+{[}4{]}, and atherosclerosis {[}5{]}. These cross-sectional studies may
+reveal important mechanistic insights, but are susceptible to reverse
+causation, i.e.~methylation being influenced by the presence of CVD.
+Indeed, Mendelian randomization approaches across multiple phenotypes
+have suggested that reverse causation is more common {[}6,7{]} than the
+causal methylation effect that is often implicitly assumed. One approach
+to this problem is to examine epigenetic associations with
+cardiovascular risk factors. Multiple investigations have explored these
+relationships genome-wide {[}8,9{]}, and have even uncovered prognostic
+CpG sites for incident coronary heart disease in the process
+{[}10,11{]}. A few studies looking directly at incident CVD as a binary
+variable have found relationships with global DNA methylation (as
+approximated by LINE-1 methylation levels) and with a specific cluster
+of CpG sites in the ZBTB12 gene {[}12,13{]}.
 
 Studies linking CVD and methylation have additionally shown a notable
 lack of replication, especially at the level of single CpG sites
@@ -224,7 +238,7 @@ collection}\label{study-participants-and-phenotype-collection}
 Data for the discovery set came from a combined case-control and pseudo
 case-cohort sampling of 2129 women from the Women's Health Initiative
 study, a larger prospective cohort beginning in 1993 that included over
-160,000 postmenopausal women from across the United States {[}52{]}.
+160,000 postmenopausal women from across the United States{[}48{]}.
 Included subjects had no self-reported CVD at baseline, and cases were
 chosen based on incident centrally adjudicated angina,
 revascularization, or CHD event during follow-up. Inclusion criteria for
@@ -237,21 +251,20 @@ downloaded on September 27, 2017).
 Data for the validation set came from a substudy of the Framingham Heart
 Study that measured DNA methylation in 2726 subjects from the Offspring
 Cohort. The Framingham Offspring Cohort was originally established in
-1971 to follow 5209 descendants of the original Framingham Heart Study
-participants and their spouses {[}53{]}. Fasting blood samples for both
+1971 to follow 5209 children of the original Framingham Heart Study
+participants and their spouses{[}49{]}. Fasting blood samples for both
 methylation and clinical biochemistry were collected from participants
 at Exam 8, which took place from 2005-8. Blood samples were also
 provided for clinical biochemistry measurements in previous exams,
 constituting the ``past exposures'' examined here. Data are available in
 the dbGaP public repository (accession: phs000007.v29.p10; downloaded on
 September 27, 2017). Adjudicated cardiovascular event data was collected
-through 2015, and events were defined here as any of: MI, angina
-pectoris, stroke (approximately 90\% being ischemic), or death from CHD
-(Framingham event codes 1-29).
+through 2015, and events were defined here as any of: myocardial
+infarction, angina pectoris, stroke (approximately 90\% being ischemic),
+or death from CHD (Framingham event codes 1-29).
 
-Blood-based biochemical markers (total cholesterol, low-density
-lipoprotein cholesterol (LDL), high-density lipoprotein cholesterol
-(HDL), triglycerides, glucose, hsCRP, and systolic blood pressure) were
+Blood-based biochemical markers (total cholesterol, LDL, HDL,
+triglycerides, glucose, hsCRP, and systolic blood pressure) were
 log10-transformed for all analyses. In addition, median imputation was
 used to fill missing values for BMI (20 individuals in total),
 medication use, and smoking status (thus assuming no medication use and
@@ -265,9 +278,9 @@ of years since starting smoking by the current number of packs per day.
 processing}\label{dna-methylation-data-processing}
 
 In both cohorts, DNA methylation data were collected using the Illumina
-HumanMethylation450 microarray platform {[}54{]} and downloaded as raw
+HumanMethylation450 microarray platform {[}50{]} and downloaded as raw
 intensity files. Preprocessing was performed using the \emph{minfi} and
-\emph{wateRmelon} packages for R {[}55,56{]}. As a quality control step,
+\emph{wateRmelon} packages for R {[}51,52{]}. As a quality control step,
 samples were removed if they showed weak overall signal based on visual
 inspection of an intensity plot, if they had more than 10\% of probes
 undetected at a detection threshold of p\textless{}1e-16, or if the
@@ -279,12 +292,12 @@ cross-hybridizing probes, probes measuring SNPs, and probes with an
 annotated SNP at the CpG site or in the single-base extension region.
 Samples were normalized using the Noob method for background correction
 and dye-bias normalization, followed by the BMIQ method for probe type
-correction {[}57,58{]}. For each dataset, principal components analysis
+correction {[}53,54{]}. For each dataset, principal components analysis
 was performed on the set of control probes using code adapted from the
 CPACOR method of Lehne et al. to account for technical variation
-{[}59{]}. Blood cell counts for 6 blood cell types (CD4+ T-cells, CD8+
+{[}55{]}. Blood cell counts for 6 blood cell types (CD4+ T-cells, CD8+
 T-cells, B-cells, natural killer cells, monocytes, and granulocytes)
-were estimated using a common reference-based method {[}60{]}. After
+were estimated using a common reference-based method {[}56{]}. After
 quality control and filtering steps, 422952 (WHI) and 425326 (FHS) CpG
 sites remained for downstream analysis, formatted as beta values (ratio
 of methylated signal to total microarray signal). The vast majority of
@@ -338,7 +351,7 @@ but were found to generate highly similar results (Supp. Table S1).
 CVD
 events}\label{epigenome-wide-associations-of-dna-methylation-with-incident-cvd-events}
 
-For the EWAS analysis, each CpG site was assessed using the same
+For the EWAS analysis, each CpG site was assessed using the the same
 regression framework as in the module-based models, separately in both
 WHI and FHS. Methylation beta-values replaced eigenCpGs as the
 independent variable, and the full set of technical and biological
@@ -353,7 +366,7 @@ based on a Scree plot assessment of CPACOR results), a reasonable
 inflation of \(\lambda\) = 1.09 was achieved. CPACOR uses principal
 components analysis on the set of control probes from the methylation
 array in order to estimate and control for potential batch effects
-without disturbing biological signal {[}59{]}. Proportional hazards
+without disturbing biological signal {[}55{]}. Proportional hazards
 checks were implemented as in the module-based analysis for the top EWAS
 hits in WHI, and no systematic departure from the Cox regression
 assumptions were detected.
@@ -364,41 +377,29 @@ the EWAS, removing the requirement for additional covariate adjustment.
 Comb-p first calculates an autocorrelation function (ACF), for which a
 maximum distance of 1kb and a step size of 50 bases were used. Next, it
 uses the ACF to adjust each p-value using a Stouffer-Liptak-Kechris
-correction {[}61{]}, followed by identification of contiguous regions of
-sites with adjusted p-values below some threshold (here, p\textless{}0.1
-with no more than 500 bases between neighboring sites in a region).
-Finally, the ACF is recalculated out to the maximum region size (a step
-size of 50 was used here as well) and regional p-values are calculated
-using the Stouffer-Liptak test. For Sidak multiple testing correction of
-DMRs {[}62{]}, Comb-p calculates the number of effective tests
-separately for each DMR as the number of loci tested divided by the
-number of loci in the region, thus approximating a correction for the
-total number of regions while accounting for region size.
+correction, followed by identification of contiguous regions of sites
+with adjusted p-values below some threshold (here, p\textless{}0.1 with
+no more than 500 bases between neighboring sites in a region). Finally,
+the ACF is recalculated out to the maximum region size (a step size of
+50 was used here as well) and regional p-values are calculated using the
+Stouffer-Liptak test. For Sidak multiple testing correction of DMRs,
+Comb-p calculates the number of effective tests separately for each DMR
+as the number of loci tested divided by the number of loci in the
+region, thus approximating a correction for the total number of regions
+while accounting for region size.
 
 DMRs were examined to evaluate whether their constituent CpGs contained
 any residual SNPs-under-probe that escaped filtering based on the
 Illumina HumanMethylation450 annotation. These checks were performed
-manually using the UCSC Genome Browser {[}63{]} and a dbSNP-based
+manually using the UCSC Genome Browser {[}57{]} and a dbSNP-based
 annotation track displaying common (\textgreater{}=1\% minor allele
 frequency) variants.
-
-Mendelian randomization (MR) analyses were undertaken for the 4 DMR CpGs
-that participated in mQTLs in whole blood in the mQTLdb {[}21{]}.
-Relevant mQTL SNPs were retrieved from mQTLdb and used as input to the
-MR-Base platform {[}22{]}. MR analysis was run using MR-Egger, weighted
-median, inverse variance weighted, and weighted mode methods where
-possible, and the Wald ratio method where only one SNP was available.
-Outcome summary statistics for MI and CHD were taken from GWAS in the
-CARDIoGRAMplusC4D consortium {[}64{]}. LD-based clumping was used to
-prune correlated SNPs prior to analysis, with default values used for
-all other parameters. For follow-up of one SNP of interest,
-tissue-specific eQTL data were explored in the GTEx Portal (release v7).
 
 \subsection{Module enrichment
 analyses}\label{module-enrichment-analyses}
 
 Gene ontology-based enrichment analysis of modules was performed using
-the gometh function from the \emph{missMethyl} package for R {[}65{]}.
+the gometh function from the \emph{missMethyl} package for R {[}58{]}.
 In this procedure, CpG sites are annotated to genes using the
 HumanMethylation450 microarray annotation from Illumina, resulting in a
 binary vector indicating whether each gene is associated with any of the
@@ -416,7 +417,7 @@ islands (Island, North shore, Open sea, etc.) and genes (TSS1500, 3'
 UTR, Body, etc.) were retrieved from the standard Illumina
 HumanMethylation450 microarray annotation. CpG sites were annotated for
 Polycomb-group target status using embryonic stem cell SUZ12 binding
-regions retrieved from Lee et al. {[}30{]}. A similar approach was taken
+regions retrieved from Lee et al. {[}26{]}. A similar approach was taken
 to calculate enrichment of epigenetic age CpGs in module sets, replacing
 annotation category membership with membership in the corresponding
 epigenetic age biomarker.
@@ -429,7 +430,7 @@ module CpGs in cell type-specific regulatory regions. Annotations for
 broad peaks in DNase sensitivity as well as ChIP-seq signal for H3K4me1
 and H3K4me3 were obtained for 6 blood cell types (monocytes, natural
 killer cells, T-cells, B-cells, and hematopoietic stems cells from males
-and females) from the NIH Roadmap Epigenomics Project database {[}24{]}.
+and females) from the NIH Roadmap Epigenomics Project database {[}21{]}.
 For each combination of epigenomic feature and cell type, CpGs from the
 HumanMethylation450 array were classified as to their membership in a
 peak region. Relative enrichments of in-peak CpGs for modules were then
@@ -442,20 +443,9 @@ relative enrichments across cell types, especially with respect to
 highly-represented regulatory annotation types (e.g.~DNase
 hypersensitivity sites for a module enriched in enhancers). We note that
 this method borrows from the permutation-based eFORGE tool methodology
-{[}44{]}, which could not be used here due to the size of the blue
+{[}40{]}, which could not be used here due to the size of the blue
 module. However, we confirmed similarity of our results to those from
 the eFORGE method for the brown module (Supp. Fig. S3).
-
-Cell type-module interaction analyses were undertaken using a similar
-approach to that of the CellDMC algorithm for cell type-specific
-differentially-methylated cytosine discovery {[}25{]}. Current
-implementations of CellDMC do not support time-to-event models.
-Partially-adjusted models were built in FHS as was done for the initial
-module-CVD replication, while including interaction terms between the
-brown module and each of 5 estimated cell type fractions (leaving out
-estimated granulocytes). The reported interaction term of interest was
-that between the brown module and monocyte fractions as influences
-time-to-event for CVD.
 
 \subsection{Risk factor integration}\label{risk-factor-integration}
 
@@ -505,14 +495,14 @@ following the methylation measurement timepoint. The replication set,
 Framingham Heart Study Offspring Cohort (n=2587), had a median age of 66
 at blood draw (Exam 8) and is approximately half female, with 305
 subjects experiencing incident CVD events. Cardiovascular events were
-defined here as encompassing CHD, stroke, and death from CVD (see
-Methods section for further details).
+defined here as encompassing coronary heart disease, stroke, and death
+from CVD (see Methods section for further details).
 
-\begin{table}[t]
+\begin{table}
 
 \caption{\label{tab:population-description}Population description}
 \centering
-\begin{tabular}{lll}
+\begin{tabular}[t]{lll}
 \toprule
   & FHS & WHI\\
 \midrule
@@ -533,7 +523,6 @@ HDL-cholesterol (HDL; mg/dL) & 55 (44-68) & 51 (43-60)\\
 Triglycerides (TG; mg/dL) & 102 (74-142) & 127 (92-177)\\
 Fasting glucose (Glu; mg/dL) & 101 (94-110) & 96 (88.6-108)\\
 High-sensitivity C-reactive protein (hsCRP; mg/dL) & 1.5 (0.8-3.2) & 3.1 (1.4-6.5)\\
-\addlinespace
 Systolic blood pressure (SBP; mmHg) & 127 (116-139) & 131 (120-143)\\
 \bottomrule
 \multicolumn{3}{l}{* Continuous values shown as: median (interquartile range).}\\
@@ -568,15 +557,15 @@ These modules showed strong (FDR \textless{} 10\textsuperscript{-4})
 enrichment for different sets of GO terms, ranging from immune
 activation (myeloid or T cell) to developmental processes.
 
-\begin{table}[t]
+\begin{table}
 
 \caption{\label{tab:sig-module-table}Modules associated with incident CVD at FDR < 0.2}
 \centering
-\begin{tabular}{lrrllll}
+\begin{tabular}[t]{lrrllll}
 \toprule
 \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{2}{c}{EigenCpG} & \multicolumn{3}{c}{Enrichment analysis} \\
-\cmidrule(l{3pt}r{3pt}){3-4} \cmidrule(l{3pt}r{3pt}){5-7}
-Module & Size & Var. expl. (\%) & p & GO terms & CpG Islands & Gene-based\\
+\cmidrule(l{2pt}r{2pt}){3-4} \cmidrule(l{2pt}r{2pt}){5-7}
+module & size & Var. expl. (\%) & p & GO terms & CpG Islands & Gene-based\\
 \midrule
 blue & 29441 & 44.61 & 0.00027 & Development & N\_shore & 1stExon/TSS/5' UTR\\
 brown & 953 & 53.08 & 0.00455 & Immune activation & Open sea & \\
@@ -621,14 +610,14 @@ for low p-values while accounting for autocorrelation based on genomic
 distance. Comb-p was applied separately to EWAS results from WHI and
 FHS.
 
-\begin{table}[t]
+\begin{table}
 
 \caption{\label{tab:combp-results}Comb-p regions with multiple test-corrected p < 0.05 in WHI and Bonferroni p < 0.05 in FHS}
 \centering
-\begin{tabular}{lrlllll}
+\begin{tabular}[t]{lrlllll}
 \toprule
 \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{2}{c}{Discovery} & \multicolumn{1}{c}{Replication} \\
-\cmidrule(l{3pt}r{3pt}){5-6} \cmidrule(l{3pt}r{3pt}){7-7}
+\cmidrule(l{2pt}r{2pt}){5-6} \cmidrule(l{2pt}r{2pt}){7-7}
 Location & \# CpGs & Annotated gene & Genomic region & P & Adj. P & P\\
 \midrule
 chr1:27440462-27440721 & 3 & SLC9A1 & Body & 1.75e-08 & 2.85e-05 & 1.03e-04\\
@@ -644,22 +633,8 @@ replicated at a Bonferroni level (Table 3; Fig. 1). These regions were
 annotated to two cellular transport genes (SLC9A1 and SLC1A5) and
 TNRC6C, which codes for a scaffolding protein involved in miRNA-mediated
 translational repression. Of the three WGCNA modules identified above,
-brown CpG sites constituted part of 2 DMRs (at SLC9A1 \& SLC1A5), while
+brown CpG sites consituted part of 2 DMRs (at SLC9A1 \& SLC1A5), while
 a single CpG from the blue module was also a member of the SLC9A1 DMR.
-
-Of CpGs in these 3 identified DMRs, 4 (2 in SLC1A5 and 1 each in SLC9A1
-and TNRC6C) were involved in methylation-quantitative trait loci (mQTL)
-based on the mQTLdb {[}21{]}. For these 4 CpGs, a Mendelian
-randomization analysis was undertaken using the MR-Base platform
-{[}22{]} to assess the potential causality of their methylation for
-myocardial infarction (MI) and coronary heart disease CHD). While no
-associations were found for 3 of the 4 CpGs, a modest single-SNP
-relationship linked a cis-mQTL for cg22304262 with MI (p=0.013) and CHD
-(p=0.072). This SNP, rs8105903, was also found to modify SLC1A5
-expression levels in whole blood based on the GTEx database {[}23{]}.
-Taken together, these data are consistent with a small effect of DNA
-methylation at SLC1A5 on CVD, possibly acting through regulation of
-SLC1A5 gene expression.
 
 \subsection{Exploration of the brown and blue
 modules}\label{exploration-of-the-brown-and-blue-modules}
@@ -677,7 +652,7 @@ Given these observations, we examined relative enrichments of enhancer-
 and promoter-associated histone marks across different blood cell
 subtypes to better understand the cell type specificity of this signal.
 Epigenetic peaks were annotated using data from the Roadmap Epigenomics
-Project {[}24{]} and relative enrichments were calculated as the
+Project {[}21{]} and relative enrichments were calculated as the
 fraction of module CpGs found in peaks divided by the fraction of all
 CpGs found in peaks (see Methods section for details).
 
@@ -686,22 +661,14 @@ enhancer-associated chromatin annotations, DNase hypersensitivity sites
 (DHS) and H3K4me1 histone peaks, from monocytes compared to other blood
 cell subtypes (Fig. 2c). This could point towards monocyte-related
 biology and inflammatory processes as an important shared mechanism for
-cardiovascular risk between the two cohorts examined here. To validate
-this observation, an additional analysis based on the CellDMC method
-{[}25{]} was undertaken, based on the idea that cell type-specific
-epigenetic changes will result in statistical interactions between cell
-types and epigenetic quantities. Adapting this method to the epigenetic
-module level and applying it using partially-adjusted Cox models in FHS,
-no meaningful statistical interaction between monocyte fractions and
-brown module activation were observed (positive interaction; p=0.83). In
-contrast to the monocyte-related enrichments for the brown module, blue
-CpGs were enriched for DHS and promoter-associated H3K4me3 histone peaks
-from hematopoietic stem cells (HSCs), providing a link to the observed
-enrichment of development-related genes in this set.
+cardiovascular risk between the two cohorts examined here. In contrast,
+blue CpGs were enriched for DHS and promoter-associated H3K4me3 histone
+peaks from hematopoietic stem cells (HSCs), providing a link to the
+observed enrichment of develoment-related genes in this set.
 
 The module CpG sets were also compared to two existing methylation-based
 age predictors from Horvath and Hannum et al., as well as the recent
-morbidity-directed phenoAge {[}26--28{]}. While enrichments for brown
+morbidity-directed phenoAge {[}22--24{]}. While enrichments for brown
 CpGs were moderate to nonexistent, blue CpGs were strongly enriched for
 all three of these sets, most highly for the original DNAm age developed
 by Horvath (46/353; p=3.4e-5; hypergeometric test), despite the fact
@@ -711,8 +678,8 @@ platform. Furthermore, 28 of these 46 CpGs had associated positive
 coefficients in the DNAm age predictor. This subset has been previously
 observed to contain a disproportionate amount of Polycomb-group target
 genes, which are known to associate with developmental processes and to
-be generally hypermethylated with age {[}29{]}. Using SUZ12 binding
-regions {[}30{]} as a proxy for Polycomb-group targets, we confirmed
+be generally hypermethylated with age {[}25{]}. Using SUZ12 binding
+regions {[}26{]} as a proxy for Polycomb-group targets, we confirmed
 their enrichment in the blue module (p = 1.37e-07). Surprisingly, the
 blue eigenCpG showed only a modest correlation with age itself (r=0.09).
 
@@ -749,15 +716,15 @@ biological relationships with current and past risk factors, adjustment
 for hypertension and lipid medication use did not notably affect the
 results of these models.
 
-\begin{table}[t]
+\begin{table}
 
 \caption{\label{tab:cumulative-adjusted}Module-risk factor relationships (current and cumulative) after adjustment for covariates}
 \centering
 \begin{threeparttable}
-\begin{tabular}{lllll}
+\begin{tabular}[t]{lllll}
 \toprule
-\multicolumn{1}{c}{} & \multicolumn{2}{c}{Brown} & \multicolumn{2}{c}{Blue} \\
-\cmidrule(l{3pt}r{3pt}){2-3} \cmidrule(l{3pt}r{3pt}){4-5}
+\multicolumn{1}{c}{} & \multicolumn{2}{c}{brown} & \multicolumn{2}{c}{blue} \\
+\cmidrule(l{2pt}r{2pt}){2-3} \cmidrule(l{2pt}r{2pt}){4-5}
 Risk factor & Current & Cumulative & Current & Cumulative\\
 \midrule
 BMI & 0.036 (4.3e-06) & 0.051 (2.3e-10) & 0.026 (0.0061) & 0.019 (0.051)\\
@@ -779,7 +746,7 @@ SBP & 0.012 (0.15) & 0.024 (0.0084) & -0.011 (0.27) & -0.0015 (0.89)\\
 \end{table}
 
 Finally, we used the basic mediation approach of Baron and Kenny
-{[}31{]} to test whether brown module activation may mediate a portion
+{[}27{]} to test whether brown module activation may mediate a portion
 of the effects of cumulative risk factor exposure on cardiovascular
 risk. A series of Cox models were created in FHS for these three most
 strongly-associated risk factors (BMI, hsCRP, and triglycerides).
@@ -798,15 +765,15 @@ actions of cumulative risk factor exposures by some other mechanism. As
 only subjects with current risk factor values were included in each
 model, sample sizes were largely identical across models.
 
-\begin{table}[t]
+\begin{table}
 
 \caption{\label{tab:module-mediation}CVD risk models using cumulative risk factor exposure and brown module activation}
 \centering
 \begin{threeparttable}
-\begin{tabular}{lllll}
+\begin{tabular}[t]{lllll}
 \toprule
 \multicolumn{1}{c}{} & \multicolumn{1}{c}{Risk factors only} & \multicolumn{1}{c}{Brown only} & \multicolumn{2}{c}{Full model} \\
-\cmidrule(l{3pt}r{3pt}){2-2} \cmidrule(l{3pt}r{3pt}){3-3} \cmidrule(l{3pt}r{3pt}){4-5}
+\cmidrule(l{2pt}r{2pt}){2-2} \cmidrule(l{2pt}r{2pt}){3-3} \cmidrule(l{2pt}r{2pt}){4-5}
 Risk factor & Cumulative & Module & Cumulative & Module\\
 \midrule
 BMI & 0.061 (0.009) & 0.012 (0.1) & 0.057 (0.015) & 0.01 (0.16)\\
@@ -830,7 +797,7 @@ began by constructing correlation-based clusters in the methylation data
 from WHI using the WGCNA algorithm. This network-based feature
 clustering approach can potentially improve the signal-to-noise ratio of
 high-dimensional DNA methylation data while facilitating more clear
-biological interpretation of results {[}32{]}. As WGCNA does not
+biological interpretation of results {[}28{]}. As WGCNA does not
 consider class labels (i.e.~incident CVD status), the 110 modules
 uncovered were not \emph{a priori} expected to be related to CVD and
 rather reflected unbiased patterns in the data. After correction for
@@ -841,7 +808,7 @@ to these modules found strong enrichment for either immune-related or
 development-related processes. The finding of immune-related processes
 is intuitive given that DNA from blood measures primarily immune cells,
 while the development-related enrichment could possibly reflect
-influences during early life {[}33{]}. Notably, these two module
+influences during early life {[}29{]}. Notably, these two module
 ``types'' (immune and development) have been uncovered in a prior
 network-based DNA methylation analysis related to asthma {[}19{]},
 suggesting that similar module types are a potentially general feature
@@ -868,16 +835,16 @@ NHE-1) gene, which codes for an integral membrane ion transporter
 involved in intracellular pH maintenance. SLC9A1 has been shown to be
 required for the increased adhesion, migration, and phagocytosis of
 oxidized LDL seen in monocytes in response to stimuli including leptin,
-adrenaline, and hyperglycemia {[}34{]}. Another region discovered was on
+adrenaline, and hyperglycemia {[}30{]}. Another region discovered was on
 chromosome 19 near the transcription start site (TSS) of SLC1A5, which
 codes for a neutral amino acid transporter. Though strong evidence does
 not yet exist linking SLC1A5 to cardiovascular mechanisms, its CpGs have
 shown associations with diabetes, blood pressure, and mortality
-{[}35--37{]}, and we note that its companion amino acid transporter,
+{[}31--33{]}, and we note that its companion amino acid transporter,
 SLC7A5, is known to regulate metabolic and inflammatory reprogramming of
 monocytes in response to stimulation by lipopolysaccharide (LPS).
 Notably, CpG sites in both SLC9A1 and SLC1A5 were discovered and
-replicated in a recent EWAS for BMI (including the FHS cohort) {[}38{]},
+replicated in a recent EWAS for BMI (including the FHS cohort) {[}34{]},
 though the specific SLC9A1 site from that study was not one of the three
 constituent CpGs in the region found here. These two SLC transporter
 DMRs contained CpGs belonging to blue (1 in SLC9A1) and brown (1 in
@@ -885,17 +852,13 @@ SLC9A1, 5 in SLC1A5) modules. The third region was found near the TSS of
 TNRC6C on chromosome 17. This gene codes for a component of the
 miRNA-mediated translational repression cascade, has shown up in a
 genome-wide association study (GWAS) for heart failure (not one of the
-phenotypes included in our CVD definition here) {[}39{]}, and was
+phenotypes included in our CVD definition here) {[}35{]}, and was
 identified as a potential target gene in the monocyte-to-macrophage
-transition upon exposure to CSF-1{[}40{]}. Common to these three DMRs is
+transition upon exposure to CSF-1{[}36{]}. Common to these three DMRs is
 a potential involvement in monocyte biology specific to a stimulus
 response. This concept of ``priming'' for subsequent response to
 stimulus has been observed with respect to both monocyte activity in CVD
-{[}41{]} and DNA methylation in general {[}42{]}. While a two-step
-Mendelian randomization analysis here found modest potential causal
-evidence for CVD for only one DMR constituent CpG (in SLC1A5), a lack of
-available mQTL SNPs for the full set of relevant CpGs prevented a full
-exploration.
+{[}37{]} and DNA methylation in general {[}38{]}.
 
 Based on the module- and region-level replication in FHS, we further
 explored the characteristics of the brown and blue modules. Enrichment
@@ -908,24 +871,24 @@ for CpG islands near the TSS of development-related genes. One could
 speculate that these modules also represent different mechanisms of
 cardiovascular risk: one related to inflammatory burden and the other to
 long-term effects of early-life exposures, both of which are
-well-established as contributing to cardiovascular risk {[}33,43{]}.
+well-established as contributing to cardiovascular risk {[}29,39{]}.
 Analyses based on cross-tissue epigenome annotations added an additional
 dimension to these insights by suggesting differential importance of
 blood cell sub-types for these modules. A cell type specificity
-analysis, adapted from the eFORGE algorithm {[}44{]}, revealed the
+analysis, adapted from the eFORGE algorithm {[}40{]}, revealed the
 enrichment of monocyte-specific regions of open chromatin (DNase
 hypersensitivity sites and H3K4me1 peaks) in the brown module. This
 observation reinforces the idea of monocyte-specific activity suggested
-by the replicated DMRs as well as that of ``monocyte priming'' {[}41{]}.
+by the replicated DMRs as well as that of ``monocyte priming'' {[}37{]}.
 Based on the tendency of blue module CpGs to be proximal to gene TSS, we
 focused on enrichment for a promoter-associated marker, H3K4me3, and
 found a distinct signal related to hematopoietic stem cells. This
 finding supports a potential mechanism linking early-life exposure to
-consequences in adult life {[}45,46{]}. We also observed that the blue
+consequences in adult life {[}41,42{]}. We also observed that the blue
 module was strongly enriched for components of a popular epigenetic age
-marker {[}26{]} as well as for binding regions of the Polycomb-group
+marker {[}22{]} as well as for binding regions of the Polycomb-group
 member SUZ12. As Polycomb-group targets are known to be related to
-developmental processes {[}29{]}, this finding contributes additional
+developmental processes {[}25{]}, this finding contributes additional
 support to the module's role as a bridge between development, aging, and
 disease risk.
 
@@ -940,7 +903,7 @@ hypothesis that the blue module is more relevant to early-life, rather
 than adult, exposures as compared to brown. However, as a semi-stable
 biological quantity, methylation may have the ability to act as a
 ``molecular recorder'' of past exposures, ranging from heavy metals to
-stress {[}47,48{]}. We thus retrieved risk factor measurements from
+stress {[}43,44{]}. We thus retrieved risk factor measurements from
 seven prior exams in FHS to compare ``cumulative'' (calculated as the
 mean of past exam values) versus current correlations with brown
 activation. Surprisingly, we observed stronger correlations with
@@ -966,14 +929,14 @@ predicting incident CVD. Though neither factor exerted a strong effect
 on the relationship of the other, module activation associations were
 more weakened after adjustment for cumulative risk factors than the
 converse. Thus, our models replicate previous findings that cumulative
-risk factor exposure correlates with CVD risk {[}49{]} while suggesting
+risk factor exposure correlates with CVD risk {[}45{]} while suggesting
 that brown methylation module activation may be sensing, rather than
 mediating, this effect. One concrete example supporting this observation
 is the DMR near SLC1A5 containing primarily brown CpGs, one of which
 (cg02711608) was suggested in Mendelian randomization analysis to be
-causally downstream of blood pressure {[}36{]}.
+causally downstream of blood pressure {[}32{]}.
 
-A few limitations should be acknowledged in interpreting the results of
+A few limitations should be acknowledged in intepreting the results of
 this study. First, its observational nature made it impossible to
 clearly determine causality of the relationships between methylation and
 cardiovascular risk. While the examination of incident CVD reduced
@@ -983,11 +946,12 @@ factor exposure, as discussed above). Second, assessment of methylation
 in blood samples prevented the understanding of potentially causal
 epigenetic effects in other CVD-relevant tissues. Although some studies
 report promising findings with respect to blood as a proxy tissue
-{[}50,51{]}, and although development-related epialleles may persist
-across tissues, there is a gap in our ability to discover
+{[}46,47{]}, and although development-related epialleles may persist
+across tissues, there is a certain gap in our ability to discover
 non-blood-related epigenetic patterns in this analysis. Finally,
-experimental follow-up will be necessary to confirm these findings and
-establish their potential for supporting therapeutic interventions.
+longitudinal methylation measurements were not available in these
+datasets, preventing an analysis of the intra-individual stability of
+methylation sites and modules that may be predictive of CVD risk.
 
 \section{Conclusions}\label{conclusions}
 
@@ -997,12 +961,11 @@ cardiovascular disease risk. We show that epigenetic modules track with
 diverse biological sources of CVD risk, ranging from development- to
 immune-related processes, and may provide a molecular readout of past
 exposure to cardiovascular risk factors. We further discover specific
-differentially methylated regions that show limited evidence for a
-causal impact on CVD but may be related to monocyte activation in
-response to biological stimuli. This work opens the door to further
-investigation of the epigenetic basis of CVD risk as well as the ability
-of DNA methylation to act as a biomarker of prior exposures that may be
-important for disease-relevant prognosis and interventions.
+differentially methylated regions that may be related to monocyte
+activation in response to biological stimuli. This work opens the door
+to further investigation of the epigenetic basis of CVD risk as well as
+the ability of DNA methylation to act as a biomarker of prior exposures
+that may be important for disease-relevant prognosis and interventions.
 
 \section{Declarations}\label{declarations}
 
@@ -1039,56 +1002,15 @@ award T32HL069772.
 KW, DD, and JO conceived of the analysis. KW performed all analyses. PS,
 PJ, DD, and JO supervised the research project. KW drafted the
 manuscript. PS, PJ, SL, DD, and JO provided substantive review and edits
-to the manuscript. All authors read and approved the final manuscript.
+to the manusript. All authors read and approved the final manuscript.
 
 \subsection{Acknowledgements}\label{acknowledgements}
 
-The Genotype-Tissue Expression (GTEx) Project was supported by the
-Common Fund of the Office of the Director of the National Institutes of
-Health, and by NCI, NHGRI, NHLBI, NIDA, NIMH, and NINDS. The data used
-for the analyses described in this manuscript were obtained from the
-GTEx Portal on 06/28/2019.
+Not applicable
 
 \section{References}\label{references}
 
 \hyperdef{}{refs}{}
-
-\begin{figure}[htbp]
-\centering
-\caption{\label{fig:print-combp-plots}DMRs identified by Comb-p in WHI and
-validated in FHS at the (a) SLC9A1, (b) SLC1A5, and (c) TNRC6C loci.
-Negative logarithms of EWAS p-values are shown as a function of the
-genomic coordinate. EWAS p-values from WHI are in red and FHS in green.
-Dotted lines demarcate the DMR boundaries. Shapes for each point
-indicate the direction of association of the CpG site methylation with
-incident CVD.}
-\end{figure}
-
-\begin{figure}[htbp]
-\centering
-\caption{\label{fig:brown-and-blue-plots}Genomic and epigenomic annotations
-of the brown and blue modules. a,b) Relative proportions of module CpGs
-compared to the full set of CpGs tested, with respect to gene-based (a)
-or CpG island-based (b) annotations (UTR = untranslated region; TSS\_X =
-sites within X base pairs upstream of the gene transcription start
-site). c) Cell type-specific enrichments based on Roadmap Epigenomics
-datasets. Shown are relative enrichments of peaks (ratio of in-module
-fraction to all-CpG fraction) for a given epigenetic mark across many
-blood cell types, for each of the modules of interest.}
-\end{figure}
-
-\begin{figure}[htbp]
-\centering
-\caption{\label{fig:risk-factor-correlation-plots}Risk factor-module
-relationships. (a) Pearson correlations between a series of traditional
-cardiovascular risk factors and module eigenCpGs (blue and brown) are
-shown in each study population. (b) Pearson correlations between
-historical risk factor levels in FHS (across previous exams, x-axis) and
-current brown module activation are shown. Grey panels indicate that
-the risk factor in question was not available for the corresponding exam
-(LDL and hsCRP) or was not analyzed with respect to past exams (smoking
-and age).}
-\end{figure}
 
 1. Bonder MJ, Luijk R, Zhernakova DV, Moed M, Deelen P, Vermaat M, et
 al. Disease variants alter transcription factor levels and methylation
@@ -1179,195 +1101,208 @@ African-Americans with COPD exacerbations. Respiratory Research.
 Preserved and Reproducible? Bourne PE, editor. PLoS Computational
 Biology. Public Library of Science; 2011;7:e1001057.
 
-21. Gaunt TR, Shihab HA, Hemani G, Min JL, Woodward G, Lyttleton O, et
-al. Systematic identification of genetic influences on methylation
-across the human life course. Genome Biology. 2016;17:61.
-
-22. Hemani G, Zheng J, Elsworth B, Wade KH, Haberland V, Baird D, et al.
-The MR-Base platform supports systematic causal inference across the
-human phenome. eLife {[}Internet{]}. 2018;7.
-
-23. Aguet F, Brown AA, Castel SE, Davis JR, He Y, Jo B, et al. Genetic
-effects on gene expression across human tissues. Nature. 2017;
-
-24. Kundaje A, Meuleman W, Ernst J, Bilenky M, Yen A, Heravi-Moussavi A,
+21. Kundaje A, Meuleman W, Ernst J, Bilenky M, Yen A, Heravi-Moussavi A,
 et al. Integrative analysis of 111 reference human epigenomes. Nature.
 2015;518:317--30.
 
-25. Zheng SC, Breeze CE, Beck S, Teschendorff AE. Identification of
-differentially methylated cell types in epigenome-wide association
-studies. Nature Methods. 2018;15:1059--66.
-
-26. Horvath S. DNA methylation age of human tissues and cell types.
+22. Horvath S. DNA methylation age of human tissues and cell types.
 Genome biology. 2013;14:R115.
 
-27. Hannum G, Guinney J, Zhao L, Zhang L, Hughes G, Sadda S, et al.
+23. Hannum G, Guinney J, Zhao L, Zhang L, Hughes G, Sadda S, et al.
 Genome-wide Methylation Profiles Reveal Quantitative Views of Human
 Aging Rates. Molecular Cell. 2013;49:359--67.
 
-28. Levine ME, Lu AT, Quach A, Chen BH, Assimes TL, Bandinelli S, et al.
+24. Levine ME, Lu AT, Quach A, Chen BH, Assimes TL, Bandinelli S, et al.
 An epigenetic biomarker of aging for lifespan and healthspan. Aging.
 2018;10:573--91.
 
-29. Dozmorov MG. Polycomb repressive complex 2 epigenomic signature
+25. Dozmorov MG. Polycomb repressive complex 2 epigenomic signature
 defines age-associated hypermethylation and gene expression changes.
 Epigenetics. Taylor \& Francis; 2015;10:484--95.
 
-30. Lee TI, Jenner RG, Boyer LA, Guenther MG, Levine SS, Kumar RM, et
+26. Lee TI, Jenner RG, Boyer LA, Guenther MG, Levine SS, Kumar RM, et
 al. Control of Developmental Regulators by Polycomb in Human Embryonic
 Stem Cells. Cell. Cell Press; 2006;125:301--13.
 
-31. Baron RM, Kenny DA. The moderator--mediator variable distinction in
+27. Baron RM, Kenny DA. The moderator--mediator variable distinction in
 social psychological research: Conceptual, strategic, and statistical
 considerations. Journal of Personality and Social Psychology.
 1986;51:1173--82.
 
-32. Langfelder P, Horvath S. WGCNA: An R package for weighted
+28. Langfelder P, Horvath S. WGCNA: An R package for weighted
 correlation network analysis. BMC Bioinformatics. 2008;9.
 
-33. Hao G, Youssef NA, Davis CL, Su S. The role of DNA methylation in
+29. Hao G, Youssef NA, Davis CL, Su S. The role of DNA methylation in
 the association between childhood adversity and cardiometabolic disease.
 International Journal of Cardiology. Elsevier; 2018;255:168--74.
 
-34. Sarigianni M. Involvement of Signaling Molecules on Na+ /H+
-Exchanger-1 Activity in Human Monocytes. The Open Cardiovascular
-Medicine Journal. 2010;4:181--8.
+30. Sarigianni M, Tsapas A, Mikhailidis DP, Kaloyianni M, Koliakos G,
+Paletas K. Involvement of signaling molecules on na/h exchanger-1
+activity in human monocytes 76. Open Cardiovasc Med J. 2010;4:181--8.
 
-35. Walaszczyk E, Luijten M, Spijkerman AMW, Bonder MJ, Lutgers HL,
+31. Walaszczyk E, Luijten M, Spijkerman AMW, Bonder MJ, Lutgers HL,
 Snieder H, et al. DNA methylation markers associated with type 2
 diabetes, fasting glucose and HbA1c levels: a systematic review and
 replication in a case--control sample of the Lifelines study.
 Diabetologia. Springer Berlin Heidelberg; 2018;61:354--68.
 
-36. Richard MA, Huan T, Ligthart S, Gondalia R, Jhun MA, Brody JA, et
+32. Richard MA, Huan T, Ligthart S, Gondalia R, Jhun MA, Brody JA, et
 al. DNA Methylation Analysis Identifies Loci for Blood Pressure
 Regulation. American Journal of Human Genetics. Cell Press;
 2017;101:888--902.
 
-37. Zhang Y, Wilson R, Heiss J, Breitling LP, Saum K-U, Sch{ö}ttker B,
+33. Zhang Y, Wilson R, Heiss J, Breitling LP, Saum K-U, Sch{ö}ttker B,
 et al. DNA methylation signatures in peripheral blood strongly predict
 all-cause mortality. Nature Communications. 2017;8:14617.
 
-38. Mendelson MM, Marioni RE, Joehanes R, Liu C, Hedman ÅK, Aslibekyan
+34. Mendelson MM, Marioni RE, Joehanes R, Liu C, Hedman ÅK, Aslibekyan
 S, et al. Association of Body Mass Index with DNA Methylation and Gene
 Expression in Blood Cells and Relations to Cardiometabolic Disease: A
 Mendelian Randomization Approach. Lewis C, editor. PLOS Medicine.
 2017;14:e1002215.
 
-39. Villard E, Perret C, Gary F, Proust C, Dilanian G, Hengstenberg C,
+35. Villard E, Perret C, Gary F, Proust C, Dilanian G, Hengstenberg C,
 et al. A genome-wide association study identifies two loci associated
 with heart failure due to dilated cardiomyopathy. European Heart
 Journal. Oxford University Press; 2011;32:1065--76.
 
-40. Wallner S, Schr{ö}der C, Leit{ã}o E, Berulava T, Haak C, Bei{ß}er D,
+36. Wallner S, Schr{ö}der C, Leit{ã}o E, Berulava T, Haak C, Bei{ß}er D,
 et al. Epigenetic dynamics of monocyte-to-macrophage differentiation.
 Epigenetics \& Chromatin. 2016;9:33.
 
-41. Short JD, Tavakoli S, Nguyen HN, Carrera A, Farnen C, Cox LA, et al.
+37. Short JD, Tavakoli S, Nguyen HN, Carrera A, Farnen C, Cox LA, et al.
 Dyslipidemic Diet-Induced Monocyte ``Priming'' and Dysfunction in
 Non-Human Primates Is Triggered by Elevated Plasma Cholesterol and
-Accompanied by Altered Histone Acetylation. Frontiers in Immunology.
-Frontiers; 2017;8:958.
+Accompanied by Altered Histone Acetylation. Frontiers in Immunology
+{[}Internet{]}. Frontiers; 2017;8:958. Available from:
+\url{http://journal.frontiersin.org/article/10.3389/fimmu.2017.00958/full}
 
-42. Lam LL, Emberly E, Fraser HB, Neumann SM, Chen E, Miller GE, et al.
+38. Lam LL, Emberly E, Fraser HB, Neumann SM, Chen E, Miller GE, et al.
 Factors underlying variable DNA methylation in a human community cohort.
-Proceedings of the National Academy of Sciences. 2012;109:17253--60.
+Proceedings of the National Academy of Sciences {[}Internet{]}.
+2012;109:17253--60. Available from:
+\url{http://www.pnas.org/cgi/doi/10.1073/pnas.1121249109}
 
-43. Nahrendorf M. Myeloid cell contributions to cardiovascular health
+39. Nahrendorf M. Myeloid cell contributions to cardiovascular health
 and disease. Nature medicine. 2018. pp. 711--20.
 
-44. Breeze CE, Paul DS, Dongen J van, Butcher LM, Ambrose JC, Barrett
+40. Breeze CE, Paul DS, Dongen J van, Butcher LM, Ambrose JC, Barrett
 JE, et al. eFORGE: A Tool for Identifying Cell Type-Specific Signal in
 Epigenomic Data. Cell Reports. Cell Press; 2016;17:2137--50.
 
-45. Farlik M, Halbritter F, M{ü}ller F, Choudry FA, Ebert P, Klughammer
+41. Farlik M, Halbritter F, M{ü}ller F, Choudry FA, Ebert P, Klughammer
 J, et al. DNA Methylation Dynamics of Human Hematopoietic Stem Cell
 Differentiation. Cell Stem Cell. Elsevier; 2016;19:808--22.
 
-46. Laiosa MD, Tate ER. Fetal Hematopoietic Stem Cells Are the Canaries
+42. Laiosa MD, Tate ER. Fetal Hematopoietic Stem Cells Are the Canaries
 in the Coal Mine That Portend Later Life Immune Deficiency.
 Endocrinology. Oxford University Press; 2015;156:3458--65.
 
-47. Wright RO, Schwartz J, Wright RJ, Bollati V, Tarantini L, Park SK,
+43. Wright RO, Schwartz J, Wright RJ, Bollati V, Tarantini L, Park SK,
 et al. Biomarkers of lead exposure and DNA methylation within
 retrotransposons. Environmental Health Perspectives. 2010;118:790--5.
 
-48. Matosin N, Cruceanu C, Binder EB. Preclinical and Clinical Evidence
+44. Matosin N, Cruceanu C, Binder EB. Preclinical and Clinical Evidence
 of DNA Methylation Changes in Response to Trauma and Chronic Stress.
 Chronic Stress. 2017;1:247054701771076.
 
-49. Reinikainen J, Laatikainen T, Karvanen J, Tolonen H. Lifetime
+45. Reinikainen J, Laatikainen T, Karvanen J, Tolonen H. Lifetime
 cumulative risk factors predict cardiovascular disease mortality in a
 50-year follow-up study in Finland. International Journal of
 Epidemiology. Oxford University Press; 2015;44:108--16.
 
-50. Bacos K, Gillberg L, Volkov P, Olsson AH, Hansen T, Pedersen O, et
+46. Bacos K, Gillberg L, Volkov P, Olsson AH, Hansen T, Pedersen O, et
 al. Blood-based biomarkers of age-associated epigenetic changes in human
 islets associate with insulin secretion and diabetes. Nature
 Communications. Nature Publishing Group; 2016;7:11089.
 
-51. Huang YT, Chu S, Loucks EB, Lin CL, Eaton CB, Buka SL, et al.
+47. Huang YT, Chu S, Loucks EB, Lin CL, Eaton CB, Buka SL, et al.
 Epigenome-wide profiling of DNA methylation in paired samples of adipose
 tissue and blood. Epigenetics. 2016;11:227--36.
 
-52. Anderson GL, Cummings SR, Freedman LS, Furberg C, Henderson MM,
+48. Anderson GL, Cummings SR, Freedman LS, Furberg C, Henderson MM,
 Johnson SR, et al. Design of the Women's Health Initiative Clinical
 Trial and Observational Study. Controlled Clinical Trials.
 1998;19:61--109.
 
-53. Kannel WB, Feinleib M, Mcnamara PM, Garrison RJ, Castelli WP. An
+49. Kannel WB, Feinleib M, Mcnamara PM, Garrison RJ, Castelli WP. An
 investigation of coronary heart disease in families: The framingham
 offspring study. American Journal of Epidemiology. 1979;110:281--90.
 
-54. Bibikova M, Barnes B, Tsan C, Ho V, Klotzle B, Le JM, et al. High
+50. Bibikova M, Barnes B, Tsan C, Ho V, Klotzle B, Le JM, et al. High
 density DNA methylation array with single CpG site resolution. Genomics.
 2011;98:288--95.
 
-55. Aryee MJ, Jaffe AE, Corrada-Bravo H, Ladd-Acosta C, Feinberg AP,
+51. Aryee MJ, Jaffe AE, Corrada-Bravo H, Ladd-Acosta C, Feinberg AP,
 Hansen KD, et al. Minfi: A flexible and comprehensive Bioconductor
 package for the analysis of Infinium DNA methylation microarrays.
 Bioinformatics. Oxford University Press; 2014;30:1363--9.
 
-56. Pidsley R, {Y Wong} CC, Volta M, Lunnon K, Mill J, Schalkwyk LC. A
+52. Pidsley R, {Y Wong} CC, Volta M, Lunnon K, Mill J, Schalkwyk LC. A
 data-driven approach to preprocessing Illumina 450K methylation array
 data. BMC Genomics. BioMed Central; 2013;14:293.
 
-57. Fortin J-P, Triche TJ, Hansen KD. Preprocessing, normalization and
+53. Fortin J-P, Triche TJ, Hansen KD. Preprocessing, normalization and
 integration of the Illumina HumanMethylationEPIC array with minfi.
 Bioinformatics. Oxford University Press; 2016;33:btw691.
 
-58. Teschendorff AE, Marabita F, Lechner M, Bartlett T, Tegner J,
+54. Teschendorff AE, Marabita F, Lechner M, Bartlett T, Tegner J,
 Gomez-Cabrero D, et al. A beta-mixture quantile normalization method for
 correcting probe design bias in Illumina Infinium 450 k DNA methylation
 data. Bioinformatics. 2013;29:189--96.
 
-59. Lehne B, Drong AW, Loh M, Zhang W, Scott WR, Tan ST, et al. A
+55. Lehne B, Drong AW, Loh M, Zhang W, Scott WR, Tan ST, et al. A
 coherent approach for analysis of the Illumina HumanMethylation450
 BeadChip improves data quality and performance in epigenome-wide
 association studies. Genome Biology. 2015;16.
 
-60. Houseman EA, Accomando WP, Koestler DC, Christensen BC, Marsit CJ,
+56. Houseman EA, Accomando WP, Koestler DC, Christensen BC, Marsit CJ,
 Nelson HH, et al. DNA methylation arrays as surrogate measures of cell
-mixture distribution. BMC Bioinformatics. 2012;13:86.
+mixture distribution. BMC bioinformatics. 2012;13:86.
 
-61. Kechris KJ, Biehs B, Kornberg TB. Generalizing Moving Averages for
-Tiling Arrays Using Combined P-Value Statistics. Statistical
-Applications in Genetics and Molecular Biology. 2010;9.
-
-62. {Š}id{á}k Z. Rectangular Confidence Regions for the Means of
-Multivariate Normal Distributions. Journal of the American Statistical
-Association. 1967;62:626--33.
-
-63. Kent WJ, Sugnet CW, Furey TS, Roskin KM, Pringle TH, Zahler AM, et
+57. Kent WJ, Sugnet CW, Furey TS, Roskin KM, Pringle TH, Zahler AM, et
 al. The Human Genome Browser at UCSC. Genome Research. Cold Spring
 Harbor Laboratory Press; 2002;12:996--1006.
 
-64. Nikpay M, Goel A, Won HH, Hall LM, Willenborg C, Kanoni S, et al. A
-comprehensive 1000 Genomes-based genome-wide association meta-analysis
-of coronary artery disease. Nature Genetics. 2015;47:1121--30.
-
-65. Phipson B, Maksimovic J, Oshlack A. MissMethyl: An R package for
+58. Phipson B, Maksimovic J, Oshlack A. MissMethyl: An R package for
 analyzing data from Illumina's HumanMethylation450 platform.
 Bioinformatics. Oxford University Press; 2015;32:286--8.
+
+\begin{figure}[htbp]
+\centering
+\caption{\label{fig:print-combp-plots}DMRs identified by Comb-p in WHI and
+validated in FHS at the (a) SLC9A1, (b) SLC1A5, and (c) TNRC6C loci.
+Negative logarithms of EWAS p-values are shown as a function of the
+genomic coordinate. EWAS p-values from WHI are in red and FHS in green.
+Dotted lines demarcate the DMR boundaries. Shapes for each point
+indicate the direction of association of the CpG site methylation with
+incident CVD.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\caption{\label{fig:brown-and-blue-plots}Genomic and epigenomic annotations
+of the brown and blue modules. a,b) Relative proportions of module CpGs
+compared to the full set of CpGs tested, with respect to gene-based (a)
+or CpG island-based (b) annotations (UTR = untranslated region; TSS\_X =
+sites within X base pairs upstream of the gene transcription start
+site). c) Cell type-specific enrichments based on Roadmap Epigenomics
+datasets. Shown are relative enrichments of peaks (ratio of in-module
+fraction to all-CpG fraction) for a given epigenetic mark across many
+blood cell types, for each of the modules of interest.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\caption{\label{fig:risk-factor-correlation-plots}Risk factor-module
+relationships. (a) Pearson correlations between a series of traditional
+cardiovascular risk factors and module eigenCpGs (blue and brown) are
+shown in each study population. (b) Pearson correlations between
+historical risk factor levels in FHS (across previous exams, x-axis) and
+current brown module activation are shown. Grey panels indicate that
+the risk factor in question was not available for the corresponding exam
+(LDL and hsCRP) or was not analyzed with respect to past exams (smoking
+and age).}
+\end{figure}
 
 \end{document}
