@@ -6,7 +6,7 @@ output:
     keep_tex: true
     toc: false
 bibliography: ../doc/module_ewas/module_ewas_refs.bib
-csl: plos.csl
+csl: pnas.csl
 link-citations: true
 ---
 
@@ -32,7 +32,7 @@ load("../doc/module_ewas/for_supp_info.RData")
 ```{r workflow, fig.cap="Study overview, including module- and region-based analyses as well as follow-up."}
 include_graphics("../doc/module_ewas/workflow.pdf")
 ```
-
+ 
 ```{r print-scree-plots, fig.asp=0.5, fig.cap="Scree plots for PCA on the set of CpGs corresponding to each of the top modules."}
 plot_scree <- function(EVs, mod) {
   qplot(x=1:10, y=EVs[1:10]) +
@@ -75,12 +75,13 @@ formatted_assoc_res <- lapply(
   function(df) select(df, module, p))
 mod_rep_tbl <- Reduce(function(x,y) inner_join(x, y, by="module"), 
                       formatted_assoc_res) %>%
-  mutate_at(vars(contains("^p")), format.pval(3)) %>%
-  mutate(fhsRepMixed=unlist(mixed_pvals)) %>%
+  mutate_at(vars(contains("^p")), function(x) format.pval(x, digits=3)) %>%
+  mutate(fhsRepMixed=unlist(mixed_pvals),
+         module=mod_titles[module]) %>%
   select(1, 2, 3, 4, 6, 5) %>%
   setNames(c("Module", "Partially adjusted", "Fully adjusted", "Partially adj.",
              "Partially adj. (mixed)", "Fully adjusted"))
-kable(mod_rep_tbl, booktabs=T, longtable=T,
+kable(mod_rep_tbl, booktabs=T,
       caption=paste("P-values for module associations with incident",
                     "CVD in discovery and replication.")) %>%
   add_header_above(c("", "WHI (discovery)"=2, "FHS (replication)"=3)) %>%
@@ -101,7 +102,7 @@ top_ewas_res <- fdr_tbl %>%
   mutate(p.y=format.pval(p.y, 3)) %>%
   setNames(c("CpG", "Chromosome", "Dir. of Assoc.", "P-value", "Location", 
              "Annotated Gene", "Replication P-value"))
-kable(top_ewas_res, booktabs=T, 
+kable(top_ewas_res, booktabs=T,
       caption=paste("CpGs with FDR < 0.05 in the discovery set", 
                     "(Bonferroni threshold = 1.18e-7)"))
 ```
