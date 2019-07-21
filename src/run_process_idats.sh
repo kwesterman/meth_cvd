@@ -7,4 +7,4 @@
 #SBATCH -o "process_idats-%A.out"
 
 module load R/3.3.2
-time Rscript process_idats.R whi fhs
+time Rscript 1_process_idats.R whi fhs

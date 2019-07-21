@@ -6,4 +6,4 @@
 #SBATCH -o substructure-%A.out
 
 module load R/3.3.2
-time Rscript substructure.R
+time Rscript 3_substructure.R

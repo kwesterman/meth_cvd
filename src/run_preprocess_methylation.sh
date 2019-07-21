@@ -7,4 +7,4 @@
 #SBATCH -o preprocess_methylation-%A.out
 
 module load R/3.3.2
-time Rscript preprocess_methylation.R whi fhs
+time Rscript 2_preprocess_methylation.R whi fhs
