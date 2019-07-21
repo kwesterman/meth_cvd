@@ -1,19 +1,22 @@
 ---
 output: 
+#   word_document:
+#     fig_caption: true
+# always_allow_html: true
   pdf_document:
-    citation_package: natbib
+    # citation_package: natbib
     keep_tex: true
     fig_caption: true
     latex_engine: pdflatex
     # template: ~/Dropbox/miscelanea/svm-r-markdown-templates/svm-latex-ms.tex
-title: "Placeholder title: MRS for CVD"
+title: "Cross-study learning for the epigenomic prediction of cardiovascular disease risk"
 # thanks: "Replication files are available on the author's Github account..."
 # author:
 # - name: Steven V. Miller
 #   affiliation: Clemson University
 # - name: Mary Margaret Albright
 #   affiliation: Pendelton State University
-abstract: "This is the abstract..."
+# abstract: "This is the abstract..."
 # keywords: "pandoc, r markdown, knitr"
 # date: "`r format(Sys.time(), '%B %d, %Y')`"
 # geometry: margin=1in
@@ -26,30 +29,898 @@ bibliography: mrs_manuscript.bib
 ---
 
 ```{r setup, include=F}
-knitr::opts_chunk$set(echo=F, fig.path="figures/")
+knitr::opts_chunk$set(echo=F, fig.path="figures/", 
+                      cache.path="../../cache/mrs_manuscript/")
+# options(kableExtra.auto_format=F)
 suppressMessages(silent <- lapply(
-  c("knitr", "tidyverse", "cowplot"), library, character.only=T))
+  c("knitr", "kableExtra",
+    "tidyverse", "broom", "cowplot", 
+    "survival", "survminer",
+    "IlluminaHumanMethylation450kanno.ilmn12.hg19"), 
+  library, character.only=T))
 ```
+
+```{r load-results}
+load("../../output/mrs_models_objects.RData")
+
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+anno_450k <- data.frame(
+  getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19), 
+  stringsAsFactors=F)
+```
+
+# Abstract
+
+Epigenome-wide association studies for cardiometabolic risk factors have discovered multiple loci associated with incident cardiovascular disease (CVD). However, few studies have sought to directly optimize a predictor of CVD risk. Furthermore, it is traditionally challenging to train multivariate models across multiple studies in the presence of study- or batch effects. Here, we analyzed existing DNA methylation data collected using the Illumina HumanMethylation450 microarray to create a predictor of CVD risk across three cohorts: Women’s Health Initiative, Framingham Heart Study Offspring Cohort, and Lothian Birth Cohorts. We trained Cox proportional hazards-based elastic net regressions for incident CVD separately in each cohort, and used a recently-introduced cross-study learning approach to integrate these individual predictions into an ensemble predictor. The methylation-based risk score (MRS) predicted CVD time-to-event in a held-out fraction of the Framingham dataset (HR per SD = 1.32, p = 2e-4) and predicted myocardial infarction status in the independent REGICOR dataset (OR per SD = 2.2, p = 1e-6). These associations remained after adjustment for traditional cardiovascular risk factors, and were consistently stronger than those from elastic net models trained on a directly merged dataset. Additionally, we investigated interactions between the MRS and both genetic and biochemical CVD risk, showing preliminary evidence of an enhanced predictive power in those with less traditional risk factor elevation and suggesting that the MRS may enable the discovery of high-risk individuals that would be missed by alternative risk metrics.
 
 # Introduction
 
-* Methylation for prognosis --> risk score
-    - Pathway by which genetics + environment impact disease risk [@Richardson2017; @Tobi2018] (mQTLs as enriched in GWAS hits citation, DOHaD citation)
-    - Marker of risk even in other tissues [@Bacos 2016]
-    - Risk scores allow genome-wide aggregation of info
-          - As proxy for RFs [@Levine2018; @Wahl2016] (PhenoAge citation, Wahl BMI CpGs --> T2D risk citation)
-          - Directly [@Hao2017] (cancer prognosis citation)
-* CVD risk scores
-    - Many CVD cross-sectional associations (Alba's review) [@Fernandez-Sanles2017]]
-    - Some single-CpG associations (Hedman citation, JAMA cardio. TNFa citation) [@Hedman2017; @Aslibekyan2018]
-    - Few studies looking at directly modeling incidence (Baccarelli 2010, the 2013 paper) but have mixed results [@Baccarelli2010; @Guarrera2015]
-    - Additionally, unclear how the meth. risk interacts with other sources of risk (e.g. genetic) [@Khera2018]
-* Multistudy stuff
-    - Important to combine signal to avoid study-specific biases/confounding and increase sample size
-    - Batch effects present a problem for direct combination
-    - Linear models can be adjusted for but still susceptible to higher-order interactions (and non-linear are hard to adjust)
-    - Meta-analysis requires the analysis to be univariate (investigate this claim more thoroughly and moderate as necessary)
-    - Patil et al. 2018 -- CSL method as an approach to overcoming these obstacles, allows arbitrarily complex modeling of an arbitrary # of studies [@Patil2018]
-* To create robust predictors of CVD risk while combining info across cohorts, we did...
+DNA methylation is an important epigenetic pathway through which genetic variants and environmental exposures impact disease risk [@Bonder2016; @Tobi2018]. Methylation at specific cytosine-phosphate-guanine (CpG) sites has been associated with disease in epigenome-wide association studies, even showing associations in blood as a convenient but non-target tissue such as for type 2 diabetes [@Bacos2016]. Methylation-based risk scores allow genome-wide aggregation of epigenetic information, similarly to the more established genetic risk scores, and allow for the use of models with arbitrary complexity. These risk scores are often developed initially by using methylation as a proxy for disease risk factors, such as BMI [@Wahl2017] and general aging-related morbidity [@Levine2018]. Alternatively, given sufficient sample size, epigenetic associations with disease risk can be modeled directly [@Hao2017].
+
+Associations between DNA methylation and cardiovascular disease (CVD) have been explored in many different cohorts and using diverse approaches. Cross-sectional associations have been found across multiple relevant tissues, namely blood, aorta, and other vascular tissues [@Fernandez-Sanles2017]. Some investigations aimed at cardiovascular risk factors have discovered CpGs predictive of CVD development [@Hedman2017; @Aslibekyan2018], while Mendelian randomization approaches have suggested causality of at least some of these CpG-risk factor associations [@Richardson2017]. The few studies directly modeling incident CVD as a primary outcome have either been conducted using only global (not locus-specific) methylation levels [@Baccarelli2010], or have found limited additional predictive power in the presence of known risk factors [@Guarrera2015]. We have previously investigated methylation regions and modules associating with incident CVD, generating mechanistic insights but without aggregating these results into a direct predictor of risk [@Westerman2018]. Additionally, it is unclear how the CVD risk tracked by DNA methylation is redundant with or complementary to existing risk metrics, including genetic scores [@Khera2018] and those based on traditional cardiovascular risk factors (e.g. the Framingham Risk Score for generalized CVD) [@DAgostino2008].
+
+Due to the many sources of heterogeneity across population-scale cohorts, it is beneficial to combine signal across cohorts when performing association studies or training predictive genomic models. Such a strategy can increase sample size while attenuating the effect of study-specific biases and confounding factors, but can be prone to emergent sources of confounding from "batch" effects or other systematic biases in methylation data across cohorts. This is especially problematic when there is notable class imbalance (different outcome frequencies or distributions) across cohorts [@Goh2017]. The most common and straightforward method for dealing with this heterogeneity is to use meta-analysis, but standard meta-analysis approaches are restricted to univariate (i.e. one CpG site at a time) models. Other approaches include batch effect correction on the input dataset (e.g. ComBat [@Johnson2007]), direct adjustment for batch/study in linear models, or adjustment for derived variables intended to capture technical biases (e.g. surrogate variable analysisn [@Leek2007]), but these approaches can often lead to over- or under-estimates of true biological effects [@Goh2017], and may be less amenable to complex or nonlinear models. Another approach described recently, cross-study learning, uses an alternative strategy to tackle the problem by creating an ensemble predictor consisting of one or multiple models per cohort, all trained to predict the same outcome [@Patil2018]. This strategy allows the use of arbitrarily complex models and the contribution of multiple training cohorts while avoiding technical confounding from direct combination of the datasets.
+
+In order to develop an improved DNA methylation-based cardiovascular risk predictor using multiple training cohorts, we used a cross-study learning method to develop an ensemble of penalized time-to-event regression risk models. The resulting composite risk score performed well in a held-out data subset, predicting survival even in the presence of traditional risk factors, and surpassing the performance of models trained on naively merged datasets. External validation was achieved in a case-control for prevalent myocardial infarction (MI). Further, interactions were assessed between the composite methylation-based risk score and other risk predictors, finding no consistent relationship to a genome-wide genetic risk score, but a potentially enhanced prediction in those with low Framingham Risk Scores.
+
+# Results
+
+## Cross-study learner model development
+
+Epigenomic model development was performed in three cohorts, including the Women's Health Initiative (WHI), Framingham Heart Study Offspring Cohort (FHS), and Lothian Birth Cohorts of 1936 (LBC). The FHS dataset was divided into two functionally separate groups (FHS-JHU and FHS-UM) based on differences in subject selection and geographic location of laboratory methylation analysis (see Methods). Further details of the populations can be found in Table 1.
+
+```{r pop-description}
+get_median_iqr <- function(x) {
+  if (all(is.na(x))) return (as.character(NA))
+  median_fmt <- round(median(x, na.rm=T), 1)
+  iqr_borders <- round(quantile(x, c(0.25, 0.75), na.rm=T), 1)
+  paste0(median_fmt, " (", iqr_borders[1], "-", iqr_borders[2], ")")
+}
+
+study_names_pretty <- c(whi="WHI", fhs_JHU="FHS-JHU", lbc36="LBC", 
+                        fhs_UofMinn="FHS-UM")
+
+pop_summary_tbl <- nmd_all %>%
+  group_by(batch) %>%
+  summarise(`Sample size`=n(),
+            Age=get_median_iqr(age),
+            `Sex (% female)`=round(sum(sex == "F") / n() * 100),
+            `% European`=round(sum(race == "white") / n() * 100),
+            `% African American`=round(sum(race == "black") / n() * 100),
+            `% Hispanic`=round(sum(race == "hispanic") / n() * 100),
+            `Body mass index`=get_median_iqr(bmi),
+            `LDL cholesterol`=get_median_iqr(ldl),
+            `HDL cholesterol`=get_median_iqr(hdl),
+            `Triglycerides`=get_median_iqr(tg),
+            `Fasting glucose`=get_median_iqr(glu),
+            `Systolic blood pressure`=get_median_iqr(sbp),
+            `Prior only`=sum(pastEvent & !event),
+            `Incident only`=sum(!pastEvent & event),
+            `Prior and incident`=sum(pastEvent & event)) %>%
+  mutate(batch=factor(batch,
+                      levels=names(study_names_pretty),
+                      labels=study_names_pretty)) %>%
+  replace_na(list(`Fasting glucose`="Unavailable")) %>%
+  arrange(batch) %>%
+  t()
+rownames(pop_summary_tbl)[1] <- "Study/Subset"
+
+kable(pop_summary_tbl, booktabs=T,
+      caption="Baseline parameters of the populations used for model develpment") %>%
+  footnote(general=c("* Continuous values shown as: median (interquartile range)",
+                     "* WHI = Women's Health Initiative, FHS-JHU = Framingham Heart Study Offspring Cohort (Johns Hopkins University subset), LBC = Lothian Birth Cohorts 1936, FHS-UM = Framingham Heart Study Offspring Cohort (University of Minnesota subset)"),
+           general_title="",
+           threeparttable=T) %>%
+  pack_rows("Ancestry", 5, 7, bold=F, latex_gap_space="0em") %>%
+  pack_rows("# CVD events", 14, 16, bold=F, latex_gap_space="0em")
+```
+
+Fig. 1 outlines the computational workflow. Briefly, a cross-study learning (CSL) model was developed by training time-to-event elastic net regressions on three of the datasets, while holding out the FHS-UM subset for evaluation. Next, a model trained on all four datasets was subject to external replication in the REGICOR study. CSL model CpGs were characterized as to their potential biological function, and model performance was assessed across strata of alternative cardiovascular risk metrics.
+
+The initial predictor was developed by training individual penalized Cox proportional hazards regression models (single-study learners, or SSLs) in each of the three training cohorts (WHI, FHS-JHU, and LBC). Predictions from these models were aggregated through the "stacking" method, in which the outcomes and model predictions from each of the individual datasets are combined, and a regression is used to assign weights to each of the model predictions (see Methods). This procedure led to FHS-JHU dropping out of the ensemble model, with weights for this initial predictor as follows: 0.6 (WHI), 0.0 (FHS-JHU), and 0.4 (LBC).
+
+```{r workflow-diagram, fig.cap="Computational workflow for MRS development and evaluation. The initial MRS was trained in three cohorts with FHS-UM held out to evaluate performance. The final MRS was then trained using all four datasets and examined for biological significance, before testing for prevalent MI discrimination in an independent cohort and assessment of interactions with genetic and traditional risk scores."}
+include_graphics("workflow.pdf")
+```
+
+## Assessment in held-out FHS subset
+
+```{r fhs-holdout}
+pretty_models <- c(unadjusted="Unadjusted",
+                   basic="Basic",
+                   plus_risk_factors="Plus risk factors",
+                   FRS_only="FRS only")
+pretty_models_with_ss <- setNames(
+  paste0(pretty_models, "\\textsuperscript{", 1:4, "}"),
+  names(pretty_models))
+
+model_names_for_tbls <- c(unadjusted="Unadjusted\\textsuperscript{1}",
+                          basic="Basic\\textsuperscript{2}",
+                          plus_risk_factors="Plus risk factors\\textsuperscript{3}",
+                          FRS_only="FRS only\\textsuperscript{4}")
+
+uofm_holdout_res_tbl %>%
+  mutate(Model=pretty_models_with_ss[covariate_set],
+         HR_per_SD=round(HR_per_SD, 2),
+         p=format(p, scientific=T, digits=2)) %>%
+  select(Model, HR_per_SD, p) %>%
+  setNames(c("Model", "HR per s.d. MRS", "P-value")) %>%
+  kable(booktabs=T, caption="MRS performance in held-out FHS subset", escape=F) %>%
+  footnote(number=c("No covariates",
+                    "Adjusted for age, sex, and estimated cell type fractions",
+                    "Additionally adjusted for BMI, LDL, HDL, SBP, diabetes status, and current smoking",
+                    "Adjusted for Framingham Risk Score only"),
+           threeparttable=T)
+
+compare_df %>%
+  mutate(CI_lower=exp(log(HR_per_SD) + 1.96 * (log(SE_lower) - log(HR_per_SD))),
+         CI_upper=exp(log(HR_per_SD) + 1.96 * (log(SE_higher) - log(HR_per_SD)))) %>%
+  mutate_at(vars(-covariate_set, -Method), round, 2) %>%
+  mutate(res_string=paste0(HR_per_SD, " [", CI_lower, "-", CI_upper, "]"),
+         covariate_set=pretty_models[covariate_set]) %>%
+  select(Method, covariate_set, res_string) %>%
+  spread(key=Method, value=res_string) %>%
+  dplyr::slice(match(c("Unadjusted", "Basic", "Plus risk factors", "FRS only"),
+              covariate_set)) %>%
+  select(covariate_set, combined, combat_nouofm, CSL) %>%
+  setNames(c("Model",
+             "Combined",
+             "ComBat", "CSL")) %>%
+  kable(booktabs=T, escape=F,
+        caption="Comparison of Cox regression coefficient estimates between the CSL and combined model options.") %>%
+  add_header_above(c("", "HR per s.d. MRS"=3)) %>%
+  footnote(general=c("* Results are presented as: OR per s.d. MRS [95% CI]",
+                     "* Combined model naively combines all datasets while adjusting for study, whereas ComBat adjusts the data themselves to remove variation across studies while preserving class differences.",
+                     "* Model covariates as in Table 2"), general_title="",
+           threeparttable=T)
+
+no_PE_holdout <- coxph(
+  Surv(time, event) ~ mrs_uofm_holdout, 
+  data=filter(nmd_all, batch == "fhs_UofMinn", pastEvent==F),
+  robust=T) %>% 
+  tidy()
+```
+
+```{r km-plot, fig.cap="Kaplan-Meier survival curves in the held-out FHS-UM dataset. Individual curves correspond to tertiles of the initial (3-dataset) MRS. Vertical ticks correspond to censored observations, and colored bands represent 95% confidence intervals for tertile-specific survival curves."}
+surv_data <- nmd_all %>%
+  mutate(test_mrs=uofm_holdout_csl$mrs,
+         test_mrs_tertile=cut(test_mrs, quantile(test_mrs, c(0, 0.33, 0.67, 1)),
+                              include.lowest=T)) %>%
+  filter(batch == "fhs_UofMinn")
+uofm_holdout_surv_fit <- survfit(Surv(time, event) ~ test_mrs_tertile,
+                                 data=surv_data)
+ggsurvplot(uofm_holdout_surv_fit, ylim=c(0.8, NA), xlim=c(0, 3600), conf.int=T,
+           break.time.by=730.5, xscale=365.25, 
+           xlab="Time (years)", ylab="Fraction event-free",
+           legend=c(0.2, 0.25), legend.title="",
+           legend.labs=paste("MRS Tertile", 1:3))
+```
+
+Stacking of the three initial predictors resulted in model weights of `r round(uofm_holdout_csl$csl_weights["whi"], 2)`, `r round(uofm_holdout_csl$csl_weights["fhs_JHU"], 2)`, and `r round(uofm_holdout_csl$csl_weights["lbc36"], 2)` for WHI, FHS-JHU, and LBC, respectively (i.e. FHS-JHU did not ultimately contribute to the initial model). The resulting ensemble predictor was evaluated using robust Cox proportional hazards models in FHS-UM, showing strong associations with incident CVD in an unadjusted model (HR=1.62, p=6.03e-14), which was attenuated partially through adjustment for standard covariates (age, sex, and estimated cell type fractions) as well as CVD risk factors (Table 2). These results were robust to sensitivity analyses excluding all individuals who experienced prior CVD events (Supp. Table S1). 
+
+When compared to the models based on naive combination of the datasets ("Combined"), the CSL model performed consistently better across all sets of covariates (Table 3). However, its performance was equivalent or worse than the single model trained on a ComBat-preprocessed dataset (note that FHS-UM was not included in the ComBat adjustment dataset so as not to allow the procedure to inject bias).
+
+## Final CSL model characterization
+
+```{r overlap}
+venn_order <- c("whi", "fhs_UofMinn", "fhs_JHU", "lbc36")
+silent <- VennDiagram::venn.diagram(
+  lapply(ssl_nonzero_coefs, names)[venn_order],  # Ordering
+  "model_cpgs_venn.png", 
+  category.names=study_names_pretty[venn_order],
+  cat.cex=2, cex=2,
+  cat.just=list(c(0.2,0), c(0.6,0), c(0.4,0), c(0.3,0)),
+  fill=c('red', 'green', 'blue', 'purple'),
+  imagetype="png")
+# venn diagram formatting reference: https://www.r-graph-gallery.com/14-venn-diagramm/
+
+venn_img <- grid::rasterGrob(png::readPNG("model_cpgs_venn.png"), 
+                             interpolate=T)
+```
+
+```{r gsa, cache=1, message=F, warning=F, eval=F}
+gsa_tbls <- lapply(ssl_nonzero_coefs, function(set) {
+  missMethyl::gometh(names(set), all.cpg=common_cpgs,
+                     collection="GO", array.type="450K",
+                     anno=anno_450k) %>%
+    arrange(P.DE)
+})
+```
+
+```{r annotation-enrichment, cache=1, message=F, warning=F}
+summarise_annotation <- function(group, df) {
+  # Takes in a set of annotations and returns the proportions of a given field (e.g. gene name)
+  df %>%
+    select(one_of("Name", group)) %>%
+    separate_rows(group, sep=";") %>%
+    distinct() %>%
+    filter_at(group, all_vars(.!="")) %>%
+    group_by_at(group) %>%
+    summarise(n=n()) %>%
+    mutate(frac=n/sum(n))
+}
+
+calc_enrichment_p <- function(mod_cpgs, bg_cpgs, type, group, lower_tail=F) {
+  rti_summary_mod <- summarise_annotation(type, filter(anno_450k, 
+                                                       Name %in% mod_cpgs))
+  rti_summary_all <- summarise_annotation(type, filter(anno_450k, 
+                                                       Name %in% bg_cpgs))
+  n_hits_in_group <- sum(rti_summary_mod$n[rti_summary_mod[[type]] %in% group])
+  n_avail_in_group <- sum(rti_summary_all$n[rti_summary_all[[type]] %in% group])
+  2 * phyper(n_hits_in_group, n_avail_in_group, 
+             length(wgcna_input_cpgs) - n_avail_in_group, length(mod_cpgs), 
+             lower.tail=lower_tail)
+}
+
+annot_plot <- function(cpg_set, bg_cpg_set, group_var) {
+  # Given a specific field, plot proportion of CpGs in a specific subset 
+  # next to those of the full set
+  my_groups <- summarise_annotation(
+    group_var, filter(anno_450k, Name %in% cpg_set))
+  all_groups <- summarise_annotation(
+    group_var, filter(anno_450k, Name %in% bg_cpg_set))
+  merge_groups <- inner_join(my_groups, all_groups, by=group_var, 
+                             suffix=c(".subset", ".all")) %>%
+    gather(key=group, value=frac, contains("frac")) %>%
+    mutate(group=factor(group, levels=c("frac.all", "frac.subset"), 
+                        labels=c("All CpGs", "MRS CpGs")))
+  ggplot(merge_groups, aes_string(x=group_var, y="frac", fill="group")) +
+    geom_bar(stat="identity", position="dodge") +
+    theme(axis.title.x=element_blank(), 
+          axis.text.x=element_text(angle=35, hjust=1))
+}
+
+annot_groups <- function(cpg_set, bg_cpg_set1, bg_cpg_set2, group_var) {
+  # Given a specific field, plot proportion of CpGs in a specific subset 
+  # next to those of the full set
+  my_set <- summarise_annotation(
+    group_var, filter(anno_450k, Name %in% cpg_set))
+  var_set <- summarise_annotation(
+    group_var, filter(anno_450k, Name %in% bg_cpg_set1))
+  all_cpgs <- summarise_annotation(
+    group_var, filter(anno_450k, Name %in% bg_cpg_set2))
+  merge_groups <- bind_rows(list(myset=my_set,
+                                 bg1=var_set,
+                                 bg2=all_cpgs),
+                            .id="set") %>%
+    mutate(set=factor(set,
+                      levels=c("myset", "bg1", "bg2"),
+                      labels=c("MRS CpGs", "100k variable CpGs", "All CpGs")))
+  # merge_groups <- inner_join(my_set, all_cpgs, by=group_var, 
+  #                            suffix=c(".subset", ".all")) %>%
+  #   gather(key=set, value=frac, contains("frac")) %>%
+  #   mutate(set=factor(set, levels=c("frac.all", "frac.subset"), 
+  #                     labels=c("All CpGs", "Module CpGs")))
+  merge_groups$group <- merge_groups[[group_var]]
+  merge_groups
+}
+
+all_nonzero_cpgs <- Reduce(union, lapply(ssl_nonzero_coefs, names))
+
+csl_gene_group_enrichment <- annot_groups(
+  all_nonzero_cpgs, variable_100k_cpgs, common_cpgs, "UCSC_RefGene_Group")
+csl_cpg_island_enrichment <- annot_groups(
+  all_nonzero_cpgs, variable_100k_cpgs, common_cpgs, "Relation_to_Island")
+```
+
+```{r characterization, fig.asp=1.3, fig.cap="Characterization of the final CSL model. a) Overlap of CpG sites in the four individual predictors constituting the final model. b) Study-specific weights for constructing the ensemble model (derived from the \"stacking\" regression). c) Results from Gene Ontology-based enrichment analysis using genes annotated to SSL component CpGs. All GO terms with false discovery rate < 0.2 in any cohort are shown, and colored according to -log(p-value) for enrichment in each SSL. d) Proportion of CpGs in the full set of CSL CpGs (union of CpG sets in each component SSL) compared to the 100,000 most variable CpGs (as used in SSL model development) and the full set of available CpGs. Groupings according to both gene-based and CpG island-based CpG annotations are shown."}
+# gsa_summary <- bind_rows(lapply(gsa_tbls, function(x) x[1, ]), .id="Study") %>%
+#   mutate(diff_meth_genes=paste0(DE, "/", N),
+#          P.DE=format(P.DE, scientific=T, digits=2),
+#          FDR=format(FDR, scientific=T, digits=2)) %>%
+#   select(Study, Term, diff_meth_genes, P.DE, FDR) %>%
+#   mutate(Study=study_names_pretty[Study]) %>%
+#   setNames(c("Study", "Biological Process", "# Relevant Genes", "P-value", "FDR")) %>%
+#   as_tibble()
+
+fdr_processes <- unlist(
+  lapply(gsa_tbls, function(tbl) filter(tbl, FDR < 0.05, 
+                                        Ont == "BP")$Term))
+
+term_replace <- c(
+  "Cell-cell adhesion via plasma-membrane adhesion molecules"="Cell-cell adhesion via plasma-\nmembraneadhesion molecules",
+  "Homophilic cell adhesion via plasma membrane adhesion molecules"="Homophilic cell adhesion via plasma-\nmembrane adhesion molecules\n",
+  "Multicellular organism development"="Multicellular organism\ndevelopment",
+  "Nervous system development"="Nervous system\ndevelopment"
+)
+
+gsa_summary_tbl <- bind_rows(gsa_tbls, .id="Study") %>%
+  filter(Term %in% fdr_processes) %>% 
+  mutate(negLogP=-log(P.DE),
+         Study=factor(Study,
+                      levels=names(study_names_pretty),
+                      labels=study_names_pretty)) %>%
+  complete(Study, Term, fill=list(FDR=NA, P.DE=NA)) %>%
+  arrange(P.DE) %>%
+  mutate(Term=str_to_sentence(Term),
+         Term=ifelse(Term %in% names(term_replace), term_replace[Term], Term),
+         Term=fct_rev(factor(Term, levels=unique(Term))))
+
+gsa_summary_plt <- ggplot(gsa_summary_tbl, aes(x=Study, y=Term, fill=negLogP)) +
+  geom_tile(color="black", width=0.75, height=0.75, size=1) +
+  scale_fill_gradient(low="gray", high="red", name="-log(p)") +
+  scale_x_discrete(position="top") +
+  scale_y_discrete(position="right") +
+  theme(axis.line=element_blank(), axis.ticks=element_blank(),
+        axis.title=element_blank(), 
+        # legend.position="bottom",
+        legend.position=c(3, 0.15),
+        # legend.key.width=unit(0.06, "npc"),
+        axis.text.x=element_text(angle=60, hjust=0))
+
+# gsa_summary_img <- gridExtra::tableGrob(
+#   gsa_summary, rows=NULL, theme=gridExtra::ttheme_default(base_size=6))
+
+weights_plt <- data.frame(
+  study=factor(study_names_pretty, levels=study_names_pretty),
+  weight=final_csl$csl_weights[names(study_names_pretty)]) %>%
+  ggplot(aes(x=fct_rev(study), y=weight), width=0.1) +
+  geom_bar(stat="identity") +
+  labs(y="Ensemble weight") +
+  coord_flip() +
+  theme(axis.title.y=element_blank(), 
+        axis.ticks.y=element_blank(),
+        axis.line.x=element_blank())
+
+annot_plt <- bind_rows(list(gene=csl_gene_group_enrichment, 
+                            cpg_island=csl_cpg_island_enrichment), 
+                       .id="type") %>%
+  select(-UCSC_RefGene_Group, -Relation_to_Island) %>%
+  na.omit() %>% 
+  mutate(type=factor(type, levels=c("gene", "cpg_island"),
+                     labels=c("Gene-based", "CpG Island-based")),
+         group=gsub("_", ". ", group)) %>%
+  ggplot(aes(x=group, y=frac, fill=set)) +
+  geom_bar(stat="identity", position="dodge") +
+  labs(y="CpG fraction with annotation") +
+  scale_fill_brewer(palette="Dark2") +
+  facet_wrap(~type, scales="free_x") +
+  theme(axis.title.x=element_blank(), 
+        axis.text.x=element_text(angle=35, hjust=1, size=11),
+        axis.title.y=element_text(size=11),
+        axis.line.y=element_blank(),
+        legend.title=element_blank(), 
+        strip.background=element_blank())
+
+top_left <- plot_grid(venn_img, weights_plt, nrow=2, labels=c("a", "b"))
+
+top_row <- plot_grid(top_left, gsa_summary_plt, ncol=2, 
+                     rel_widths=c(2, 3), labels=c("", "c"))
+
+plot_grid(top_row, annot_plt, nrow=2, rel_heights=c(3, 2), labels=c("", "d"))
+```
+
+```{r tf-enrichment, message=F}
+homer_res <- read_tsv("../../output/homer_results/csl/knownResults.txt")
+```
+
+The stacking regression in the final CSL model gave the most weight to WHI (0.43) and LBC (0.40), while retaining nonzero weights for FHS-JHU (0.04) and FHS-UM (0.12). There was very little overlap of specific CpG sites across cohort-specific models, with a maximum of 13 CpGs shared between two models (WHI and FHS-UM) and no CpGs shared between three or more models (Fig. 2a). Despite this lack of site-specific overlap, there was broad agreement for three of the four component SSL models at the level of enriched biological processes, with all except FHS-JHU enriched most strongly for proximity to genes involved in homophilic cell adhesion (Fig. 2b). MRS component CpGs tended to be found in similar genomic loci to the overall set of variable CpGs, which tended to be enriched in gene bodies and depleted in CpG islands compared to the full microarray CpG set. However, MRS CpGs did show a modest enrichment in and around CpG islands compared to the set of variable CpGs (Fig. 2d).
+
+To gain more clarity as to potential biological mechanisms represented by the MRS, the HOMER tool was used to calculate enrichment of transcription factor (TF) binding motifs in the MRS component CpG sites (union of all individual SSL sites). Though no strong enrichments were found (all q-values >0.05), we note that two of the top ten hits relate to motifs found for circadian regulatory TFs (CLOCK and NPAS) in liver (full list of HOMER results with q <0.2 in Supp. Table S2).
+
+To better understand the stability of the risk score over time, intraclass correlation coefficients (ICCs) were calculated for two sets of grouped samples: 26 technical replicates from FHS and approximately 1000 longitudinal samples (across 3 visits, or about 6 years total) from LBC (Supp. Table S3). The technical replicates showed an ICC of 0.81, while the longitudinal samples showed an ICC of 0.68. As would be expected, the ICC for samples closer in time (Waves 1 & 2) were higher than that for samples more distant in time (Waves 1 & 3). Based on the observation of imperfect stability of the MRS over time as well as the partial attenuation its predictive power after adjustment for age, its component CpGs (the `r length(all_nonzero_cpgs)`-element union of all CpGs in any of the four individual SSL models) were examined for overlap with established epigenetic age metrics. While no enrichment was seen for the original cross-tissue DNAm age from Horvath [@Horvath2013], strong enrichment was seen for the morbidity-directed PhenoAge [@Levine2018] (9 of 513 CpGs; p=2.3e-5) and especially the blood-specific aging marker from Hannum et al. [@Hannum2013] (14 of 71 CpGs; p=9.4e-23). We note that these overlaps do not constitute a major fraction of either CpG set, but are nonetheless highly statistically significant.
+
+## Discrimination in myocardial infarction case-control
+
+```{r regicor, warning=F}
+combat_model_results <- list(
+  unadjusted=as.matrix(data.frame(Estimate=0.5352, `Std. Error`=0.1358, `Pr(>|z|)`=8.058e-05,
+                        row.names="mrs", check.names=F)),
+  basic=as.matrix(data.frame(Estimate=0.7453, `Std. Error`=0.1663, `Pr(>|z|)`=7.427e-06,
+                   row.names="mrs", check.names=F)),
+  plus_risk_factors=as.matrix(data.frame(Estimate=0.5866, `Std. Error`=0.2018, `Pr(>|z|)`=3.651e-03,
+                               row.names="mrs", check.names=F))
+)
+
+load("../../output/regicor_results_20190221/main_MRS_results.RData")
+delong_test <- readRDS("../../output/regicor_results_20190221/delong_test.rds")
+load("../../output/regicor_results_20190221/stratified_results.RData")
+
+csl_res_regicor <- lapply(csl_model_results, 
+                          function(tbl) as.data.frame(tbl["mrs", , drop=F])) %>%
+  bind_rows(.id="Model")
+combined_res_regicor <- lapply(combined_model_results, 
+                               function(tbl) as.data.frame(tbl["mrs", , drop=F])) %>%
+  bind_rows(.id="Model")
+combat_res_regicor <- lapply(combat_model_results, 
+                             function(tbl) as.data.frame(tbl["mrs", , drop=F])) %>%
+  bind_rows(.id="Model")
+
+regicor_res_tbl <- bind_rows(Combined=combined_res_regicor,
+                             ComBat=combat_res_regicor,
+                             CSL=csl_res_regicor, 
+                             .id="model_type") %>%
+  dplyr::rename(p=`Pr(>|z|)`,
+                SE=`Std. Error`) %>%
+  mutate(Model=factor(Model, levels=names(pretty_models), labels=pretty_models),
+         OR_per_SD=exp(Estimate),
+         CI_lower=exp(Estimate - 1.96 * SE),
+         CI_upper=exp(Estimate + 1.96 * SE)) %>%
+  mutate_at(vars(OR_per_SD, CI_lower, CI_upper), round, 2) %>%
+  mutate(res_string=paste0(OR_per_SD, " [", CI_lower, "-", CI_upper, "]")) %>%
+  # mutate(res_string=paste0(round(OR_per_SD, 2), " (", 
+  #                          format(p, digits=3, scientific=T), ")")) %>%)
+  select(model_type, Model, res_string) %>%
+  spread(key=model_type, value=res_string)
+
+kable(regicor_res_tbl, booktabs=T,
+      caption="Results from replication in REGICOR MI case-control") %>%
+  footnote(general=c("* Results are presented as: OR per s.d. MRS [95% CI]",
+                     "* Model covariates as in Table 2",
+                     "* All models above are adjusted for two surrogate variable analysis (SVA) components."), 
+           general_title="")
+```
+
+As one form of replication, the MRS was investigated for its discriminative performance in a nested case-control for prior myocardial infarction in the REGICOR cohort (cohort description in Supp. Table S4). Though this dataset did not contain incident events, its matching of sex and age allowed an evaluation free of potential confounding by these factors. The MRS was able to discriminate cases and controls in both unadjusted (odds ratio = 1.85, p = 1.29e-5) and, to a lesser degree, risk factor-adjusted models (odds ratio = 1.65, p = 0.012). The improved performance of the CSL model over the "Combined" MRS and its equivalent performance to the ComBat-based MRS was also confirmed in this dataset.
+
+## Interactions with alternate risk metrics
+
+```{r interactions, warning=F, fig.cap="Interactions of MRS with other biomarkers of CVD risk. a) Hazard ratios for the MRS within subsets of 10-year generalized CVD risk according to the Framingham Risk Score. b) Hazard ratios for the MRS within quartiles of a genetic cardiovascular risk score (in white participants only for WHI). Hazard ratios are estimated using the final MRS, which was trained using each of these datasets. Stratum-specific Cox regressions were adjusted for age, sex, and estimated cell subtype fractions. Estimates for strata with less than 25 incident events are not shown. Error bars represent standard errors for the hazard ratio estimates (cut off above in panel (a) for ease of visualization of other points).", eval=F}
+plot_strat_test_by_study <- function(qres, xlab) {
+  qres %>%
+    mutate(study=factor(study,
+                        levels=names(study_names_pretty),
+                        labels=study_names_pretty)) %>%
+    ggplot(aes(x=Group, y=HR_per_SD, group=study, color=study)) +
+    geom_point(position=position_dodge(width=0.4)) +
+    geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
+                  position=position_dodge(width=0.4)) +
+    labs(x=xlab)
+}
+
+age_quantile_plt <- plot_strat_test_by_study(int_res_list$age, "Age") +
+  theme(axis.text.x=element_text(angle=30, size=10))
+frs_quantile_plt <- plot_strat_test_by_study(int_res_list$frs, "FRS 10-year risk") +
+  scale_x_discrete(labels=c("<0.1", "0.1-0.2", "0.2-0.4", ">0.4")) +
+  coord_cartesian(ylim=c(1, 3.5)) +
+  labs(y="Hazard ratio (per s.d. MRS)") +
+  theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
+grs_white_quantile_plt <- plot_strat_test_by_study(int_res_list$grs_white, 
+                                                   "Genetic risk score quartile") +
+  # scale_color_discrete(labels=study_names_pretty[c("fhs_JHU", "fhs_UofMinn", 
+  #                                                  "lbc36", "whi")]) +
+  coord_cartesian(ylim=c(1, 3.5)) +
+  labs(y="MRS performance (H.R. per s.d. MRS)")
+race_plt <- plot_strat_test_by_study(int_res_list$race, "Race") +
+  theme(axis.text.x=element_text(angle=30, hjust=0.8))
+sex_plt <- plot_strat_test_by_study(int_res_list$sex, "Sex")
+# sex_res %>% group_by(study) %>% mutate(HR_ratio=HR_per_SD / HR_per_SD[which(Group=="F")]) %>% ungroup()
+# past_event_plt <- plot_strat_test_by_study(past_event_res, "Past event")
+
+plot_grid(
+  frs_quantile_plt + theme(legend.position="none"), 
+  grs_white_quantile_plt + theme(legend.title=element_blank(), 
+                                 axis.title.y=element_blank()), 
+  rel_widths=c(2, 3), nrow=1, align="h", axis="bt", 
+  labels=c("a", "b"), label_x=c(0, -0.025))
+
+mrs_frs_interaction_model <- coxph(
+  Surv(time, event) ~ mrs_final * frs + strata(batch) + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
+  robust=T, data=nmd_all) %>%
+  tidy()
+mrs_frs_interaction_effect_per10pct <- round(
+  (1 - exp(mrs_frs_interaction_model$estimate[10] / 10)) * 100)
+mrs_frs_interaction_pval <- signif(
+  mrs_frs_interaction_model$p.value[10], 3)
+
+mrs_grs_interaction_model <- coxph(
+  Surv(time, event) ~ mrs_final * scale(grs) + strata(batch) + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
+  robust=T, data=filter(nmd_all, race == "white")) %>%
+  tidy()
+mrs_grs_interaction_effect_per10pct <- round(
+  (1 - exp(mrs_grs_interaction_model$estimate[10])) * 100)
+mrs_grs_interaction_pval <- signif(
+  mrs_grs_interaction_model$p.value[10], 3)
+```
+
+```{r aggregate-interactions, warning=F, fig.cap="Interactions of MRS with other biomarkers of CVD risk. a) Hazard ratios for the MRS within subsets of 10-year generalized CVD risk according to the Framingham Risk Score. b) Hazard ratios for the MRS within quartiles of a genetic cardiovascular risk score (in white participants only). Hazard ratios are estimated using the final MRS, which was trained using each of these datasets. Stratum-specific Cox regressions were adjusted for age, sex, and estimated cell subtype fractions. Error bars represent standard errors for the hazard ratio estimates."}
+# my_test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
+#                      covars=c(), robust=F) {
+#   meta$mrs <- scale(mrs)
+#   meta$cvd_surv <- Surv(time=meta$time, event=meta$event)  # Outcome
+#   form <- as.formula(paste(c("cvd_surv ~ mrs", covars), collapse=" + "))
+#   mrs_test <- coxph(form, data=meta, subset=subset, robust=robust)  # Test the MRS using a Cox model
+#   mrs_res <- summary(mrs_test)$coef["mrs", c("exp(coef)","z")]
+#   mrs_res_tbl <- tibble(HR_per_SD=mrs_res["exp(coef)"], 
+#                         p=2 * pnorm(-abs(mrs_res["z"])))
+#   if (return_fit) {
+#     list(fit=mrs_test, tbl=mrs_res_tbl) 
+#   } else {
+#     mrs_res_tbl
+#   }
+# }
 
 
+
+# my_strat_test_by_study <- function(df, test_mrs, quantile_cat) {
+#   df$mrs <- test_mrs
+#   unique_levels <- levels(df[[quantile_cat]])
+#   expand.grid(study=unique(df$batch),
+#               frs_group=unique_levels,
+#               stringsAsFactors=F) %>%
+#     mutate(cox_fit=map2(study, frs_group, function(s, g) {
+#       fit <- my_test_mrs(df, df$mrs, 
+#                          subset=(df$batch == s) & (df[[quantile_cat]] == g), 
+#                          covars={if (s == "whi") setdiff(basic_covars, "sex") else basic_covars},
+#                          return_fit=T)$fit
+#       broom::tidy(fit) %>%
+#         filter(term == "mrs")
+#     })
+#     )
+#   # full_res <- map_dfr(setNames(unique_levels, unique_levels), function(q) {
+#   #   subset <- df[[quantile_cat]] == q
+#   #   my_test_mrs_with_SE(df, df$mrs, subset, basic_covars)
+#   # }, .id="Group")
+#   # full_res
+# }
+
+# a <- my_strat_test_by_study(nmd_all, nmd_all$mrs_final, "frs_group") %>%
+#   mutate(estimate=map_dbl(cox_fit, "estimate"),
+#          statistic=map_dbl(cox_fit, "statistic"),
+#          SE=map_dbl(cox_fit, "std.error")) %>%
+#   select(study, frs_group, estimate, statistic, SE) %>%
+#   nest(-frs_group) %>%
+#   mutate(meta_res=map(data, function(d) {
+#     metagen(estimate, SE, data=d)
+#   }),
+#   TE=map_dbl(meta_res, "TE.random"),
+#   seTE=map_dbl(meta_res, "seTE.random"))
+# 
+# 
+# b <- map(unique(levels(nmd_all$frs_group)), function(g) {
+#   coxme(Surv(time,event) ~ mrs_final + (1|batch) + age + sex + CD4T + CD8T + Bcell + NK + Mono,
+#         data=filter(nmd_all, frs_group == g))
+# })
+# 
+# d <- map_dfr(unique(levels(nmd_all$frs_group)), function(g) {
+#   coxph(Surv(time,event) ~ mrs_final + cluster(batch) + strata(batch) + age + sex + CD4T + CD8T + Bcell + NK + Mono,
+#         data=filter(nmd_all, frs_group == g)) %>% tidy() %>% filter(term == "mrs_final")
+# })
+
+agg_frs_tbl <- map_dfr(levels(nmd_all$frs_group), function(g) {
+  reg_data <- nmd_all %>%
+    filter(frs_group == g) %>%
+    group_by(batch) %>%
+    filter(sum(event) > 25) %>%
+    ungroup()
+  coxph(Surv(time,event) ~ mrs_final + strata(batch) + age + sex + CD4T + CD8T + Bcell + NK + Mono,
+        data=reg_data) %>% tidy() %>% filter(term == "mrs_final")
+}, .id="frs_group") %>%
+  mutate(frs_group=factor(frs_group, labels=levels(nmd_all$frs_group)[as.integer(frs_group)]),
+         HR_per_SD=exp(estimate),
+         SE_lower=exp(estimate - std.error),
+         SE_higher=exp(estimate + std.error))
+agg_frs_plt <- ggplot(agg_frs_tbl, aes(x=frs_group, y=HR_per_SD)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) + 
+  labs(x="FRS 10-year risk") +
+  theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
+
+
+agg_grs_tbl <- map_dfr(levels(nmd_all$grs_group_white), function(g) {
+  reg_data <- nmd_all %>%
+    filter(race == "white") %>%
+    filter(grs_group_white == g) %>%
+    group_by(batch) %>%
+    filter(sum(event) > 25) %>%
+    ungroup()
+  coxph(Surv(time,event) ~ mrs_final + strata(batch) + age + sex + CD4T + CD8T + Bcell + NK + Mono,
+        data=reg_data) %>% tidy() %>% filter(term == "mrs_final")
+}, .id="grs_group") %>%
+  mutate(grs_group=factor(grs_group, labels=levels(nmd_all$grs_group_white)[as.integer(grs_group)]),
+         HR_per_SD=exp(estimate),
+         SE_lower=exp(estimate - std.error),
+         SE_higher=exp(estimate + std.error))
+agg_grs_plt <- ggplot(agg_grs_tbl, aes(x=grs_group, y=HR_per_SD)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) + 
+  labs(x="Genetic risk score quartile") +
+  theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
+
+# study_legend <- get_legend(frs_quantile_plt)
+plot_grid(
+  agg_frs_plt + 
+    labs(y="Hazard ratio (per s.d. MRS)") +
+    coord_cartesian(ylim=c(2, 4.5)) +
+    theme(axis.text.x=element_text(angle=30, size=10), legend.position="none"),
+  agg_grs_plt + theme(legend.position="none") + 
+    scale_x_discrete(labels=c("<0.1", "0.1-0.2", "0.2-0.4", ">0.4")) +
+    coord_cartesian(ylim=c(2, 4.5)) +
+    labs(y="") +
+    theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75)),
+  nrow=1, align="h", axis="bt", 
+  labels=c("a", "b"))
+
+
+g <- coxph(Surv(time,event) ~ mrs_final + strata(batch), data=nmd_all)
+mrs_frs_scatterplt <- nmd_all %>%
+  filter(mrs_final>quantile(mrs_final, 0.75)) %>%
+  ggplot(aes(x=frs, y=mrs_final)) +
+  geom_point(aes(alpha=event)) +
+  scale_alpha_manual(values=c(0.2, 0.6)) +
+  coord_cartesian(ylim=c(0, 3))
+
+mrs_frs_interaction_model <- coxph(
+  Surv(time, event) ~ mrs_final * frs + strata(batch) + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
+  robust=T, data=nmd_all) %>%
+  tidy()
+mrs_frs_interaction_effect_per10pct <- round(
+  (1 - exp(mrs_frs_interaction_model$estimate[10] / 10)) * 100)
+mrs_frs_interaction_pval <- signif(
+  mrs_frs_interaction_model$p.value[10], 3)
+
+mrs_grs_interaction_model <- coxph(
+  Surv(time, event) ~ mrs_final * scale(grs) + strata(batch) + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
+  robust=T, data=filter(nmd_all, race == "white")) %>%
+  tidy()
+mrs_grs_interaction_effect_per10pct <- round(
+  (1 - exp(mrs_grs_interaction_model$estimate[10] / 10)) * 100)
+mrs_grs_interaction_pval <- signif(
+  mrs_grs_interaction_model$p.value[10], 3)
+
+# fhs_um_model <- coxph(as.formula(paste0("Surv(time, event) ~ mrs_final * grs +",
+#                                         paste(setdiff(basic_covars, "sex")))),
+#                       data=nmd_all, subset=nmd_all$batch == "fhs_UofMinn")
+# fhs_jhu_model <- coxph(as.formula(paste0("Surv(time, event) ~ mrs_final * grs +",
+#                                         paste(setdiff(basic_covars, "sex")))),
+#                       data=nmd_all, subset=nmd_all$batch == "fhs_JHU")
+# whi_model <- coxph(as.formula(paste0("Surv(time, event) ~ mrs_final * grs +",
+#                                         paste(setdiff(basic_covars, "sex")))),
+#                       data=nmd_all, subset=nmd_all$batch == "whi")
+# a <- lapply(list(fhs_um_model, fhs_jhu_model, whi_model, lbc_model),
+#        function(model) {
+#          broom::tidy(model) %>%
+#            filter(term == "mrs_final:grs")
+#        }) %>%
+#   bind_rows()
+# meta::metagen(a$estimate, a$std.error)
+```
+
+```{r testing-123, eval=F}
+my_test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
+                     covars=c(), robust=F) {
+  meta$mrs <- scale(mrs)
+  meta$cvd_surv <- Surv(time=meta$time, event=meta$event)  # Outcome
+  form <- as.formula(paste(c("cvd_surv ~ mrs + strata(batch)", covars), collapse=" + "))
+  mrs_test <- coxph(form, data=meta, subset=subset, robust=robust)  # Test the MRS using a Cox model
+  mrs_res <- summary(mrs_test)$coef["mrs", c("exp(coef)","z")]
+  mrs_res_tbl <- tibble(HR_per_SD=mrs_res["exp(coef)"], 
+                        p=2 * pnorm(-abs(mrs_res["z"])))
+  if (return_fit) {
+    list(fit=mrs_test, tbl=mrs_res_tbl) 
+  } else {
+    mrs_res_tbl
+  }
+}
+
+my_test_mrs_with_SE <- function(nmd, mrs, subset, covars, robust=F) {
+  test_res_list <- my_test_mrs(nmd, mrs, subset=subset, return_fit=T,
+                            covars=covars, robust=robust)
+  res_tbl <- test_res_list$tbl
+  beta <- log(res_tbl$HR_per_SD)
+  se <- sqrt(diag(test_res_list$fit$var)[1])
+  res_tbl$SE_lower <- exp(beta - se)
+  res_tbl$SE_higher <- exp(beta + se)
+  res_tbl$n <- test_res_list$fit$n
+  res_tbl
+}
+
+basic_covars <- c("age", "sex", "CD4T", "CD8T", "Bcell", 
+                  "NK", "Mono")
+
+my_strat_test_by_study <- function(df, test_mrs, quantile_cat) {
+  df$mrs <- test_mrs
+  unique_levels <- levels(df[[quantile_cat]])
+  full_res <- map_dfr(setNames(unique_levels, unique_levels), function(q) {
+    subset <- df[[quantile_cat]] == q
+    my_test_mrs_with_SE(df, df$mrs, subset, basic_covars)
+  }, .id="Group")
+  full_res
+}
+
+my_strat_test_by_study(nmd_all, nmd_all$mrs_final, "frs_group") %>%
+  mutate(Group=factor(Group, levels=levels(nmd_all$frs_group))) %>%
+  ggplot(aes(x=Group, y=HR_per_SD)) +
+  geom_point(position=position_dodge(width=0.4)) +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
+                position=position_dodge(width=0.4)) +
+  labs(x="FRS Group", title="Showing MRS performance vs. FRS Group when combined")
+```
+
+```{r interaction-breakdown, fig.cap="Identification of high-risk individuals in FHS-UM with low traditional risk. a) Scatter plot of the initial MRS (FHS-UM holdout model; arbitrary units) vs. FRS (predicted 10-year risk of a CVD event) in individuals from FHS-UM. b) Fractions of 10-year CVD events in FHS-UM low-risk individuals (FRS < 0.1) below or above the 80th percentile of the 3-cohort MRS. c) As in (b), but in all individuals with FRS < 0.2."}
+# ggplot(nmd_all, aes(x=frs, y=mrs_final, color=event)) +
+#   geom_point(alpha=0.25) +
+#   scale_color_discrete(name="Incident event") +
+#   labs(x="FRS 10-year risk", y="Methylation risk score")
+
+rs_compare_data <- nmd_all %>%
+  mutate(event_10yr=event & (time <= 10 * 360))
+
+mrs_vs_frs_plt <- rs_compare_data %>%
+  filter(batch == "fhs_UofMinn") %>%
+  mutate(event_10yr=ifelse(event_10yr, "Yes", "No")) %>%
+  ggplot(aes(x=frs, y=mrs_uofm_holdout, color=event_10yr)) +
+  geom_point(alpha=0.35) +
+  geom_smooth(color="gray", method="lm", se=F) +
+  scale_color_brewer(name="Incident event", palette="Dark2") +
+  labs(x="FRS 10-year risk", y="Methylation risk score")
+
+frs0.1_tbl <- rs_compare_data %>%
+  filter(frs < 0.1, batch == "fhs_UofMinn") %>%
+  mutate(mrs_high_risk=mrs_uofm_holdout > quantile(mrs_uofm_holdout, 0.8)) %>%
+  group_by(mrs_high_risk) %>%
+  summarise(events=sum(event_10yr),
+            n=n()) %>%
+  mutate(frac=events / n,
+         label=ifelse(mrs_high_risk, 
+                      paste0("MRS high-risk\n(n=", n, ")"),
+                      paste0("MRS low-risk\n(n=", n, ")")))
+frs0.1_plt <- frs0.1_tbl %>%
+  ggplot(aes(x=fct_rev(label), y=frac)) +
+  geom_bar(stat="identity", width=0.6) +
+  labs(x="", y="10-year CVD event fraction",
+       subtitle="FHS-UM subgroup: FRS < 0.1") +
+  theme(axis.text.x=element_text(angle=20, hjust=0.8),
+        axis.text.y=element_text(size=11),
+        plot.subtitle=element_text(size=12))
+
+frs0.1_grs0.25q_tbl <- rs_compare_data %>%
+  filter(batch == "fhs_UofMinn") %>%
+  filter(frs < 0.1 | grs < quantile(grs, 0.25, na.rm=T)) %>%
+  mutate(mrs_high_risk=mrs_uofm_holdout > quantile(mrs_uofm_holdout, 0.75)) %>%
+  # mutate(mrs_high_risk=cut(mrs_uofm_holdout, 
+  #                          breaks=quantile(mrs_uofm_holdout, 
+  #                                          seq(0, 1, length.out=5)),
+  #                          include.lowest = T)) %>%
+  group_by(mrs_high_risk) %>%
+  summarise(events=sum(event_10yr),
+            n=n()) %>%
+  mutate(frac=events / n,
+         label=ifelse(mrs_high_risk,
+                      paste0("MRS high-risk\n(n=", n, ")"),
+                      paste0("MRS low-risk\n(n=", n, ")"))
+         )
+frs0.1_grs0.25q_plt <- frs0.1_grs0.25q_tbl %>%
+  ggplot(aes(x=fct_rev(label), y=frac)) +
+  geom_bar(stat="identity", width=0.6) +
+  labs(x="", y="10-year CVD event fraction",
+       subtitle="FHS-UM subgroup: FRS < 0.1") +
+  theme(axis.text.x=element_text(angle=20, hjust=0.8),
+        axis.text.y=element_text(size=11),
+        plot.subtitle=element_text(size=12))
+
+frs0.2_plt <- rs_compare_data %>%
+  filter(frs < 0.2, batch == "fhs_UofMinn") %>%
+  mutate(mrs_high_risk=mrs_uofm_holdout > quantile(mrs_uofm_holdout, 0.75)) %>%
+  group_by(mrs_high_risk) %>%
+  summarise(events=sum(event_10yr),
+            n=n()) %>%
+  mutate(frac=events / n,
+         label=ifelse(mrs_high_risk, 
+                      paste0("MRS high-risk\n(n=", n, ")"),
+                      paste0("MRS low-risk\n(n=", n, ")"))) %>%
+  ggplot(aes(x=fct_rev(label), y=frac)) +
+  geom_bar(stat="identity", width=0.6) +
+  labs(x="", y="10-year CVD event fraction",
+       subtitle="FHS-UM subgroup: FRS < 0.2") +
+  theme(axis.text.x=element_text(angle=20, hjust=0.8),
+        axis.text.y=element_text(size=11),
+        plot.subtitle=element_text(size=12))
+
+# plot_grid(mrs_vs_frs_plt, frs0.1_plt, ncol=2)
+
+# # All individuals, on trained data
+# my_data <- nmd_all %>%
+#   mutate(event_10yr=event & (time <=10 * 360))
+# my_fit <- glm(event_10yr ~ mrs_final, data=my_data, family="binomial")
+# my_data$pred_10yr_risk <- predict(my_fit, type="response")
+# 
+# my_data %>%
+#   # mutate(pred_10yr_risk=predict(my_fit, type="response")) %>%
+#   filter(frs < 0.1) %>%
+#   arrange(pred_10yr_risk) %>%
+#   # dplyr::slice(1:1000) %>%
+#   ggplot(aes(x=1:nrow(.), y=pred_10yr_risk, fill=event)) +
+#   geom_bar(stat="identity")
+
+# # With FHS-UM held out
+# my_data <- nmd_all %>%
+#   mutate(event_10yr=event & (time <=10 * 360))
+# my_fit <- glm(event_10yr ~ mrs_uofm_holdout, data=filter(my_data, frs < 0.1, batch != "fhs_UofMinn"), 
+#               family="binomial")
+# my_data$pred_10yr_risk <- predict(my_fit, newdata=my_data, type="response")
+# 
+# my_data %>%
+#   filter(frs < 0.1, batch == "fhs_UofMinn") %>%
+#   arrange(pred_10yr_risk) %>%
+#   # dplyr::slice(1:1000) %>%
+#   ggplot(aes(x=1:nrow(.), y=pred_10yr_risk, fill=event, alpha=(pred_10yr_risk>0.2))) +
+#   geom_bar(stat="identity")
+
+# nmd_all %>%
+#   mutate(mrs_final=mrs_uofm_holdout) %>%
+#   filter(batch == "fhs_UofMinn") %>%
+#   select(mrs_final, frs_group, event) %>%
+#   na.omit() %>%
+#   mutate(mrs_group=cut(mrs_final, breaks=quantile(mrs_final, seq(0, 1, by=0.25), na.rm=T),
+#                        labels=paste0("MRS_Q", 1:4), include.lowest=T)) %>%
+#   group_by(frs_group, mrs_group) %>%
+#   summarise(n=n(),
+#             n_event=sum(event),
+#             n_tot=n(),
+#             frac=n_event / n_tot,
+#             frac_string=paste0(n_event, " / ", n_tot, " (",
+#                                round(frac * 100, 1), "%)")) %>%
+#   select(frs_risk=frs_group, mrs_group, frac_string) %>%
+#   spread(key=mrs_group, value=frac_string)
+```
+
+To understand how the present risk score interacts with other established CVD risk metrics, the performance of the MRS was re-evaluated after stratifying individuals by risk scores reflecting either demographic and biochemical features (Framingham Risk Score), or genetic variants (based on Khera et al. 2018). First, the marginal effects of these risk scores were confirmed in each population. The Framingham Risk Score (FRS) was strongly predictive in WHI and FHS, while surprisingly showing no association with disease incidence in LBC (Supp. Table S5). As the genetic score does not change over time, it was evaluated with respect to any past or future CVD event, showing a moderate association in WHI but no association in FHS (Supp. Table S6).
+
+In Cox models using baseline hazards stratified by study, it appeared that the MRS was more effective in those in lower "traditional" risk strata (according to the FRS; Fig. 4). As a sensitivity analysis, the cohorts were fully stratified into separate models, in which this pattern was visually clear in WHI, FHS-JHU, and to some extent FHS-UM (Supp. Fig. S1). The pattern did not appear in LBC, although we note that the Framingham Risk Score also did not show a "main effect" for predicting incident CVD in this cohort. A similar pattern appeared with respect to genetic risk in WHI (white participants only based on the formulation of the relevant risk score) and FHS, in which maximum MRS performance was achieved in the lowest alternative risk stratum. Supplementing these visual comparisons, combined Cox regressions across all cohorts (allowing for different baseline hazards across studies) showed a strong MRS-FRS interaction effect (`r mrs_frs_interaction_effect_per10pct`% reduction in HR for the MRS per 10% increase in FRS (p = `r as.character(mrs_frs_interaction_pval)`)), while that for the MRS-GRS interaction did not reach nominal statistical significance (`r mrs_grs_interaction_effect_per10pct`% reduction in HR for the MRS per standard deviation increase in GRS (p = `r as.character(mrs_grs_interaction_pval)`)).
+
+To explore the clinical potential of these interactions further, we returned to the initial MRS (trained in 3 datasets with FHS-UM held out). The FHS-UM dataset was filtered to include only participants with lower CVD risk based on either FRS (<10% estimated 10-year risk) or GRS (lowest quartile of the GRS). Within this lower-risk subset, participants in the upper MRS quartile had more than double the risk of the remainder of the participants: 10% (29/289) versus 4% (34/866). While a similar risk increase was observed when taking the intersection of these low-risk groups (low FRS and low GRS), the sample size was not enough to draw reasonable statistical conclusions (only 6 events in total).
+
+<!--To explore the clinical potential of this methylation-FRS/GRS interaction further, we returned to the initial MRS (trained in 3 datasets with FHS-UM held out). The FHS-UM dataset was filtered to include only participants with low predicted risk based on the FRS (10-year CVD risk <10%). Within this lower-risk subset, participants in the upper MRS quintile had almost triple the risk of the remainder of the participants: 7.4% (13/176) versus 2.6% (18/701).-->
+
+<!--Though continuous risk factor variables were not available for FRS calculation in REGICOR, similar risk strata were calculated based on linear models using demographics and risk factors only. MRS discriminative performance was notably higher in the lowest vs. highest quartiles of this risk metric, agreeing with the training-set results, but did not follow a consistent dose-response relationship.-->
+
+# Discussion
+
+Epigenetic signatures of cardiometabolic diseases and aging in general are being actively explored as biomarkers of disease risk that are potentially modifiable and reveal underlying biological mechanisms. Here, in a novel application of a cross-study ensembling method, we introduce a DNA methylation-based score specific to cardiovascular disease risk. The model performs better than one trained on a naive combination of the entire dataset (though similarly to use of a batch preprocessing algorithm), and may be most strongly predictive in individuals predicted to be at lower risk based on traditional risk factors.
+
+We opted to use cross-study learning to train our risk model because we expect that differences across cohorts (e.g. demographic, behavioral) may contribute to heterogeneity in both the marginal distribution of the CpG features and the conditional distribution of the CVD outcome. Under these conditions, the generalizability of a single-study predictor is often obscured or overstated [@Chang2015; @Zhang2018]. Using the CSL, we observed improved performance in test sets as compared to the naïve strategy of combining cohorts and training a single-study model. This suggests that up- and down-weighting single-study models offers an advantage compared to the increased combined sample size of the cohort-merging strategy.
+
+Notably, the performance of the CSL model was similar to that of the model trained on the merged cohorts after batch adjustment via ComBat. This suggests that the assumptions regarding heterogeneity in the marginal distributions of the model covariates made by the ComBat hierarchical model are met. Any heterogeneity structure that can be captured by variation in the marginal effects can be accounted for and removed by ComBat [@Johnson2007]. In practice, this underlying structure is unknown, and we highlight that the CSL makes no specific assumptions and was able to produce similar gains in predictive accuracy in both the held-out FHS-UM and independent REGICOR datasets.
+    
+In assessing the stability of the MRS, we observed reasonable reproducibility between technical replicates (ICC=0.81). ICCs for LBC subjects over time were somewhat lower (ICC=0.68), which is to be expected due to not only changes in environment, but also the known epigenetic evolution with age that we observed to be enriched in the components of our score. These ICC values suggest an imperfect but usable reproducibility of the MRS, and an aggregate marker that is fairly robust considering the low replicability that has been observed for individual sites in technical replicates (general median ICC of 0.3 and mode of 0.75 in a "high reliability" cluster) [@Bose2014].
+
+The enrichment of the MRS component CpGs for proximity to genes related to cell-cell adhesion (in all subsets except FHS-JHU) suggests one of the biological patterns it tracks. As we have previously observed in a subset of these datasets [@Westerman2018], it appears that immune activation is central to the prognostic information contained in leukocyte DNA methylation. For example, epigenetic processes have been shown to be involved in the activation and increased adhesion of monocytes in response to environmental insults and metabolic stress, though these have been explored primarily in relation to histone modifications [@Short2017]. Our results provide preliminary support for an attractive model in which a methylation-based score could act as a monitor of cumulative stress in leukocytes and their corresponding activation towards a more atherogenic state.
+
+Existing epigenetic scores have shown varying strength in predicting incident cardiovascular disease. An early investigation examined blood-based methylation in LINE-1 elements, finding strong associations of global hypomethylation with prevalent and incident ischemic heart disease global (LINE-1), though additional reports showed opposite associations of methylation at repetitive elements with CVD [@Kim2010]. Guarrerra et al. developed a biomarker for MI based on global LINE-1 and ZBTB12 gene methylation that provided a modest net reclassification index improvement (0.23-0.47) compared to traditional risk factors only. Multiple epigenetic aging metrics, though not developed specifically for CVD, have been shown to predict incident CHD, including PhenoAge (odds ratios from 1.02 to 1.08) and GrimAge (hazard ratio = 1.07, adjusted for age and technical factors) [@Levine2018; @Lu2019]. While these associations are statistically significant, they do not represent clinically meaningful improvements in discrimination. Our observed hazard ratio of 1.32 (in the held-out FHS-UM dataset) suggests a biomarker that may be closer to clinical relevance. We note that our component CpG sites overlap strongly with those of these established epigenetic metrics including PhenoAge, suggesting that it captures some of the same biological patterns. However, the biological significance of the specific methylation changes observed in these aging- and morbidity-related metrics, whether as markers of failure in epigenetic regulation breakdown versus the work down by an "epigenetic maintenance system" is still unclear [@Horvath2013; @Lund2019].
+
+In examining the potential clinical utility of an epigenetic risk score for CVD, it is important to understand to what extent it is redundant or complementary to existing risk metrics. We did not identify any robust patterns of differential MRS performance in strata based on a recent genetic cardiovascular risk score, meaning that individuals cannot be prioritized for measurement of this score purely based on germline genetic variants. There may have been lower power to detect any such patterns from the outset, since the GRS performed only modestly in WHI and had no discriminative power in FHS. However, we saw a pattern of improved risk prediction in individuals whose cardiovascular risk based on traditional metrics (here, the Framingham Risk Score) was low. While this association is only preliminary and does not follow in one of the four datasets examined here, it suggests that an epigenetic risk score could help identify higher-risk individuals who otherwise would not have been detected.
+    
+Multiple limitations should be acknowledged. While lymphocytes are known to be important in CVD pathogenesis, there is likely additional biological signal in other CVD-relevant tissues not examined here. Additionally, the present definition of CVD was chosen to balance specificity of CVD subtypes with sample size, but this balance could be altered to focus on more specific disease subtypes (e.g. myocardial infarction) or a broader definition of CVD (e.g. including heart failure).
+
+In sum, we have developed an epigenetic risk score for cardiovascular disease that provides additional predictive power beyond existing risk measures, and may show improved performance in populations otherwise designated as low-risk. Furthermore, we have shown a novel application of a cross-cohort ensembling method that may provide significant value to future investigations in genomic epidemiology.
+
+# Methods
+
+## Study participants and phenotype collection
+
+WHI methylation data came from a combined case-control and pseudo case-cohort sampling of 2129 women from the Women's Health Initiative study, a larger prospective cohort beginning in 1993 that included over 160,000 postmenopausal women from across the United States [@Anderson1998]. Included subjects had no self-reported CVD at baseline, and cases were chosen based on incident centrally adjudicated angina, revascularization, or CHD event during follow-up. Inclusion criteria for methylation measurement resulted in an oversampling of African American and Hispanic participants. Blood samples used for measurement of DNA methylation and clinical biochemistry were taken at Exam 1. Data are available in the dbGaP public repository (accession: phs000200.v11.p3; downloaded on September 27, 2017).
+
+FHS methylation data came from a substudy of the Framingham Heart Study that measured DNA methylation in 2726 subjects from the Offspring Cohort. The Framingham Offspring Cohort was originally established in 1971 to follow 5209 children of the original Framingham Heart Study participants and their spouses [@Kannel1979]. Fasting blood samples for both methylation and clinical biochemistry were collected from participants at Exam 8, which took place from 2005-8. Blood samples were also provided for clinical biochemistry measurements in previous exams, constituting the "past exposures" examined here. Data are available in the dbGaP public repository (accession: phs000007.v29.p10; downloaded on September 27, 2017). Adjudicated cardiovascular event data was collected through 2015, and events were defined here as any of: myocardial infarction, angina pectoris, stroke (approximately 90% being ischemic), or death from CHD (Framingham event codes 1-29). FHS methylation data were collected in two primary batches in two centers -- one in subjects from a nested case-control for CVD measured at Johns Hopkins University (FHS-JHU) [@Joehanes2013], and the other in a larger set of remaining Framingham Offspring participants measured at the University of Minnesota (FHS-UM).
+
+Blood-based biochemical markers (total cholesterol, LDL, HDL, triglycerides, glucose, hsCRP, and systolic blood pressure) were log10-transformed for all analyses. In addition, median imputation was used to fill missing values for BMI (20 individuals in total), medication use, and smoking status (thus assuming no medication use and no smoking where these values were missing). Diabetes was defined as either use of diabetes medication or a measured fasting blood glucose level of >125 mg/dL. While directly available in WHI, pack-years of smoking was approximated in FHS by multiplying either the number of years since starting smoking by the current number of packs per day, or else by multiplying the number of years smoked by the median number of packs per day (15) for those who had quit. Framingham Risk Scores were calculated as described previously [@DAgostino2008].
+
+The Lothian Birth Cohorts consist of two birth cohorts (born in 1921 and 1936) established in the Lothian region of Scotland [@Deary2012]. Only the 1936 cohort is analyzed here. Blood samples were collected in three waves starting in 2004, with our primary analyses here focusing on only those samples from Wave 1 (2004-2007). LBC data are accessible through the European Genome-phenome Archive (accession: EGAS00001000910).
+
+The REGICOR dataset analyzed here consisted of a nested case-control for myocardial infarction within the larger REGICOR (REgistre GIroní del COR) cohort from the Girona Province in Catalonia (Spain). Whole blood samples were collected from 391 total participants, with those from cases generally collected within 24 hours of the event. Characteristics for this population are available in Supp. Table S4.
+
+## DNA methylation data processing
+
+DNA methylation data for all initial cohorts (WHI, FHS, and LBC) were collected using the Illumina HumanMethylation450 microarray platform [@Bibikova2011] and downloaded as raw intensity files. Preprocessing was performed using the *minfi* and *wateRmelon* packages for R [@Aryee2014; @Pidsley2013]. Sample-wise filters were as follows: robust overall signal in the main cluster based on visual inspection of an intensity plot, less than 10% of probes undetected at a detection threshold of p<1e-16, and a reported sex matching methylation-based sex prediction. Probes were removed using the following criteria: more than 10% of samples undetected at a detection threshold of p<1e-16, location in the X or Y chromosomes, non-CpG probes, cross-hybridizing probes, probes measuring SNPs, and probes with an annotated SNP at the CpG site or in the single-base extension region. Samples were normalized using the Noob method for background correction and dye-bias normalization, followed by the BMIQ method for probe type correction [@Fortin2016; @Teschendorff2013]. Blood cell fractions for 6 blood cell types (CD4+ T-cells, CD8+ T-cells, B-cells, natural killer cells, monocytes, and granulocytes) were estimated using a common reference-based method [@Houseman2012], and 5 of these (excluding granulocytes) were included in cell count-adjusted statistical models. After quality control and filtering steps, `r length(common_cpgs)` CpG sites were shared between the 3 datasets, formatted as beta values (ratio of methylated signal to total microarray signal).
+
+DNA methylation data for the REGICOR cohort were collected using the Illumina MethylationEPIC microarray platform [@Pidsley2016] and analyzed using the *wateRmelon* [@Pidsley2013] and methylumi [@Davis2019] R packages. Samples were excluded based on detection p-value >0.05 in at least 1% of probes or failure to cluster in the appropriate sex based on X chromosome methylation. Probes were excluded based on detection p-value >0.05 in at least 1% of samples, a bead count <3 in at least 5% of samples, discarding by Illumina based on underperformance (n=1,031) or changes in the manufacturing process (n=977), non-CpG targets, and cross-hybridization (n=43,979). A batch normalization was performed by standardizing beta values to mean zero and unit variance within each bisulfite conversion batch prior to analysis. After quality control and preprocessing, 811,610 CpG sites across 391 individuals were available for analysis. Participants were further excluded from analysis due to unknown smoking habits (n=10) and unavailable information regarding diabetes, hypertension, or hyperlipidemia (n=53). Surrogate variable analysis [@Leek2007] was used to calculate two surrogate variables, representing potential technical and biological confounders, for adjustment in MRS replication models.
+
+## CVD risk prediction modeling
+
+Study-specific CVD risk prediction models were trained using penalized Cox proportional hazards regressions with the elastic net penalty. CVD events were defined as above, and times were right-censored based on the most recent exam available in each cohort. The elastic alpha parameter was set at 0.05, based on prior observations of good performance on Illumina methylation microarray datasets [@Zhuang2012], and the penalty parameter $\lambda$ was optimized through 5-fold cross-validation. For each model, only the most variable 100,000 CpGs according to median absolute deviation (~25% of all available sites shared across platforms) were included in order to decrease the computational burden and ensure that the selected CpGs would have meaningful interindividual variation.
+
+The cross-study learner (CSL) was constructed as an ensemble of study-specific regression models. Predictions from each single-study learner (SSL) were combined using the "stacking" approach [@Patil2018], implemented as follows. First, predictions from each SSL to both itself and the other training datasets were combined into a design matrix (with dimensions $N_{total}$ x # SSLs). This formed the input to an additional penalized Cox regression (ridge regression with $\lambda$ optimized through 5-fold CV and coefficients restricted to be non-negative) of all training studies at once. Coefficients from this regression, corresponding to input study-specific SSLs, were normalized to sum to one to produce the CSL weights. For prediction in new datasets, SSL predictions were each standardized to mean zero and unit variance before calculating their weighted sum (using the "stacking" weights) as the final CSL score.
+
+A series of approaches for combining information across cohorts were tested as alternatives to the CSL. The naive "combined" approach consisted of simply aggregating observations from all training sets into a single dataset and training an elastic net regression as described above while adjusting for study as a fixed effect.  The ComBat method trained across all studies as with the "combined" approach, but included an empirical Bayes-based preprocessing step to directly adjust the dataset for study differences while preserving variation along the "axis" of incident CVD events [@Johnson2007].
+
+MRS evaluation in FHS was performed using Cox proportional hazards models, with a series of models adjusting for covariates including demographics, anthropometrics, biochemical values, and cell subtype estimates. Robust standard errors (also known as the Huber-White sandwich estimator) were used to account for family structure as has been suggested for clustered data [@Rogers1993] and used for epigenetic risk models in FHS [@Lu2019]. MRS evaluation in the REGICOR case-control used logistic regression models, adjusting for the same sets of covariates where possible, though traditional biochemical risk factors were only available in discrete low vs. high categories.
+
+## Genomic risk score calculation
+
+Imputed genotype data were retrieved from dbGaP (accession: phs000746.v2.p3 (WHI) and phs000342.v18.p11 (FHS)). Variants were filtered for imputation R-squared > 0.3, and annotated with rsIDs, loci, and allelic information using the 1000 Genomes Phase 3 download from dbSNP (download date: April 13, 2018). Weights for the genetic risk score calculation were based on the genome-wide CVD score developed by Khera et al [@Khera2018]. We note that these scores were developed only for populations of European descent, and thus are not optimized for the mixed-ancestry WHI population. GRS were then calculated as the weighted sum of allelic dosages, normalized by the number of relevant SNPs available. Genotype data processing and GRS calculation were performed using PLINK 2.0.
+
+## Risk score interaction analysis
+
+Interaction analysis was performed using similar Cox regression models to those above, adjusting for the "basic" set of covariates (age, sex, and estimated blood cell type fractions) and using robust standard error estimates. To facilitate visual comparisons, main-effect regressions for the MRS were fitted within risk strata defined by the FRS or GRS separately in each dataset. To obtain overall interaction effect estimates, an interaction between MRS and either FRS or GRS was introduced into a combined regression including all datasets, while allowing stratified baseline hazards (strata() argument to the coxph function). We note that all interaction analyses were performed using the final MRS in the same group of datasets used to train the MRS model, meaning that the main-effect estimates were biased upwards. All regressions assessing the GRS excluded non-white participants, based on the fact that the polygenic CVD score was developed in individuals of European ancestry [@Khera2018]. 
+
+# References

@@ -1,0 +1,186 @@
+---
+title: "Supplementary Info: Cross-study learning for the epigenomic prediction of cardiovascular risk"
+output:
+  bookdown::pdf_document2:
+    fig_caption: true
+    keep_tex: true
+    toc: false
+bibliography: mrs_manuscript.bib
+# csl: pnas.csl
+link-citations: true
+---
+
+```{r prereqs, include=F}
+library(knitr)
+knitr::opts_chunk$set(echo=F, warning=F,
+                      fig.path="../doc/mrs_models/figures/", fig.pos="h")
+suppressMessages(silent <- lapply(
+  c("tidyverse", "survival", "kableExtra", "gridExtra", "cowplot", "broom"), 
+  library, character.only=T))
+load("../../output/mrs_models_objects.RData")
+```
+
+\newcommand{\beginsupplement}{
+  \setcounter{table}{0}  
+  \renewcommand{\thetable}{S\arabic{table}} 
+  \setcounter{figure}{0} 
+  \renewcommand{\thefigure}{S\arabic{figure}}
+}
+
+\beginsupplement
+
+```{r fhs-holdout-noPE}
+pretty_models <- c(unadjusted="Unadjusted",
+                   basic="Basic",
+                   plus_risk_factors="Plus risk factors",
+                   FRS_only="FRS only")
+pretty_models_with_ss <- setNames(
+  paste0(pretty_models, "\\textsuperscript{", 1:4, "}"),
+  names(pretty_models))
+
+uofm_holdout_res_tbl_noPE %>%
+  mutate(Model=pretty_models_with_ss[covariate_set],
+         HR_per_SD=round(HR_per_SD, 2),
+         p=format(p, scientific=T, digits=2)) %>%
+  select(Model, HR_per_SD, p) %>%
+  setNames(c("Model", "HR per s.d. MRS", "p")) %>%
+  kable(booktabs=T, 
+        caption="MRS performance in held-out FHS subset without past CVD events", 
+        escape=F) %>%
+  footnote(number=c("No covariates",
+                    "Adjusted for age, sex, and estimated cell type fractions",
+                    "Additionally adjusted for BMI, LDL, HDL, SBP, diabetes status, and current smoking",
+                    "Adjusted for Framingham Risk Score only"),
+           threeparttable=T)
+```
+
+```{r tf-enrichment, message=F}
+homer_res <- read_tsv("../../output/homer_results/csl/knownResults.txt")
+
+homer_res %>%
+  select(1, 2, 5, 7, 9) %>%
+  setNames(c("Motif", "Consensus", "BH q-value", "MRS Coverage", "Background Coverage")) %>%
+  filter(`BH q-value` < 0.2) %>%
+  kable(booktabs=T,
+        caption="MRS enrichment for transcription factor binding motifs: HOMER results") %>%
+  column_spec(1, width = "15em")
+```
+
+```{r stability}
+icc_res_tbl$ICC <- round(icc_res_tbl$ICC, 2)
+
+icc_res_tbl %>%
+  dplyr::rename(`# of pairs/groups`=`Number of pairs/groups`) %>%
+  kable(booktabs=T,
+        caption="MRS stability as evaluated by using multiple within-subject measurements. Generic ICC heuristics for reference: 0-0.5 = poor, 0.5-0.75 = moderate, 0.75 - 0.9 = good, 0.9-1 = excellent.") %>%
+  kable_styling(latex_options="hold_position")
+```
+
+```{r regicor-description}
+data.frame(`Sample size`=391,
+        `Prior myocardial infarction`="50.1%",
+        `Ancestry (% European)`="100%",
+        Age="63.2 (6.9)",
+        `Sex (% female)`="48.6",
+        `Smoking`="21.5%",
+        `Body mass index`="28.5 (4.8)",
+        `LDL cholesterol`="127 (26)",
+        `HDL cholesterol`="50.0 (10.5)",
+        `Systolic blood pressure`="135 (18)",
+        `Diabetes prevalence`="24.7%",
+        check.names=F
+) %>% 
+  t() %>%
+  kable(booktabs=T,
+        caption="Description of REGICOR mycardial infraction nested case-control population")
+```
+
+```{r causal-diagram-hscrp, fig.cap="Example diagram of cumulative risk factor mediation by brown methylation module activation. Results from 4 regressions are shown: cumulative risk factor exposure to brown activation, cumulative risk factor exposure to incident CVD, and brown activation to incident CVD with and without adjustment for cumulative risk factor exposure. Regression terms represented as: sign of coefficient (p-value).", eval=F}
+include_graphics("../doc/module_ewas/hscrp_mediation_diagram.pdf")
+```
+
+```{r risk-score-validation}
+study_names_pretty <- c(whi="WHI", fhs_JHU="FHS-JHU", lbc36="LBC", 
+                        fhs_UofMinn="FHS-UM")
+
+test_frs <- function(frs_df) {
+  frs_df$frs <- scale(frs_df$frs)
+  coxph(Surv(time, event) ~ frs, data=frs_df) %>%
+    tidy() %>%
+    filter(term == "frs") %>%
+    select(estimate, p.value)
+}
+
+frs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU", 
+                         fhs_UofMinn="fhs_UofMinn", lbc36="lbc36"), 
+                       function(b) test_frs(filter(nmd_all, batch == b))) %>%
+  bind_rows(.id="Study") %>%
+  mutate(Study=study_names_pretty[Study],
+         HR_per_SD=round(exp(estimate), 2),
+         p=format(p.value, scientific=T, digits=2)) %>%
+  select(Study, HR_per_SD, p)
+
+kable(frs_res_tbl, booktabs=T,
+      caption="Validation of Framingham Risk Score")
+
+test_grs <- function(grs_df) {
+  grs_df$grs <- scale(grs_df$grs)
+  glm((pastEvent | event) ~ grs, data=grs_df, family="binomial") %>%
+    tidy() %>%
+    filter(term == "grs") %>%
+    select(estimate, p.value)
+}
+
+grs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU", 
+                        fhs_UofMinn="fhs_UofMinn"), 
+                      function(b) test_grs(filter(nmd_all, batch == b))) %>%
+  bind_rows(.id="Study") %>%
+  mutate(Study=study_names_pretty[Study],
+         OR_per_SD=round(exp(estimate), 2),
+         p=format(p.value, scientific=T, digits=2)) %>%
+  select(Study, OR_per_SD, p=p.value)
+
+kable(grs_res_tbl, booktabs=T,
+      caption="Validation of genetic risk score")
+```
+
+```{r interactions, warning=F, fig.cap="Interactions of MRS with other biomarkers of CVD risk. a) Hazard ratios for the MRS within subsets of 10-year generalized CVD risk according to the Framingham Risk Score. b) Hazard ratios for the MRS within quartiles of a genetic cardiovascular risk score (in white participants only for WHI). Hazard ratios are estimated using the final MRS, which was trained using each of these datasets. Stratum-specific Cox regressions were adjusted for age, sex, and estimated cell subtype fractions. Estimates for strata with less than 25 incident events are not shown. Error bars represent standard errors for the hazard ratio estimates (cut off above in panel (a) for ease of visualization of other points)."}
+plot_strat_test_by_study <- function(qres, xlab) {
+  qres %>%
+    mutate(study=factor(study,
+                        levels=names(study_names_pretty),
+                        labels=study_names_pretty)) %>%
+    ggplot(aes(x=Group, y=HR_per_SD, group=study, color=study)) +
+    geom_point(position=position_dodge(width=0.4)) +
+    geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
+                  position=position_dodge(width=0.4)) +
+    labs(x=xlab)
+}
+
+age_quantile_plt <- plot_strat_test_by_study(int_res_list$age, "Age") +
+  theme(axis.text.x=element_text(angle=30, size=10))
+frs_quantile_plt <- plot_strat_test_by_study(int_res_list$frs, "FRS 10-year risk") +
+  scale_x_discrete(labels=c("<0.1", "0.1-0.2", "0.2-0.4", ">0.4")) +
+  coord_cartesian(ylim=c(1, 3.5)) +
+  labs(y="Hazard ratio (per s.d. MRS)") +
+  theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
+grs_white_quantile_plt <- plot_strat_test_by_study(int_res_list$grs_white, 
+                                                   "Genetic risk score quartile") +
+  # scale_color_discrete(labels=study_names_pretty[c("fhs_JHU", "fhs_UofMinn", 
+  #                                                  "lbc36", "whi")]) +
+  coord_cartesian(ylim=c(1, 3.5)) +
+  labs(y="MRS performance (H.R. per s.d. MRS)")
+race_plt <- plot_strat_test_by_study(int_res_list$race, "Race") +
+  theme(axis.text.x=element_text(angle=30, hjust=0.8))
+sex_plt <- plot_strat_test_by_study(int_res_list$sex, "Sex")
+# sex_res %>% group_by(study) %>% mutate(HR_ratio=HR_per_SD / HR_per_SD[which(Group=="F")]) %>% ungroup()
+# past_event_plt <- plot_strat_test_by_study(past_event_res, "Past event")
+
+plot_grid(
+  frs_quantile_plt + theme(legend.position="none"), 
+  grs_white_quantile_plt + theme(legend.title=element_blank(), 
+                                 axis.title.y=element_blank()), 
+  rel_widths=c(2, 3), nrow=1, align="h", axis="bt", 
+  labels=c("a", "b"), label_x=c(0, -0.025))
+```
+

@@ -1,5 +1,5 @@
 ---
-title: MRS Model Experimentation
+title: MRS development and evaluation
 output:
   bookdown::pdf_document2:
     latex_engine: pdflatex
@@ -139,16 +139,17 @@ construct_design_mat <- function(cpgs, betas, covars, meta) {
 }
 
 test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
-                     covars=c()) {
+                     covars=c(), robust=F) {
   meta$mrs <- scale(mrs)
   meta$cvd_surv <- Surv(time=meta$time, event=meta$event)  # Outcome
+  meta <- mutate_at(meta, c("chol", "ldl", "hdl", "tg", "glu", "hscrp", "sbp"), log10)
   covar_string <- "cvd_surv ~ mrs"
   if (length(covars) > 0) {
     covar_string <- paste(covar_string, "+", paste(covars, collapse=" + "))
   } 
   form <- as.formula(paste(c("cvd_surv ~ mrs", covars), collapse=" + "))
-  mrs_test <- coxph(form, data=meta, subset=subset)  # Test the MRS using a Cox model
-  mrs_res <- summary(mrs_test)$coef["mrs",c("exp(coef)","z")]
+  mrs_test <- coxph(form, data=meta, subset=subset, robust=robust)  # Test the MRS using a Cox model
+  mrs_res <- summary(mrs_test)$coef["mrs", c("exp(coef)","z")]
   mrs_res_tbl <- tibble(HR_per_SD=mrs_res["exp(coef)"], 
                         p=2 * pnorm(-abs(mrs_res["z"])))
   if (return_fit) {
@@ -158,9 +159,9 @@ test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
   }
 }
 
-test_mrs_with_SE <- function(nmd, mrs, subset, covars) {
+test_mrs_with_SE <- function(nmd, mrs, subset, covars, robust=F) {
   test_res_list <- test_mrs(nmd, mrs, subset=subset, return_fit=T,
-                            covars=covars)
+                            covars=covars, robust=robust)
   res_tbl <- test_res_list$tbl
   beta <- log(res_tbl$HR_per_SD)
   se <- sqrt(diag(test_res_list$fit$var)[1])
@@ -197,14 +198,14 @@ test_mrs_auc <- function(meta, mrs, subset=NULL,
          "c_statistic"=as.numeric(auc(roc_obj)))
 }
 
-test_models <- function(meta, mrs, test_idx, testfunc) {
+test_models <- function(meta, mrs, test_idx, testfunc, robust=F) {
   # Given a set of coefficients, calculate a methylation risk score 
   # and test it using each set of covariates
   nmd_test <- meta[test_idx, ]
   mrs_test <- mrs[test_idx]
   map_dfr(covar_sets, function(cs) {
     if (all(nmd_test$batch == "whi")) cs <- cs[cs != "sex"]
-    testfunc(nmd_test, mrs_test, 1:nrow(nmd_test), covars=cs)
+    testfunc(nmd_test, mrs_test, 1:nrow(nmd_test), covars=cs, robust=robust)
   }, .id="covariate_set")
 }
 
@@ -265,15 +266,9 @@ calc_stack_weights <- function(stacked_df, studies) {
                             grepl(paste(studies, collapse="|"), batch))
   cvd_surv <- Surv(stacked_df_filt$time, stacked_df_filt$event)
   for (s in studies) stacked_df_filt[[s]] <- scale(stacked_df_filt[[s]])
-  # cox_fit <- coxph(as.formula(paste("Surv(time, event) ~",
-  #                                  paste(studies, collapse=" + "))), 
-  #                 data=stacked_df_filt)
   mrs_fit_cv <- cv.glmnet(as.matrix(stacked_df_filt[, studies]),
                           cvd_surv,
-                          # stacked_df_filt$event,
                           family="cox",
-                          # family="binomial",
-                          # intercept=F,
                           alpha=0,  # Train MRS model
                           lower.limits=0,
                           nfolds=5)
@@ -336,48 +331,6 @@ test_resamples_csl <- function(meta, betas,
     mutate(covariate_set=factor(covariate_set,
                                 levels=unique(covariate_set)))
 }
-
-# test_boots_csl <- function(meta, betas,
-#                            boot_ssl_fits, index_df, 
-#                            test_idx_sets, testfunc) {
-#   # Loop through a series of resamples/folds and test held-out performance
-#   boot_res_list <- lapply(
-#     1:length(test_idx_sets), function (boot) {
-#       test_idx <- test_idx_sets[[boot]]
-#       ssl_preds <- meta
-#       all_studies <- c("whi", "fhs_JHU", "fhs_UofMinn", "lbc36")
-#       no_pred_studies <- c()
-#       for (s in all_studies) {
-#         fits_idx <- which(index_df$boot == boot & index_df$study == s)
-#         if (all(boot_ssl_fits[[fits_idx]]$cpg_coefs == 0)) {
-#           no_pred_studies <- c(s, no_pred_studies)
-#         }
-#         ssl_preds[[s]] <- calc_mrs_glmnet(
-#           boot_ssl_fits[[fits_idx]]$cpg_coefs, betas_all)
-#       }
-#       pred_studies <- setdiff(all_studies, no_pred_studies)
-#       csl_weights <- calc_stack_weights(ssl_preds[-test_idx, ],
-#                                         pred_studies)
-#       print(csl_weights)
-#       if (length(no_pred_studies) > 0) csl_weights[no_pred_studies] <- 0
-#       mrs <- csl_predict(ssl_preds, pred_studies,
-#                          csl_weights[pred_studies])
-#       test_models(meta, mrs, test_idx, testfunc)
-#     })
-#   bind_rows(boot_res_list, .id="Fold") %>%
-#     mutate(covariate_set=factor(covariate_set,
-#                                 levels=unique(covariate_set)))
-# }
-
-# boots_csl_res <- test_boots_csl(nmd_all, betas_all,
-#                                 boot_ssl_fits, 
-#                                 boot_study_combos,
-#                                 boot_samples_heldout,
-#                                 test_mrs_with_SE)
-# boots_csl_res %>% 
-#   group_by(covariate_set) %>%
-#   summarise(mean=mean(HR_per_SD),
-#             SE=sd(HR_per_SD))
 ```
 
 ```{r glmnet-funcs}
@@ -533,9 +486,15 @@ uofm_holdout_csl <- assemble_csl(
 uofm_holdout_mrs <- uofm_holdout_csl$mrs
 uofm_holdout_res_tbl <- test_models(
   nmd_all, uofm_holdout_mrs, 
-  nmd_all$batch == "fhs_UofMinn", test_mrs)
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T)
+uofm_holdout_res_tbl_noPE <- test_models(
+  nmd_all, uofm_holdout_mrs,
+  nmd_all$batch == "fhs_UofMinn" & nmd_all$pastEvent == F, 
+  test_mrs_with_SE, robust=T)
 
-kable(uofm_holdout_res_tbl, caption="Results on held-out FHS subset")
+nmd_all$mrs_uofm_holdout <- uofm_holdout_mrs
+
+kable(uofm_holdout_res_tbl, caption="MRS performance in held-out FHS subset")
 ```
 
 ```{r other-csl-assessment}
@@ -575,10 +534,12 @@ legend("bottomright",
 roc_plot <- recordPlot()
 delong_test <- roc.test(frs_roc, both_roc)
 
-surv_fit <- survfit(Surv(time, event) ~ nmd_roc$test_mrs>0,
-                          data=nmd_roc)
+# uofm_holdout_surv_fit <- survfit(Surv(time, event) ~ nmd_roc$test_mrs>0,
+#                                  data=nmd_roc)
+uofm_holdout_surv_fit <- survfit(Surv(time, event) ~ nmd_roc$test_mrs>0,
+                                 data=nmd_roc)
 # surv_fit <- survfit(Surv(time, event) ~ 1, data=nmd_roc)
-plot(surv_fit, ymin=0.9, xmax=800, conf.int=T)
+plot(uofm_holdout_surv_fit, ymin=0.9, xmax=800, conf.int=T)
 
 # mod1 <- coxph(Surv(time, event) ~ frs, data=nmd_all,
 #               subset=nmd_all$batch == "fhs_UofMinn", x=T)
@@ -638,7 +599,7 @@ boot_ssl_fits <- map2(boot_study_combos$resample,
 
 stopCluster(cl)
 ```
-```{r test-bootstrap-csl, include=F}
+```{r test-bootstrap-csl, include=F, eval=F}
 boot_samples_heldout <- lapply(boot_samples[1:5], 
                                function(s) (1:nrow(nmd_all))[-s])
 
@@ -715,7 +676,7 @@ cv_ssl_fits <- map2(
 
 stopCluster(cl)
 ```
-```{r test-cv-csl, include=F}
+```{r test-cv-csl, include=F, eval=F}
 names(fold_study_combos) <- c("resample", "study")
 fold_study_combos$resample <- as.numeric(
   gsub("Fold", "", fold_study_combos$resample))
@@ -783,20 +744,94 @@ uofm_holdout_combined_no_batch_model <- lapply(c("fhs_UofMinn"),
 })
 stopCluster(cl)
 ```
+```{r run-combat, cache=1, cache.vars=""}
+mvals_all <- logit2(betas_all)
+mvals_combat <- sva::ComBat(mvals_all, batch=nmd_all$batch,
+                            mod=model.matrix(~event, data=nmd_all))
+rm(mvals_all)
+betas_combat <- ilogit2(mvals_combat)
+rm(mvals_combat)
+saveRDS(betas_combat, "../int/betas_mrs_combat.rds", compress=F)
+```
+```{r combat-UofM-holdout, cache=1, cache.vars="uofm_holdout_combat_model"}
+betas_combat <- readRDS("../int/betas_mrs_combat.rds")
 
-```{r test-combined-UofM-holdout}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+uofm_holdout_combat_model <- lapply(
+  c("fhs_UofMinn", "fhs_JHU"),
+  function(s) {
+    idx <- which(!(nmd_all$batch == s))
+    mads <- apply(betas_combat[, idx], 1, mad)
+    var_cpgs <- order(mads, decreasing=T)[1:100000]
+    design_mat <- construct_design_mat(
+      rownames(betas_combat)[var_cpgs], betas_combat, c(), nmd_all)
+    train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+                 alpha=0.05, nfolds=5, parallel=T, lmr=0.05)
+  })
+stopCluster(cl)
+```
+```{r run-combat-nouofm, cache=1, cache.vars=""}
+mvals_nouofm <- logit2(betas_all[, nmd_all$batch != "fhs_UofMinn"])
+mvals_combat_nouofm <- sva::ComBat(
+  mvals_nouofm, 
+  batch=nmd_all$batch[nmd_all$batch != "fhs_UofMinn"],
+  mod=model.matrix(~event, data=filter(nmd_all, batch != "fhs_UofMinn"))
+)
+rm(mvals_nouofm)
+betas_combat_nouofm <- ilogit2(mvals_combat_nouofm)
+rm(mvals_combat_nouofm)
+saveRDS(betas_combat_nouofm, "../int/betas_mrs_combat_nouofm.rds", compress=F)
+```
+```{r combat-nouofm-UofM-holdout, cache=1, cache.vars="uofm_holdout_combat_nouofm_model"}
+betas_combat_nouofm <- readRDS("../int/betas_mrs_combat_nouofm.rds")
+
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+uofm_holdout_combat_nouofm_model <- lapply(
+  c("fhs_UofMinn"),
+  function(s) {
+    mads <- apply(betas_combat_nouofm, 1, mad)
+    var_cpgs <- order(mads, decreasing=T)[1:100000]
+    design_mat <- construct_design_mat(
+      rownames(betas_combat_nouofm)[var_cpgs], betas_combat_nouofm, c(),
+      filter(nmd_all, batch != "fhs_UofMinn"))
+    train_glmnet(design_mat, 
+                 cvd_surv_all[nmd_all$batch != "fhs_UofMinn"],
+                 alpha=0.05, nfolds=5, parallel=T, lmr=0.05)
+  })
+stopCluster(cl)
+```
+
+```{r test-alternatives-UofM-holdout}
 uofm_holdout_combined_mrs <- calc_mrs_glmnet(
   uofm_holdout_combined_model[[1]]$cpg_coefs, betas_all)
 uofm_holdout_combined_res_tbl <- test_models(
   nmd_all, uofm_holdout_combined_mrs,
-  nmd_all$batch == "fhs_UofMinn", test_mrs
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T
 )
 
 uofm_holdout_combined_no_batch_mrs <- calc_mrs_glmnet(
   uofm_holdout_combined_no_batch_model[[1]]$cpg_coefs, betas_all)
 uofm_holdout_combined_no_batch_res_tbl <- test_models(
   nmd_all, uofm_holdout_combined_no_batch_mrs,
-  nmd_all$batch == "fhs_UofMinn", test_mrs
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T
+)
+
+uofm_holdout_combat_mrs <- calc_mrs_glmnet(
+  uofm_holdout_combat_model[[1]]$cpg_coefs, betas_all)
+uofm_holdout_combat_res_tbl <- test_models(
+  nmd_all, uofm_holdout_combat_mrs,
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T
+)
+
+uofm_holdout_combat_nouofm_mrs <- calc_mrs_glmnet(
+  uofm_holdout_combat_nouofm_model[[1]]$cpg_coefs, betas_all)
+uofm_holdout_combat_nouofm_res_tbl <- test_models(
+  nmd_all, uofm_holdout_combat_nouofm_mrs,
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T
 )
 ```
 
@@ -805,13 +840,15 @@ compare_df <- bind_rows(
   CSL=uofm_holdout_res_tbl,
   combined=uofm_holdout_combined_res_tbl,
   combined_no_batch_adjust=uofm_holdout_combined_no_batch_res_tbl,
-  .id="Method") %>%
-  select(-p) %>%
-  spread(key=Method, value=HR_per_SD) %>%
-  mutate(covariate_set=factor(covariate_set,
-                              levels=c("unadjusted", "basic",
-                                       "plus_risk_factors",
-                                       "FRS_only")))
+  combat=uofm_holdout_combat_res_tbl,
+  combat_nouofm=uofm_holdout_combat_nouofm_res_tbl,
+  .id="Method")
+  # select(-p) %>%
+  # spread(key=Method, value=HR_per_SD) %>%
+  # mutate(covariate_set=factor(covariate_set,
+  #                             levels=c("unadjusted", "basic",
+  #                                      "plus_risk_factors",
+  #                                      "FRS_only")))
 
 kable(compare_df, caption="Comparison of Cox regression coefficient estimates between the CSL and combined model options.") %>%
   add_header_above(c("", "HR-per-SD"=2))
@@ -910,7 +947,7 @@ cv_fits_mvals <- lapply(cv_folds, function(idx) {
 
 stopCluster(cl)
 ```
-```{r test-enet-cv, warning=F, include=F}
+```{r test-enet-cv, warning=F, include=F, eval=F}
 # cv_res_per_fold <- lapply(paste0("Fold", 1:length(cv_fits)), 
 #                           function(fold) {
 #   test_idx <- cv_folds_test[[fold]]
@@ -962,9 +999,7 @@ ggplot(cv_res_cox, aes(x=covariate_set, y=HR_per_SD,
 
 ## Construction
 
-...details here...
-
-```{r full-combined-model, cache=1, cache.vars=c("final_mrs_fit")}
+```{r full-combined-model, cache=1, cache.vars=c("full_combined_fit")}
 mads_full <- apply(betas_all, 1, mad)
 mads_top100k_full <- order(mads_full, decreasing=T)[1:100000]
 final_design_mat <- construct_design_mat(
@@ -977,6 +1012,24 @@ registerDoParallel(cl)
 full_combined_fit <- train_glmnet(final_design_mat,
                                   cvd_surv_all,
                                   alpha=0.05, nfolds=5, lmr=0.05)
+
+stopCluster(cl)
+```
+
+```{r full-combat-model, cache=1, cache.vars=c("full_combat_fit")}
+betas_combat <- readRDS("../int/betas_mrs_combat.rds")
+mads_combat_full <- apply(betas_combat, 1, mad)
+mads_combat_top100k_full <- order(mads_combat_full, decreasing=T)[1:100000]
+final_combat_design_mat <- construct_design_mat(
+  rownames(betas_combat)[mads_combat_top100k_full], betas_combat, c(), nmd_all)
+
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+full_combat_fit <- train_glmnet(final_combat_design_mat,
+                                cvd_surv_all,
+                                alpha=0.05, nfolds=5, parallel=T, lmr=0.05)
 
 stopCluster(cl)
 ```
@@ -999,6 +1052,8 @@ saveRDS(ssl_coefs, "../int/replication/ssl_mrs_coefs.rds")
 saveRDS(final_weights, "../int/replication/csl_weights.rds")
 saveRDS(full_combined_fit$cpg_coefs, 
         "../int/replication/combined_mrs_coefs.rds")
+saveRDS(full_combat_fit$cpg_coefs, 
+        "../int/replication/combat_mrs_coefs.rds")
 ```
 
 ## Characterization
@@ -1040,6 +1095,26 @@ gsa_tbls <- lapply(ssl_nonzero_weights, function(set) {
 # plot_grid(mrs_hist, coef_hist, ncol=2)
 ```
 
+```{r tf-enrichment-prep}
+anno_450k <- data.frame(getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19))
+weights_input <- tibble(CpG=names(unlist(unname(ssl_nonzero_coefs))),
+                        weight=unlist(unname(ssl_nonzero_coefs))) %>%
+  group_by(CpG) %>%
+  summarise(weight=mean(weight)) %>%
+  inner_join(select(anno_450k, CpG=Name, chr, pos), by="CpG") %>% 
+  # filter(!(chr %in% c("chrX", "chrY"))) %>%
+  # replace_na(list(weight=0)) %>%
+  mutate(strand="+",
+         chromStart=pos - 1) %>%
+  select(chrom=chr, chromStart, chromEnd=pos, name=CpG, score=weight, 
+         strand)
+write_tsv(weights_input, "../int/csl_cpgs_for_homer.bed")
+```
+
+```{r tf-enrichment}
+homer_res <- read_tsv("../output/homer_results/csl/knownResults.txt")
+```
+
 ```{r horvath-overlap}
 suppressMessages({
   dnam_age_df <- read_csv("../data/literature/horvath_dnamAge_cpgs.csv", skip=2)
@@ -1050,13 +1125,14 @@ dnam_age_cpgs <- dnam_age_df$CpGmarker[-1]
 pheno_age_cpgs <- pheno_age_df$CpG
 hannum_cpgs <- hannum_df$Marker
 
-age_metric_enrich_Ps <- sapply(
+age_metric_enrich_res <- sapply(
   list(horvath=dnam_age_cpgs, pheno_age=pheno_age_cpgs, hannum=hannum_cpgs),
   function(cpg_set) {
     num_in_set <- length(intersect(cpg_set, all_nonzero_cpgs))
-    2 * phyper(num_in_set, length(cpg_set), 
-               nrow(betas_all) - length(cpg_set), 
-               length(all_nonzero_cpgs), lower.tail=F)
+    pval <- 2 * phyper(num_in_set, length(cpg_set), 
+                       nrow(betas_all) - length(cpg_set), 
+                       length(all_nonzero_cpgs), lower.tail=F)
+    list(overlap=num_in_set, set_size=length(cpg_set), p=pval)
   })
 ```
 
@@ -1081,7 +1157,10 @@ icc_res_fhs <- ICCest(x=subjID, y=mrs, data=meta_fhs_with_dups)
 betas_lbc36_with_dups <- readRDS("../int/betas.qc.norm.filt_lbc.rds")
 meta_lbc36_with_dups <- readRDS("../int/metaData.rds") %>%
   filter(study == "lbc36",
-         sampleKey %in% colnames(betas_lbc36_with_dups))
+         sampleKey %in% colnames(betas_lbc36_with_dups)) %>%
+  group_by(subjID) %>%
+  filter(n() > 1) %>%
+  ungroup()
 betas_lbc36_with_dups <- betas_lbc36_with_dups[, meta_lbc36_with_dups$sampleKey]
 # meta_lbc36_with_dups$mrs <- calc_mrs_glmnet(final_mrs_fit$cpg_coefs, 
 #                                             betas_lbc36_with_dups)
@@ -1103,6 +1182,8 @@ icc_res_tbl <- tibble(
                "Samples over multiple visits",
                "Samples over subsequent visits (Wave 1 & 2)",
                "Samples over longer time frame (Wave 1 & 3)"),
+  `Number of pairs/groups`=c(icc_res_fhs$N, icc_res_lbc36$N,
+                             icc_res_lbc36_wave12$N, icc_res_lbc36_wave13$N),
   ICC=c(icc_res_fhs$ICC, icc_res_lbc36$ICC,
         icc_res_lbc36_wave12$ICC, icc_res_lbc36_wave13$ICC))
 
@@ -1140,9 +1221,9 @@ strat_test_by_study <- function(df, test_mrs, quantile_cat) {
                             SE_higher=NA, n=NA)
         subset <- d[[quantile_cat]] == q
         if (sum(d$event[subset], na.rm=T) < 25) return(na_df)
-        tryCatch(test_mrs_with_SE(d, d$mrs, subset,
-                                  basic_covars[basic_covars != "sex"]),
-                 error=function(e) na_df)
+        tryCatch(test_mrs_with_SE(d, d$mrs, subset, basic_covars),
+                 error=function(e) test_mrs_with_SE(
+                   d, d$mrs, subset, basic_covars[basic_covars != "sex"]))
       }))
     # res_all <- test_mrs_with_SE(df, df$mrs, df[[quantile_cat]] == q,
     #                             basic_covars[basic_covars != "sex"])
@@ -1328,14 +1409,14 @@ read_sscore <- function(filename) {
 }
 
 grs_substudies <- list(
-  grs_whi_as264=read_sscore("../int/whi_as264_grs.sscore"),
-  grs_whi_garnet=read_sscore("../int/whi_garnet_grs.sscore"),
-  grs_whi_gecco_cyto=read_sscore("../int/whi_gecco_cyto_grs.sscore"),
-  grs_whi_gecco_init=read_sscore("../int/whi_gecco_init_grs.sscore"),
-  grs_whi_hipfx=read_sscore("../int/whi_hipfx_grs.sscore"),
-  # grs_whi_whims=read_sscore("../int/whi_whims_grs.sscore"),
-  grs_whi_share_aa=read_sscore("../int/whi_share_aa_grs.sscore"),
-  grs_whi_share_ha=read_sscore("../int/whi_share_ha_grs.sscore")
+  grs_whi_as264=read_sscore("../int/grs/whi_as264_grs.sscore"),
+  grs_whi_garnet=read_sscore("../int/grs/whi_garnet_grs.sscore"),
+  grs_whi_gecco_cyto=read_sscore("../int/grs/whi_gecco_cyto_grs.sscore"),
+  grs_whi_gecco_init=read_sscore("../int/grs/whi_gecco_init_grs.sscore"),
+  grs_whi_hipfx=read_sscore("../int/grs/whi_hipfx_grs.sscore"),
+  # grs_whi_whims=read_sscore("../int/grs/whi_whims_grs.sscore"),
+  grs_whi_share_aa=read_sscore("../int/grs/whi_share_aa_grs.sscore"),
+  grs_whi_share_ha=read_sscore("../int/grs/whi_share_ha_grs.sscore")
 )
 whi_sample_to_subject <- read_delim("../int/whi_sample_to_subject.txt",
                                     delim=" ", col_names=F) %>%
@@ -1359,12 +1440,14 @@ nmd_all <- left_join(nmd_all, rbind(grs_whi, grs_fhs),
 
 grs_quantiles_fhs <- quantile(nmd_all$grs[nmd_all$study == "fhs"], 
                               seq(0, 1, by=0.25), na.rm=T)
-grs_quantiles_UofM <- quantile(nmd_all$grs[nmd_all$batch == "fhs_UofMinn"], 
+grs_quantiles_UofM <- quantile(nmd_all$grs[nmd_all$batch == "fhs_UofMinn"],
                               seq(0, 1, by=0.25), na.rm=T)
 grs_quantiles_JHU <- quantile(nmd_all$grs[nmd_all$batch == "fhs_JHU"], 
                               seq(0, 1, by=0.25), na.rm=T)
 grs_quantiles_whi <- quantile(nmd_all$grs[nmd_all$study =="whi"],
                               seq(0, 1, by=0.25), na.rm=T)
+grs_quantiles_whi_white <- quantile(nmd_all$grs[nmd_all$study =="whi" & nmd_all$race == "white"],
+                                    seq(0, 1, by=0.25), na.rm=T)
 # source("helpers.R")
 # 
 # genotype.df.fhs <- read_table2("../int/grs_genos/grs_genos_fhs.vcf", skip=6)
@@ -1387,13 +1470,44 @@ grs_quantiles_whi <- quantile(nmd_all$grs[nmd_all$study =="whi"],
 ```
 
 ```{r test-grs, warning=F}
+plot_grs <- function(test_df, num_cats=4) {
+  test_df %>%
+    filter(!is.na(grs)) %>%
+    mutate(grs=scale(grs)) %>%
+    mutate(grs_group=cut(grs, quantile(grs, seq(0, 1, 0.25)),
+           include.lowest=T)) %>%
+    group_by(grs_group) %>%
+    summarise(n=n(),
+              prop_events=sum(event) / n,
+              se=sqrt(prop_events * (1 - prop_events) / n)) %>%
+    ggplot(aes(x=grs_group, y=prop_events)) +
+    geom_point() +
+    geom_errorbar(aes(ymin=prop_events - se, ymax=prop_events + se), width=0)
+}
+
 whi_grs_test_df <- filter(nmd_all, batch == "whi")
 grs_res_whi <- test_grs(whi_grs_test_df)
+grs_res_whi_white <- test_grs(filter(whi_grs_test_df, race == "white"))
+grs_res_whi_nonwhite <- test_grs(filter(whi_grs_test_df, race != "white"))
+grs_plt_whi <- plot_grs(whi_grs_test_df)
+grs_plt_whi_white <- plot_grs(filter(whi_grs_test_df, race == "white"))
+grs_plt_whi_nonwhite <- plot_grs(filter(whi_grs_test_df, race != "white"))
 
 fhs_grs_test_df <- filter(nmd_all, study == "fhs") %>%
   mutate(event=pastEvent | event)
 grs_res_fhs_JHU <- test_grs(filter(fhs_grs_test_df, batch =="fhs_JHU"))
 grs_res_fhs_UofM <- test_grs(filter(fhs_grs_test_df, batch =="fhs_UofMinn"))
+grs_plt_fhs_JHU <- plot_grs(filter(fhs_grs_test_df, batch =="fhs_JHU"))
+grs_plt_fhs_UofM <- plot_grs(filter(fhs_grs_test_df, batch =="fhs_UofMinn"))
+
+grs_validation <- list(whi_plt=grs_plt_whi,
+                       whi_nonwhite_plt=grs_plt_whi_nonwhite,
+                       fhs_JHU_plt=grs_plt_fhs_JHU,
+                       fhs_UofM_plt=grs_plt_fhs_UofM,
+                       whi_res=grs_res_whi,
+                       whi_nonwhite_res=grs_res_whi_nonwhite,
+                       fhs_JHU_res=grs_res_fhs_JHU,
+                       fhs_UofM_res=grs_res_fhs_UofM)
 ```
 
 ```{r grs-validation}
@@ -1469,9 +1583,11 @@ Plots show estimated hazard ratio per std. dev. difference in MRS, with standard
 
 nmd_all$frs_group <- cut(nmd_all$frs,
                          breaks=c(0, 0.1, 0.2, 0.4, 1),
-                               include.lowest=T)
+                         # breaks=quantile(nmd_all$frs, c(0, 0.25, 0.5, 0.75, 1),
+                         #                 na.rm=T),
+                         include.lowest=T)
 nmd_all$age_group <- cut(nmd_all$age,
-                         breaks=c(0,55,65,75,100),
+                         breaks=c(0, 55, 65, 75, 100),
                          #labels=c("<55", "55-65", "65-75", ">75"),
                          # breaks=quantile(nmd_all$age, seq(0, 1, 0.2)),
                          include.lowest=T)
@@ -1489,6 +1605,20 @@ nmd_all$grs_group <- case_when(
                                labels=paste0("Q", 1:4),
                                include.lowest=T),
   TRUE ~ as.integer(NA))
+nmd_all$grs_group_white <- case_when(
+  nmd_all$batch == "fhs_UofMinn" ~ cut(nmd_all$grs,
+                                       breaks=grs_quantiles_UofM,
+                                       labels=paste0("Q", 1:4),
+                                       include.lowest=T),
+  nmd_all$batch == "fhs_JHU" ~ cut(nmd_all$grs,
+                                   breaks=grs_quantiles_JHU,
+                                   labels=paste0("Q", 1:4),
+                                   include.lowest=T),
+  nmd_all$batch == "whi" ~ cut(nmd_all$grs,
+                               breaks=grs_quantiles_whi_white,
+                               labels=paste0("Q", 1:4),
+                               include.lowest=T),
+  TRUE ~ as.integer(NA))
 
 # nmd_all$grs_group <- ifelse(nmd_all$study =="fhs",
 #                                cut(nmd_all$grs,
@@ -1502,24 +1632,20 @@ nmd_all$grs_group <- case_when(
 
 nmd_UofM <- filter(nmd_all, batch == "fhs_UofMinn")
 mrs_test_UofM <- uofm_holdout_mrs[which(nmd_all$batch == "fhs_UofMinn")]
+# mrs_for_interaction <- uofm_holdout_mrs
+mrs_for_interaction <- final_mrs
 
-age_quantile_res <- strat_test_by_study(nmd_all, uofm_holdout_mrs, "age_group") %>%
+age_quantile_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "age_group") %>%
   mutate(Group=factor(Group, levels=unique(Group)))
-frs_quantile_res <- strat_test_by_study(nmd_all, uofm_holdout_mrs, "frs_group") %>%
+frs_quantile_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "frs_group") %>%
   mutate(Group=factor(Group, levels=unique(Group)))
-grs_quantile_res <- strat_test_by_study(nmd_all, uofm_holdout_mrs, "grs_group")
-race_res <- strat_test_by_study(nmd_all, uofm_holdout_mrs, "race")
-sex_res <- strat_test_by_study(nmd_all, uofm_holdout_mrs, "sex")
-past_event_res <- strat_test_by_study(nmd_all, uofm_holdout_mrs, "pastEvent")
-
-# age_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "age_group") %>%
-#   mutate(Group=factor(Group, levels=unique(Group)))
-# frs_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "frs_group") %>%
-#   mutate(Group=factor(Group, levels=unique(Group)))
-# grs_quantile_res <- strat_test_by_study(nmd_all, mrs_final, "grs_group")
-# race_res <- strat_test_by_study(nmd_all, mrs_final, "race")
-# sex_res <- strat_test_by_study(nmd_all, mrs_final, "sex")
-# past_event_res <- strat_test_by_study(nmd_all, mrs_final, "pastEvent")
+grs_quantile_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "grs_group")
+grs_quantile_res_white <- strat_test_by_study(
+  filter(nmd_all, race == "white"), 
+  mrs_for_interaction[nmd_all$race == "white"], "grs_group_white")
+race_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "race")
+sex_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "sex")
+past_event_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "pastEvent")
 
 age_quantile_plt <- plot_strat_test_by_study(age_quantile_res, "Age") +
   theme(axis.text.x=element_text(angle=30, size=10))
@@ -1665,6 +1791,33 @@ Parameter selection:
 
 
 
+
+
+# Export of objects for reports/manuscripts
+
+```{r export-prep, cache=1}
+mads_full <- apply(betas_all, 1, mad)
+```
+
+```{r export}
+int_res_list <- list(age=age_quantile_res, frs=frs_quantile_res, 
+                     grs=grs_quantile_res, grs_white=grs_quantile_res_white,
+                     race=race_res, sex=sex_res)
+
+variable_100k_cpgs <- rownames(betas_all)[order(mads_full, 
+                                                decreasing=T)[1:100000]]
+
+save("nmd_all", "common_cpgs", "variable_100k_cpgs",
+     "uofm_holdout_csl", 
+     "uofm_holdout_res_tbl", "uofm_holdout_res_tbl_noPE",
+     "uofm_holdout_surv_fit", 
+     "compare_df", "ssl_nonzero_coefs",
+     "final_csl",
+     "gsa_tbls", "age_metric_enrich_res", "icc_res_tbl",
+     "grs_validation",
+     "int_res_list",
+     file="../output/mrs_models_objects.RData")
+```
 
 # Old
 ## Methylation risk score construction
