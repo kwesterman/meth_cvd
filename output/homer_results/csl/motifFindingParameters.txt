@@ -1,0 +1,1 @@
+cmd = ../int/csl_cpgs_for_homer.bed hg19 ../output/homer_results/csl_sep2019/ -size 200 -mask
