@@ -1,19 +1,28 @@
 ---
-title: "Supplementary Info: Cross-study learning for the epigenomic prediction of cardiovascular risk"
+title: "Supplementary Material: Epigenomic prediction of cardiovascular risk and interactions with traditional risk metrics"
+
 output:
-  bookdown::pdf_document2:
+  pdf_document:
     fig_caption: true
     keep_tex: true
     toc: false
+
+documentclass: article
+
 bibliography: mrs_manuscript.bib
-# csl: pnas.csl
+csl: circulation.csl
+
 link-citations: true
+
+header-includes:
+ \usepackage{float}
 ---
 
 ```{r prereqs, include=F}
 library(knitr)
 knitr::opts_chunk$set(echo=F, warning=F,
-                      fig.path="../doc/mrs_models/figures/", fig.pos="h")
+                      fig.path="figures/", fig.pos="h",
+                      out.extra="")
 suppressMessages(silent <- lapply(
   c("tidyverse", "survival", "kableExtra", "gridExtra", "cowplot", "broom"), 
   library, character.only=T))
@@ -22,12 +31,38 @@ load("../../output/mrs_models_objects.RData")
 
 \newcommand{\beginsupplement}{
   \setcounter{table}{0}  
-  \renewcommand{\thetable}{S\arabic{table}} 
+  \renewcommand{\thetable}{S\arabic{table}}
   \setcounter{figure}{0} 
   \renewcommand{\thefigure}{S\arabic{figure}}
 }
 
 \beginsupplement
+
+# Supplementary Methods
+
+## Women's Health Initiative
+
+WHI methylation data came from the BA23 ancillary study, a combined case-control and pseudo case-cohort sampling of 2129 women from the Women's Health Initiative study. WHI is a larger prospective cohort beginning in 1993 that included over 160,000 postmenopausal women from across the United States [@Anderson1998]. Included subjects had no self-reported CVD at baseline, and cases were chosen based on incident centrally adjudicated angina, revascularization, or CHD event during follow-up. Inclusion criteria for methylation measurement resulted in an oversampling of African American and Hispanic participants. Blood samples used for measurement of DNA methylation and clinical biochemistry were taken at baseline. Data are available in the dbGaP public repository (accession: phs000200.v11.p3; downloaded on September 27, 2017).
+
+## Framingham Heart Study Offspring Cohort
+
+FHS methylation data came from a substudy of the Framingham Heart Study that measured DNA methylation in 2726 subjects from the Offspring Cohort. The Framingham Offspring Cohort was originally established in 1971 to follow 5209 children of the original Framingham Heart Study participants and their spouses [@Kannel1979]. Fasting blood samples for both methylation and clinical biochemistry were collected from participants at Exam 8, which took place from 2005-8. Blood samples were also provided for clinical biochemistry measurements in previous exams, constituting the "past exposures" examined here. Data are available in the dbGaP public repository (accession: phs000007.v29.p10; downloaded on September 27, 2017). Adjudicated cardiovascular event data was collected through 2015, and events were defined here as any of: myocardial infarction, angina pectoris, stroke (approximately 90% being ischemic), or death from CHD (Framingham event codes 1-29). FHS methylation data were collected in two primary batches in two centers -- one in subjects from a nested case-control for CVD measured at Johns Hopkins University (FHS-JHU) [@Joehanes2013], and the other in a larger set of remaining Framingham Offspring participants measured at the University of Minnesota (FHS-UM).
+
+## Lothian Birth Cohorts
+
+The Lothian Birth Cohorts consist of two birth cohorts (born in 1921 and 1936) established in the Lothian region of Scotland [@Deary2012; @Taylor2018]. Only the 1936 cohort was analyzed here. Blood samples were collected in three waves starting in 2004, with our primary analyses here focusing on samples from Wave 1 (2004-2007). Cardiovascular outcomes were defined as general CVD or stroke determined at each wave, and event times for survival models were approximated based on the time between Wave 1 and the wave at which the event was reported. LBC data are accessible through the European Genome-phenome Archive (accession: EGAD00010000604).
+
+## REGICOR
+
+The REGICOR dataset analyzed here consisted of a nested case-control for myocardial infarction within the larger REGICOR (REgistre GIroní del COR) cohort from the Girona Province in Catalonia (Spain). Whole blood samples were collected from 391 total participants, with those from cases generally collected within 24 hours of the event. Characteristics for this population are available in Supp. Table S3.
+
+## DNA methylation data processing
+
+DNA methylation data for all initial cohorts (WHI, FHS, and LBC) were collected using the Illumina HumanMethylation450 microarray platform [@Bibikova2011] and downloaded as raw intensity files. Preprocessing was performed using the *minfi* and *wateRmelon* packages for R [@Aryee2014; @Pidsley2013]. Sample-wise filters were as follows: robust overall signal in the main cluster based on visual inspection of an intensity plot, less than 10% of probes undetected at a detection threshold of p<1e-16, and a reported sex matching methylation-based sex prediction. Probes were removed using the following criteria: more than 10% of samples undetected at a detection threshold of p<1e-16, location in the X or Y chromosomes, non-CpG probes, cross-hybridizing probes, probes measuring SNPs, and probes with an annotated SNP at the CpG site or in the single-base extension region. Samples were normalized using the Noob method for background correction and dye-bias normalization, followed by the BMIQ method for probe type correction [@Fortin2016; @Teschendorff2013]. Blood cell fractions for 6 blood cell types (CD4+ T-cells, CD8+ T-cells, B-cells, natural killer cells, monocytes, and granulocytes) were estimated using a common reference-based method [@Houseman2012], and 5 of these (excluding granulocytes) were included in cell count-adjusted statistical models. After quality control and filtering steps, `r length(common_cpgs)` CpG sites were shared between the 3 datasets, formatted as beta values (ratio of methylated signal to total microarray signal).
+
+DNA methylation data for the REGICOR cohort were collected using the Illumina MethylationEPIC microarray platform [@Pidsley2016] and analyzed using the *wateRmelon* [@Pidsley2013] and methylumi [@Davis2019] R packages. Samples were excluded based on detection p-value >0.05 in at least 1% of probes or failure to cluster in the appropriate sex based on X chromosome methylation. Probes were excluded based on detection p-value >0.05 in at least 1% of samples, a bead count <3 in at least 5% of samples, discarding by Illumina based on underperformance (n=1,031) or changes in the manufacturing process (n=977), non-CpG targets, and cross-hybridization (n=43,979). A batch normalization was performed by standardizing beta values to mean zero and unit variance within each bisulfite conversion batch prior to analysis. After quality control and preprocessing, 811,610 CpG sites across 391 individuals were available for analysis. Participants were further excluded from analysis due to unknown smoking habits (n=10) and unavailable information regarding diabetes, hypertension, or hyperlipidemia (n=53). Surrogate variable analysis [@Leek2007] was used to calculate two surrogate variables, representing potential technical and biological confounders, for adjustment in MRS replication models.
+
+# Supplementary Tables and Figures
 
 ```{r fhs-holdout-noPE}
 pretty_models <- c(unadjusted="Unadjusted",
@@ -44,7 +79,7 @@ uofm_holdout_res_tbl_noPE %>%
          p=format(p, scientific=T, digits=2)) %>%
   select(Model, HR_per_SD, p) %>%
   setNames(c("Model", "HR per s.d. MRS", "p")) %>%
-  kable(booktabs=T, 
+  kable(booktabs=T, longtable=T,
         caption="MRS performance in held-out FHS subset without past CVD events", 
         escape=F) %>%
   footnote(number=c("No covariates",
@@ -54,24 +89,28 @@ uofm_holdout_res_tbl_noPE %>%
            threeparttable=T)
 ```
 
-```{r tf-enrichment, message=F}
+```{r tf-enrichment, message=F, eval=F}
 homer_res <- read_tsv("../../output/homer_results/csl/knownResults.txt")
 
 homer_res %>%
   select(1, 2, 5, 7, 9) %>%
   setNames(c("Motif", "Consensus", "BH q-value", "MRS Coverage", "Background Coverage")) %>%
+  mutate(Motif=gsub("/Homer", "", Motif)) %>%
   filter(`BH q-value` < 0.2) %>%
-  kable(booktabs=T,
+  kable(booktabs=T, linesep="",
         caption="MRS enrichment for transcription factor binding motifs: HOMER results") %>%
   column_spec(1, width = "15em")
 ```
+
+\newpage
 
 ```{r stability}
 icc_res_tbl$ICC <- round(icc_res_tbl$ICC, 2)
 
 icc_res_tbl %>%
-  dplyr::rename(`# of pairs/groups`=`Number of pairs/groups`) %>%
-  kable(booktabs=T,
+  dplyr::rename(`# of pairs/groups`=`Number of pairs/groups`,
+                `Group type`=Group_type) %>%
+  kable(booktabs=T, longtable=T,
         caption="MRS stability as evaluated by using multiple within-subject measurements. Generic ICC heuristics for reference: 0-0.5 = poor, 0.5-0.75 = moderate, 0.75 - 0.9 = good, 0.9-1 = excellent.") %>%
   kable_styling(latex_options="hold_position")
 ```
@@ -91,12 +130,79 @@ data.frame(`Sample size`=391,
         check.names=F
 ) %>% 
   t() %>%
-  kable(booktabs=T,
-        caption="Description of REGICOR mycardial infraction nested case-control population")
+  kable(booktabs=T, longtable=T, linesep="",
+        caption="Description of REGICOR myocardial infarction nested case-control population (continuous variables presented as: mean (standard deviation)")
 ```
 
-```{r causal-diagram-hscrp, fig.cap="Example diagram of cumulative risk factor mediation by brown methylation module activation. Results from 4 regressions are shown: cumulative risk factor exposure to brown activation, cumulative risk factor exposure to incident CVD, and brown activation to incident CVD with and without adjustment for cumulative risk factor exposure. Regression terms represented as: sign of coefficient (p-value).", eval=F}
-include_graphics("../doc/module_ewas/hscrp_mediation_diagram.pdf")
+\newpage
+
+```{r csl-comparison, fig.cap="Comparison of modeling approaches. Performance metrics are shown as a function of the test dataset, either FHS-UM (a) or REGICOR (b), and the covariate adjustment. Performance is quantified by either hazard ratio from Cox models (a) or odds ratio from logistic models (b). Covariate sets used for adjustment for models named here are identical to their descriptions for the regression models presented above. Errors bars represent standard errors for the hazard ratio or odds ratio estimates."}
+method_conversions=c(combined="Combined", 
+                     combat_nouofm="ComBat",
+                     CSL="CSL")
+cs_conversions <- c(unadjusted="Unadjusted",
+                    basic="Basic", 
+                    plus_risk_factors="Plus risk factors",
+                    FRS_only="FRS only")
+compare_plt <- compare_df %>%
+  filter(Method %in% names(method_conversions)) %>%
+  mutate(Method=factor(Method, levels=names(method_conversions),
+         labels=method_conversions),
+         covariate_set=factor(covariate_set, 
+                              levels=names(cs_conversions),
+                              labels=cs_conversions)) %>%
+  ggplot(aes(x=covariate_set, y=HR_per_SD, fill=Method)) +
+    geom_errorbar(aes(ymin=HR_per_SD - 1, ymax=SE_higher), 
+                width=0.25, position=position_dodge(0.9)) +
+  geom_bar(stat="identity", position="dodge") +
+  coord_cartesian(ylim=c(1, 2)) +
+  scale_fill_brewer(palette="Dark2") +
+  labs(x="", y="Hazard ratio (per s.d. MRS)") +
+  theme(legend.position="none", axis.text.x=element_text(angle=30, hjust=0.8))
+
+load("../../output/regicor_results_august2019/main_mrs_results.RData")
+
+regicor_compare_df <- lapply(list(CSL=csl_model_results,
+            combined=combined_model_results,
+            combat=combat_model_results),
+       function(res) {
+         lapply(res, function(subres) {
+           subres %>%
+             as.data.frame(stringsAsFactors=F) %>%
+             rownames_to_column(var="predictor") %>%
+             filter(predictor == "mrs") %>%
+             select(Estimate, SE=`Std. Error`)
+         }) %>%
+           bind_rows(.id="covariate_set")
+       }) %>%
+  bind_rows(.id="Method") %>%
+  mutate(OR_per_SD=exp(Estimate),
+         SE_upper=exp(Estimate + SE))
+
+regicor_method_conversions=c(combined="Combined", 
+                             combat="ComBat",
+                             CSL="CSL")
+regicor_cs_conversions <- c(unadjusted="Unadjusted",
+                            basic="Basic", 
+                            plus_risk_factors="Plus risk factors")
+regicor_compare_plt <- regicor_compare_df %>%
+  filter(covariate_set %in% names(regicor_cs_conversions)) %>%
+  mutate(Method=factor(Method, levels=names(regicor_method_conversions),
+                       labels=regicor_method_conversions),
+         covariate_set=factor(covariate_set, 
+                              levels=names(regicor_cs_conversions),
+                              labels=regicor_cs_conversions)) %>%
+  ggplot(aes(x=covariate_set, y=OR_per_SD, fill=Method)) +
+  geom_errorbar(aes(ymin=OR_per_SD - 1, ymax=SE_upper), 
+                width=0.25, position=position_dodge(0.9)) +
+  geom_bar(stat="identity", position="dodge") +
+  coord_cartesian(ylim=c(1, 2.5)) +
+  scale_fill_brewer(palette="Dark2") +
+  labs(x="", y="Odds ratio (per s.d. MRS)") +
+  theme(axis.text.x=element_text(angle=30, hjust=0.8))
+
+plot_grid(compare_plt, regicor_compare_plt, ncol=2, rel_widths=c(2, 3),
+          labels=c("a", "b"))
 ```
 
 ```{r risk-score-validation}
@@ -118,9 +224,10 @@ frs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU",
   mutate(Study=study_names_pretty[Study],
          HR_per_SD=round(exp(estimate), 2),
          p=format(p.value, scientific=T, digits=2)) %>%
-  select(Study, HR_per_SD, p)
+  select(Study, HR_per_SD, p) %>%
+  setNames(c("Study", "HR per s.d. MRS", "p"))
 
-kable(frs_res_tbl, booktabs=T,
+kable(frs_res_tbl, booktabs=T, longtable=T,
       caption="Validation of Framingham Risk Score")
 
 test_grs <- function(grs_df) {
@@ -140,9 +247,11 @@ grs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU",
          p=format(p.value, scientific=T, digits=2)) %>%
   select(Study, OR_per_SD, p=p.value)
 
-kable(grs_res_tbl, booktabs=T,
-      caption="Validation of genetic risk score")
+# kable(grs_res_tbl, booktabs=T,
+#       caption="Validation of genetic risk score")
 ```
+
+\newpage
 
 ```{r interactions, warning=F, fig.cap="Interactions of MRS with other biomarkers of CVD risk. a) Hazard ratios for the MRS within subsets of 10-year generalized CVD risk according to the Framingham Risk Score. b) Hazard ratios for the MRS within quartiles of a genetic cardiovascular risk score (in white participants only for WHI). Hazard ratios are estimated using the final MRS, which was trained using each of these datasets. Stratum-specific Cox regressions were adjusted for age, sex, and estimated cell subtype fractions. Estimates for strata with less than 25 incident events are not shown. Error bars represent standard errors for the hazard ratio estimates (cut off above in panel (a) for ease of visualization of other points)."}
 plot_strat_test_by_study <- function(qres, xlab) {
@@ -163,24 +272,45 @@ frs_quantile_plt <- plot_strat_test_by_study(int_res_list$frs, "FRS 10-year risk
   scale_x_discrete(labels=c("<0.1", "0.1-0.2", "0.2-0.4", ">0.4")) +
   coord_cartesian(ylim=c(1, 3.5)) +
   labs(y="Hazard ratio (per s.d. MRS)") +
+  scale_color_brewer(palette="Dark2") +
   theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
-grs_white_quantile_plt <- plot_strat_test_by_study(int_res_list$grs_white, 
-                                                   "Genetic risk score quartile") +
-  # scale_color_discrete(labels=study_names_pretty[c("fhs_JHU", "fhs_UofMinn", 
-  #                                                  "lbc36", "whi")]) +
+fqp_legend <- get_legend(frs_quantile_plt)
+grs_white_quantile_plt <- plot_strat_test_by_study(
+  filter(int_res_list$grs_white, study == "whi"),                                                  
+  "Genetic risk score quartile") +
   coord_cartesian(ylim=c(1, 3.5)) +
-  labs(y="MRS performance (H.R. per s.d. MRS)")
+  labs(y="MRS performance (H.R. per s.d. MRS)") +
+  scale_color_brewer(palette="Dark2")
 race_plt <- plot_strat_test_by_study(int_res_list$race, "Race") +
   theme(axis.text.x=element_text(angle=30, hjust=0.8))
 sex_plt <- plot_strat_test_by_study(int_res_list$sex, "Sex")
-# sex_res %>% group_by(study) %>% mutate(HR_ratio=HR_per_SD / HR_per_SD[which(Group=="F")]) %>% ungroup()
 # past_event_plt <- plot_strat_test_by_study(past_event_res, "Past event")
 
-plot_grid(
+int_plts <- plot_grid(
   frs_quantile_plt + theme(legend.position="none"), 
-  grs_white_quantile_plt + theme(legend.title=element_blank(), 
-                                 axis.title.y=element_blank()), 
-  rel_widths=c(2, 3), nrow=1, align="h", axis="bt", 
+  grs_white_quantile_plt + theme(legend.position="none",
+                                 axis.title.y=element_blank()),
+  nrow=1, rel_widths=c(10, 9), align="h", axis="bt",
   labels=c("a", "b"), label_x=c(0, -0.025))
+
+plot_grid(int_plts, fqp_legend, nrow=1, rel_widths=c(5, 1))
 ```
 
+```{r regicor-interactions}
+load("../../output/regicor_results_august2019/stratified_results.RData")
+regicor_rf_strat <- rf_risk_group_strat_csl %>%
+  mutate(SE=log(OR_per_SD) - log(SE_lower),
+         CI_lower=round(exp(log(OR_per_SD) - 1.96 * SE), 2),
+         CI_upper=round(exp(log(OR_per_SD) + 1.96 * SE), 2),
+         res_string=paste0(round(OR_per_SD, 2), " [", CI_lower, "-", CI_upper, 
+                           "]")) %>%
+  select(`Risk factor group`=`Risk factor-based risk quartile`, 
+         `OR per s.d. MRS [95% CI]`=res_string, N)
+regicor_rf_strat %>%
+  kable(booktabs=T, longtable=T,
+        caption="Risk factor-stratified MRS performance in the REGICOR dataset")
+```
+
+\newpage
+
+# Supplementary References
