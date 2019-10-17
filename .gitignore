@@ -15,12 +15,13 @@ cache/*
 *.out
 *.synctex.gz
 
-$ Microsoft Office files
+# Microsoft Office files
 *.docx
 *.pptx
 
 # Submissions
 doc/module_ewas/past_submissions/*
+doc/mrs_models/past_submissions/*
 *cover_letter*
 
 # Mac-specific
