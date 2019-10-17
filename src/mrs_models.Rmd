@@ -66,13 +66,8 @@ PCs <- bind_rows(PCs_whi, PCs_fhs, PCs_lbc)
 non_meth_data <- Reduce(function(x,y) inner_join(x, y, by="sampleKey"), 
                         list(metaData, est_cell_counts, CP_PCs, PCs)) %>%
   filter(is.na(wave) | wave == 1) %>%
-  distinct(subjID, .keep_all=T)  # Better way of deciding which biological replicates to keep?
-# non_meth_data <- replace_na(non_meth_data, 
-#                           list(bmi=median(non_meth_data$bmi, na.rm=T),
-#                                smk_now=0, smk_py=0, ht_med=0, lipid_med=0, dm_med=0)) %>%
-#   mutate(diabetes=dm_med | glu>125) %>%
-#   mutate_at(c("chol","ldl","hdl","tg","sbp","glu","hscrp"), log10)
-### THINK MORE ABOUT ABOVE WRANGLING ###
+  distinct(subjID, .keep_all=T) %>%  # Better way of deciding which biological replicates to keep?
+  mutate(time=ifelse(time == 0, 1, time))  # Allows glmnet Cox model to run
 
 nmd_whi <- filter(non_meth_data, study == "whi")
 nmd_fhs <- filter(non_meth_data, study == "fhs")
@@ -550,173 +545,13 @@ plot(uofm_holdout_surv_fit, ymin=0.9, xmax=800, conf.int=T)
 #                    niter=100)
 ```
 
-## Out-of-sample performance -- bootstrap
-
-Dropped for the moment in favor of a single FHS_UofMinn test cohort
-
-```{r ssl-bootstraps, include=F, cache=1}
-boot_study_combos <- expand.grid(
-  resample=1:n_boots, 
-  study=c("whi", "fhs_JHU", "fhs_UofMinn", "lbc36"),
-  stringsAsFactors=F) %>%
-  arrange(resample)
-boot_study_combos <- filter(boot_study_combos, resample %in% 1:5)
-
-fit_boot_ssl <- function(idx, ssl_study, .pb=NULL) {
-  print(paste0("Bootstrap: ", idx, ", Study: ", ssl_study))
-  nmd <- filter(nmd_all[boot_samples[[idx]], ], 
-                batch == ssl_study)
-  betas <- betas_all[, nmd$sampleKey]
-  # betas <- betas_all[1:100, nmd$sampleKey]
-  cvd_surv <- Surv(nmd$time, nmd$event)
-  mads <- apply(betas, 1, mad)
-  var_cpgs <- order(mads, decreasing=T)[1:100000]
-  # var_cpgs <- 1:100
-  design_mat <- construct_design_mat(
-    rownames(betas)[var_cpgs], betas, c(), nmd)
-  trained <- train_glmnet(design_mat, cvd_surv,
-                          alpha=0.05, nfolds=3, 
-                          parallel=T, lmr=0.05)
-  update_progress(.pb)
-  trained
-}
-
-set.seed(1)
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-# boot_ssl_fits <- foreach(x=iter(boot_study_combos, by="row"),
-#                          .packages=c("dplyr", "survival",
-#                                      "glmnet")) %do%
-#   fit_boot_ssl(x$resample, x$study)
-pb <- progress_estimated(nrow(boot_study_combos),
-                         progress_location = file("progress.log", 
-                                                  open = "w"))
-boot_ssl_fits <- map2(boot_study_combos$resample,
-                      boot_study_combos$study,
-                      fit_boot_ssl,
-                      .pb=pb)
-
-stopCluster(cl)
-```
-```{r test-bootstrap-csl, include=F, eval=F}
-boot_samples_heldout <- lapply(boot_samples[1:5], 
-                               function(s) (1:nrow(nmd_all))[-s])
-
-boots_csl_res <- test_resamples_csl(nmd_all, betas_all,
-                                    boot_ssl_fits, 
-                                    boot_study_combos,
-                                    boot_samples_heldout,
-                                    test_mrs_with_SE)
-boots_csl_res_tbl <- boots_csl_res %>%
-  group_by(covariate_set) %>%
-  summarise(Mean=mean(HR_per_SD),
-            SE=sd(HR_per_SD))
-kable(boots_csl_res_tbl, 
-      caption="Bootstrap results with combined method")
-
-ggplot(boots_csl_res, aes(x=covariate_set, y=HR_per_SD)) +
-  geom_point(position=position_jitter(width=0.1), alpha=0.3) +
-  geom_point(data=boots_csl_res_tbl, aes(y=Mean), size=2) +
-  geom_errorbar(data=boots_csl_res_tbl, 
-                aes(y=Mean, ymin=Mean - SE, ymax=Mean + SE),
-                width=0, size=1) +
-  labs(x="Covariate set", y="Hazard ratio per SD of risk score",
-       title="Bootstrap results for CSL method")
-```
-
-```{r cv-single-study-models, cache=1}
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-fold_study_combos <- expand.grid(fold=names(cv_folds),
-                                 study=c("whi", "fhs", "lbc36"))
-
-cv_single_study_models <- map2(
-  fold_study_combos$fold,
-  fold_study_combos$study,
-  function(f, s) {
-    nmd <- filter(nmd_all[cv_folds[[f]], ], study == s)
-    betas <- betas_all[, nmd$sampleKey]
-    cvd_surv <- Surv(nmd$time, nmd$event)
-    mads <- apply(betas, 1, mad)
-    var_cpgs <- order(mads, decreasing=T)[1:100000]
-    covars <- if (s == "fhs") "batch" else c()
-    design_mat <- construct_design_mat(
-      rownames(betas)[var_cpgs], betas, covars, nmd)
-    train_glmnet(design_mat, cvd_surv,
-                 alpha=0.05, nfolds=3, parallel=T, lmr=0.05)  
-  })
-
-stopCluster(cl)
-```
-```{r cv-ssl-models, cache=1}
-set.seed(1)
-cl <- makePSOCKcluster(5)
-registerDoParallel(cl)
-
-fold_study_combos <- expand.grid(fold=names(cv_folds),
-                                 study=c("whi", "fhs", "lbc36", 
-                                         "fhs_JHU", "fhs_UofMinn"))
-
-cv_ssl_fits <- map2(
-  fold_study_combos$fold,
-  fold_study_combos$study,
-  function(f, s) {
-    nmd <- filter(nmd_all[cv_folds[[f]], ], grepl(s, batch))
-    betas <- betas_all[, nmd$sampleKey]
-    cvd_surv <- Surv(nmd$time, nmd$event)
-    mads <- apply(betas, 1, mad)
-    var_cpgs <- order(mads, decreasing=T)[1:100000]
-    design_mat <- construct_design_mat(
-      rownames(betas)[var_cpgs], betas, c(), nmd)
-    train_glmnet(design_mat, cvd_surv,
-                 alpha=0.05, nfolds=5, parallel=T, lmr=0.05)  
-  })
-
-stopCluster(cl)
-```
-```{r test-cv-csl, include=F, eval=F}
-names(fold_study_combos) <- c("resample", "study")
-fold_study_combos$resample <- as.numeric(
-  gsub("Fold", "", fold_study_combos$resample))
-
-cv_csl_res_cox <- test_resamples_csl(nmd_all, betas_all,
-                                     cv_ssl_fits, 
-                                     fold_study_combos, 
-                                     cv_folds_test, test_mrs_with_SE)
-cv_csl_res_lr <- test_resamples_csl(nmd_all, betas_all, 
-                                    cv_ssl_fits, 
-                                    fold_study_combos, 
-                                    cv_folds_test, test_mrs_binary)
-# cv_csl_res_lr_oldway <- test_folds_csl(nmd_all, betas_all, 
-#                                  cv_single_study_models, 
-#                                  fold_study_combos, 
-#                                  cv_folds_test, test_mrs_binary)
-cv_csl_res_auc <- test_resamples_csl(nmd_all, betas_all, 
-                                     cv_ssl_fits,
-                                     fold_study_combos, 
-                                     cv_folds_test, test_mrs_auc)
-
-# weights_mat <- do.call(rbind, map(cv_stack_res_per_fold, "weights"))
-# rownames(weights_mat) <- paste("Fold", 1:3)
-# kable(weights_mat, caption="Study-specific weights learned per fold")
-
-ggplot(cv_csl_res_cox, aes(x=covariate_set, y=HR_per_SD, 
-                      group=Fold, color=Fold)) +
-  geom_point(position=position_dodge(width=0.3)) +
-  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
-                position=position_dodge(width=0.3)) +
-  labs(title="3-fold CV results using stacking approach")
-```
-
 ## Comparison with basic combined model
 
 ```{r combined-UofM-holdout, cache=1}
 set.seed(1)
 cl <- makePSOCKcluster(5)
 registerDoParallel(cl)
-uofm_holdout_combined_model <- lapply(c("fhs_UofMinn", "fhs_JHU"),
+uofm_holdout_combined_model <- lapply(c("fhs_UofMinn"),
                                    function(s) {
   idx <- which(!(nmd_all$batch == s))
   mads <- apply(betas_all[, idx], 1, mad)
@@ -760,7 +595,7 @@ set.seed(1)
 cl <- makePSOCKcluster(5)
 registerDoParallel(cl)
 uofm_holdout_combat_model <- lapply(
-  c("fhs_UofMinn", "fhs_JHU"),
+  c("fhs_UofMinn"),
   function(s) {
     idx <- which(!(nmd_all$batch == s))
     mads <- apply(betas_combat[, idx], 1, mad)
@@ -850,8 +685,8 @@ compare_df <- bind_rows(
   #                                      "plus_risk_factors",
   #                                      "FRS_only")))
 
-kable(compare_df, caption="Comparison of Cox regression coefficient estimates between the CSL and combined model options.") %>%
-  add_header_above(c("", "HR-per-SD"=2))
+kable(compare_df, caption="Comparison of Cox regression coefficient estimates between the CSL and combined model options.") # %>%
+  # add_header_above(c("", "HR-per-SD"=2))
 
 # compare_df_cox <- bind_rows(combined=cv_res_cox, 
 #                             csl=cv_csl_res_cox, .id="type") %>%
@@ -882,117 +717,6 @@ kable(compare_df, caption="Comparison of Cox regression coefficient estimates be
 # kable(compare_df, caption="Comparison of mean HR-per-SD metrics (from 3-fold CV) between the combined and stacked model options. Columns 1-2=Cox models, 3-4=binary logistic models, 5-6=ROC AUC(c-statistics)") %>%
 #   add_header_above(c("", "Cox models"=2, "Logistic models"=2,
 #                      "c statistics"=2))
-```
-
-```{r combined-bootstraps, cache=1}
-set.seed(1)
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-boot_combined_fits <- lapply(boot_samples, function(idx) {
-  mads <- apply(betas_all[, idx], 1, mad)
-  var_cpgs <- order(mads, decreasing=T)[1:100000]
-  design_mat <- construct_design_mat(
-    rownames(betas_all)[var_cpgs], betas_all, c("batch"), nmd_all)
-  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
-               alpha=0.05, nfolds=3, parallel=T, s="lambda.min", lmr=0.05)  
-})
-
-stopCluster(cl)
-```
-```{r test-combined-bootstraps, include=F}
-boot_samples_heldout <- lapply(boot_samples, 
-                               function(s) (1:nrow(nmd_all))[-s])
-
-boots_combined_res <- test_boots_basic(nmd_all, betas_all,
-                                       boot_combined_fits,
-                                       boot_samples_heldout,
-                                       test_mrs_with_SE)
-boots_combined_res_tbl <- boots_combined_res %>%
-  group_by(covariate_set) %>%
-  summarise(Mean=mean(HR_per_SD),
-            SE=sd(HR_per_SD))
-kable(boots_combined_res_tbl, 
-      caption="Bootstrap results with combined method")
-```
-```{r enet-cv, cache=1}
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-cv_fits <- lapply(cv_folds, function(idx) {
-  mads <- apply(betas_all[, idx], 1, mad)
-  var_cpgs <- order(mads, decreasing=T)[1:100000]
-  design_mat <- construct_design_mat(
-    rownames(betas_all)[var_cpgs], betas_all, c("batch"), nmd_all)
-  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
-               alpha=0.05, nfolds=3, parallel=T, s="lambda.min", lmr=0.05)  
-})
-
-stopCluster(cl)
-```
-```{r enet-cv-mvals, cache=1, cache.vars=c("cv_fits_mvals")}
-mvals_all <- logit2(betas_all)
-
-cl <- makePSOCKcluster(3)
-registerDoParallel(cl)
-
-cv_fits_mvals <- lapply(cv_folds, function(idx) {
-  mads <- apply(mvals_all[, idx], 1, mad)
-  var_cpgs <- order(mads, decreasing=T)[1:100000]
-  design_mat <- construct_design_mat(
-    rownames(mvals_all)[var_cpgs], mvals_all, c("batch"), nmd_all)
-  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
-               alpha=0.05, nfolds=3, parallel=T, s="lambda.min", lmr=0.05)  
-})
-
-stopCluster(cl)
-```
-```{r test-enet-cv, warning=F, include=F, eval=F}
-# cv_res_per_fold <- lapply(paste0("Fold", 1:length(cv_fits)), 
-#                           function(fold) {
-#   test_idx <- cv_folds_test[[fold]]
-#   mrs <- calc_mrs_glmnet(cv_fits[[fold]]$cpg_coefs, betas_all)
-#   nmd_test <- nmd_all[test_idx, ]
-#   mrs_test <- mrs[test_idx]
-#   map_dfr(
-#     covar_sets, function(cs) test_mrs_with_SE(
-#       nmd_test, mrs_test, 1:nrow(nmd_test), covars=cs),
-#     .id="covariate_set"
-#   )
-# })
-# 
-# cv_res_df <- bind_rows(cv_res_per_fold, .id="Fold") %>%
-#   mutate(covariate_set=factor(covariate_set, 
-#                               levels=unique(covariate_set)))
-
-cv_res_cox <- test_folds_basic(nmd_all, betas_all, cv_fits, 
-                               cv_folds_test, test_mrs_with_SE)
-cv_res_lr <- test_folds_basic(nmd_all, betas_all, cv_fits, 
-                              cv_folds_test, test_mrs_binary)
-cv_res_auc <- test_folds_basic(nmd_all, betas_all, cv_fits, 
-                               cv_folds_test, test_mrs_auc)
-
-ggplot(cv_res_cox, aes(x=covariate_set, y=HR_per_SD, 
-                      group=Fold, color=Fold)) +
-  geom_point(position=position_dodge(width=0.3)) +
-  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
-                position=position_dodge(width=0.3)) +
-  labs(title="3-fold CV results using combined dataset")
-
-# test_metrics_tbl <- map_dfr(
-#   covar_sets, function(cs) test_mrs(nmd_test, mrs_tuned_test, covars=cs),
-#   .id="Covariate_set")
-# test_metrics_tbl_nolbc <- map_dfr(
-#   covar_sets, function(cs) test_mrs(nmd_test[nmd_test$study != "lbc36", ], 
-#                                     mrs_tuned_test[nmd_test$study != "lbc36"], 
-#                                     covars=cs),
-#   .id="Covariate_set")
-
-# kable(test_metrics_tbl, caption="Performance of the MRS in the held-out test set.",
-#       booktabs=T) %>%
-  # kable_styling(latex_options="hold_position")
-# kable(test_metrics_tbl_nolbc, caption="Same, but without LBC.",
-#       booktabs=T)
 ```
 
 # Final CSL model
@@ -1119,7 +843,7 @@ homer_res <- read_tsv("../output/homer_results/csl/knownResults.txt")
 suppressMessages({
   dnam_age_df <- read_csv("../data/literature/horvath_dnamAge_cpgs.csv", skip=2)
   pheno_age_df <- read_csv("../data/literature/phenoAge.csv")
-  hannum_df <- read_excel("../data/literature/hannum_cpgs.xlsx", sheet=1)
+  hannum_df <- readxl::read_excel("../data/literature/hannum_cpgs.xlsx", sheet=1)
 })
 dnam_age_cpgs <- dnam_age_df$CpGmarker[-1]
 pheno_age_cpgs <- pheno_age_df$CpG
@@ -1188,8 +912,8 @@ icc_res_tbl <- tibble(
         icc_res_lbc36_wave12$ICC, icc_res_lbc36_wave13$ICC))
 
 kable(icc_res_tbl, caption="MRS stability as evaluated by using multiple within-subject measurements. Generic ICC heuristics for reference: 0-0.5 = poor, 0.5-0.75 = moderate, 0.75 - 0.9 = good, 0.9-1 = excellent.",
-      booktabs=T) %>%
-  kable_styling(latex_options="hold_position")
+      booktabs=T) #%>%
+  # kable_styling(latex_options="hold_position")
 ```
 
 ```{r mrs-stability-components, eval=F}
@@ -1436,7 +1160,7 @@ grs_fhs <- read_sscore("../int/fhs_grs.sscore") %>%
 nmd_fhs <- left_join(nmd_fhs, grs_fhs, by="subjID", suffix=c("",".2"))
 
 nmd_all <- left_join(nmd_all, rbind(grs_whi, grs_fhs),
-                         by="subjID", suffix=c("",".2"))
+                     by="subjID", suffix=c("",".2"))
 
 grs_quantiles_fhs <- quantile(nmd_all$grs[nmd_all$study == "fhs"], 
                               seq(0, 1, by=0.25), na.rm=T)
@@ -1641,7 +1365,7 @@ frs_quantile_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "frs_group
   mutate(Group=factor(Group, levels=unique(Group)))
 grs_quantile_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "grs_group")
 grs_quantile_res_white <- strat_test_by_study(
-  filter(nmd_all, race == "white"), 
+  filter(nmd_all, race == "white"),
   mrs_for_interaction[nmd_all$race == "white"], "grs_group_white")
 race_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "race")
 sex_res <- strat_test_by_study(nmd_all, mrs_for_interaction, "sex")
@@ -1665,13 +1389,71 @@ plot_grid(
   nrow=1)
 ```
 
-# More on CSL method and rationale
+
+# Baseline multi-cohort elastic net model
+
+## Description
+
+Parameter selection:
+
+* Alpha (ridge/lasso balance): use 0.05 based on empirical observations in literature
+* Lambda (penalty): optimize through 3-fold inner CV loop
+* Feature space: 100k most variable CpGs (based on median absolute deviation)
+* Adjust for study to avoid learning batch effects but otherwise unadjusted to maximize predictive power
+
+## Out-of-sample performance -- 3-fold cross-validation
+
+
+
+
+
+
+
+
+
+
+# Export of objects for reports/manuscripts
+
+```{r export-prep, cache=1}
+mads_full <- apply(betas_all, 1, mad)
+```
+
+```{r export}
+int_res_list <- list(age=age_quantile_res, frs=frs_quantile_res, 
+                     grs=grs_quantile_res, grs_white=grs_quantile_res_white,
+                     race=race_res, sex=sex_res)
+
+nmd_all$mrs_uofm_holdout_combat_nouofm <- uofm_holdout_combat_nouofm_mrs
+nmd_all$mrs_uofm_holdout_combat <- uofm_holdout_combat_mrs
+nmd_all$mrs_uofm_holdout_combined <- uofm_holdout_combined_mrs
+
+variable_100k_cpgs <- rownames(betas_all)[order(mads_full, 
+                                                decreasing=T)[1:100000]]
+```
+
+
+```{r export}
+save("nmd_all", "common_cpgs", "variable_100k_cpgs",
+     "uofm_holdout_csl", 
+     "uofm_holdout_res_tbl", "uofm_holdout_res_tbl_noPE",
+     "uofm_holdout_surv_fit", 
+     "compare_df", "ssl_nonzero_coefs",
+     "final_csl",
+     "gsa_tbls", "age_metric_enrich_res", "icc_res_tbl",
+     "grs_validation",
+     "int_res_list",
+     file="../output/mrs_models_objects.RData")
+```
+
+# Old
+
+## More on CSL method and rationale
 
 ## "Batch effects paradox" and the utility of the cross-study learner method
 
 The heterogeneity of the component cohorts here (sex, race, and case/control imbalances) is a strength in some sense by allowing for a potentially more generalizable risk score, but has the major obstacle that "real" methylation differences between cohorts are indistinguishable from batch effects.
 
-```{r lbc36-example, include=F}
+```{r lbc36-example, include=F, eval=F}
 lbc36_to_both <- test_mrs(nmd_all, ssl_scores$lbc36, 
                           nmd_all$batch %in% c("whi","fhs_JHU",
                                                "fhs_UofMinn"),
@@ -1679,16 +1461,11 @@ lbc36_to_both <- test_mrs(nmd_all, ssl_scores$lbc36,
 lbc36_scores_lm <- summary(lm(ssl_scores$lbc36 ~ batch, data=nmd_all))
 ```
 
-One example provides evidence that the systematic study differences are not solely due to batch effects:
-The single-study model figure above suggests that an LBC36-trained score does not perform strongly/consistently in WHI or FHS. However, when the LBC36 score is tested on WHI and both FHS batches together, it performs much better (HR = `r lbc36_to_both$HR_per_SD`). This should not be due to batch effects, since *the LBC36 score has not "seen" either of the other datasets*. Indeed, it turns out that the LBC36-derived score is strongly higher in the WHI group as a whole, which has a much greater proportion of incident cases. Furthermore, this score is biologically plausible: the top-weighted CpG (cg06500161 near ABCG1) is already known to predict incident cardiometabolic disease based on prior investigations.
-
-This observation provides support for the use of the cross-study learner model, which allows the testing of model performance in multiple cohorts with somewhat less concern that batch effects are confounding the result. In comparison, the "combined" model requires that either batch effects be allowed to confound results, or that study be directly adjusted for, which would remove the type of signal I provide evidence for above.
-
 ## Out-of-sample performance -- across studies
 
 So, first, how do models trained on each single study perform in the others? While WHI and FHS predict each other well, LBC36 seems more marginally related.
 
-```{r single-study-models, cache=1}
+```{r single-study-models, cache=1, eval=F}
 cl <- makePSOCKcluster(3)
 registerDoParallel(cl)
 
@@ -1771,61 +1548,284 @@ loo_res_tbl <- bind_rows(setNames(loo_res_list, studies), .id="Study")
 kable(loo_res_tbl, caption="Leave-one-study-out performance evaluation")
 ```
 
-# Baseline multi-cohort elastic net model
 
-## Description
+```{r combined-bootstraps, cache=1, eval=F}
+set.seed(1)
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
 
-Parameter selection:
+boot_combined_fits <- lapply(boot_samples, function(idx) {
+  mads <- apply(betas_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:100000]
+  design_mat <- construct_design_mat(
+    rownames(betas_all)[var_cpgs], betas_all, c("batch"), nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=3, parallel=T, s="lambda.min", lmr=0.05)  
+})
 
-* Alpha (ridge/lasso balance): use 0.05 based on empirical observations in literature
-* Lambda (penalty): optimize through 3-fold inner CV loop
-* Feature space: 100k most variable CpGs (based on median absolute deviation)
-* Adjust for study to avoid learning batch effects but otherwise unadjusted to maximize predictive power
+stopCluster(cl)
+```
+```{r test-combined-bootstraps, include=F, eval=F}
+boot_samples_heldout <- lapply(boot_samples, 
+                               function(s) (1:nrow(nmd_all))[-s])
 
-## Out-of-sample performance -- 3-fold cross-validation
+boots_combined_res <- test_boots_basic(nmd_all, betas_all,
+                                       boot_combined_fits,
+                                       boot_samples_heldout,
+                                       test_mrs_with_SE)
+boots_combined_res_tbl <- boots_combined_res %>%
+  group_by(covariate_set) %>%
+  summarise(Mean=mean(HR_per_SD),
+            SE=sd(HR_per_SD))
+kable(boots_combined_res_tbl, 
+      caption="Bootstrap results with combined method")
+```
+```{r enet-cv, cache=1, eval=F}
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
 
+cv_fits <- lapply(cv_folds, function(idx) {
+  mads <- apply(betas_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:100000]
+  design_mat <- construct_design_mat(
+    rownames(betas_all)[var_cpgs], betas_all, c("batch"), nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=3, parallel=T, s="lambda.min", lmr=0.05)  
+})
 
+stopCluster(cl)
+```
+```{r enet-cv-mvals, cache=1, cache.vars=c("cv_fits_mvals"), eval=F}
+mvals_all <- logit2(betas_all)
 
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
 
+cv_fits_mvals <- lapply(cv_folds, function(idx) {
+  mads <- apply(mvals_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:100000]
+  design_mat <- construct_design_mat(
+    rownames(mvals_all)[var_cpgs], mvals_all, c("batch"), nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=3, parallel=T, s="lambda.min", lmr=0.05)  
+})
 
+stopCluster(cl)
+```
+```{r test-enet-cv, warning=F, include=F, eval=F}
+# cv_res_per_fold <- lapply(paste0("Fold", 1:length(cv_fits)), 
+#                           function(fold) {
+#   test_idx <- cv_folds_test[[fold]]
+#   mrs <- calc_mrs_glmnet(cv_fits[[fold]]$cpg_coefs, betas_all)
+#   nmd_test <- nmd_all[test_idx, ]
+#   mrs_test <- mrs[test_idx]
+#   map_dfr(
+#     covar_sets, function(cs) test_mrs_with_SE(
+#       nmd_test, mrs_test, 1:nrow(nmd_test), covars=cs),
+#     .id="covariate_set"
+#   )
+# })
+# 
+# cv_res_df <- bind_rows(cv_res_per_fold, .id="Fold") %>%
+#   mutate(covariate_set=factor(covariate_set, 
+#                               levels=unique(covariate_set)))
 
+cv_res_cox <- test_folds_basic(nmd_all, betas_all, cv_fits, 
+                               cv_folds_test, test_mrs_with_SE)
+cv_res_lr <- test_folds_basic(nmd_all, betas_all, cv_fits, 
+                              cv_folds_test, test_mrs_binary)
+cv_res_auc <- test_folds_basic(nmd_all, betas_all, cv_fits, 
+                               cv_folds_test, test_mrs_auc)
 
+ggplot(cv_res_cox, aes(x=covariate_set, y=HR_per_SD, 
+                      group=Fold, color=Fold)) +
+  geom_point(position=position_dodge(width=0.3)) +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
+                position=position_dodge(width=0.3)) +
+  labs(title="3-fold CV results using combined dataset")
 
+# test_metrics_tbl <- map_dfr(
+#   covar_sets, function(cs) test_mrs(nmd_test, mrs_tuned_test, covars=cs),
+#   .id="Covariate_set")
+# test_metrics_tbl_nolbc <- map_dfr(
+#   covar_sets, function(cs) test_mrs(nmd_test[nmd_test$study != "lbc36", ], 
+#                                     mrs_tuned_test[nmd_test$study != "lbc36"], 
+#                                     covars=cs),
+#   .id="Covariate_set")
 
-
-# Export of objects for reports/manuscripts
-
-```{r export-prep, cache=1}
-mads_full <- apply(betas_all, 1, mad)
+# kable(test_metrics_tbl, caption="Performance of the MRS in the held-out test set.",
+#       booktabs=T) %>%
+  # kable_styling(latex_options="hold_position")
+# kable(test_metrics_tbl_nolbc, caption="Same, but without LBC.",
+#       booktabs=T)
 ```
 
-```{r export}
-int_res_list <- list(age=age_quantile_res, frs=frs_quantile_res, 
-                     grs=grs_quantile_res, grs_white=grs_quantile_res_white,
-                     race=race_res, sex=sex_res)
+## Out-of-sample performance -- bootstrap
 
-variable_100k_cpgs <- rownames(betas_all)[order(mads_full, 
-                                                decreasing=T)[1:100000]]
+Dropped for the moment in favor of a single FHS_UofMinn test cohort
 
-save("nmd_all", "common_cpgs", "variable_100k_cpgs",
-     "uofm_holdout_csl", 
-     "uofm_holdout_res_tbl", "uofm_holdout_res_tbl_noPE",
-     "uofm_holdout_surv_fit", 
-     "compare_df", "ssl_nonzero_coefs",
-     "final_csl",
-     "gsa_tbls", "age_metric_enrich_res", "icc_res_tbl",
-     "grs_validation",
-     "int_res_list",
-     file="../output/mrs_models_objects.RData")
+```{r ssl-bootstraps, include=F, cache=1, eval=F}
+boot_study_combos <- expand.grid(
+  resample=1:n_boots, 
+  study=c("whi", "fhs_JHU", "fhs_UofMinn", "lbc36"),
+  stringsAsFactors=F) %>%
+  arrange(resample)
+boot_study_combos <- filter(boot_study_combos, resample %in% 1:5)
+
+fit_boot_ssl <- function(idx, ssl_study, .pb=NULL) {
+  print(paste0("Bootstrap: ", idx, ", Study: ", ssl_study))
+  nmd <- filter(nmd_all[boot_samples[[idx]], ], 
+                batch == ssl_study)
+  betas <- betas_all[, nmd$sampleKey]
+  # betas <- betas_all[1:100, nmd$sampleKey]
+  cvd_surv <- Surv(nmd$time, nmd$event)
+  mads <- apply(betas, 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:100000]
+  # var_cpgs <- 1:100
+  design_mat <- construct_design_mat(
+    rownames(betas)[var_cpgs], betas, c(), nmd)
+  trained <- train_glmnet(design_mat, cvd_surv,
+                          alpha=0.05, nfolds=3, 
+                          parallel=T, lmr=0.05)
+  update_progress(.pb)
+  trained
+}
+
+set.seed(1)
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
+
+# boot_ssl_fits <- foreach(x=iter(boot_study_combos, by="row"),
+#                          .packages=c("dplyr", "survival",
+#                                      "glmnet")) %do%
+#   fit_boot_ssl(x$resample, x$study)
+pb <- progress_estimated(nrow(boot_study_combos),
+                         progress_location = file("progress.log", 
+                                                  open = "w"))
+boot_ssl_fits <- map2(boot_study_combos$resample,
+                      boot_study_combos$study,
+                      fit_boot_ssl,
+                      .pb=pb)
+
+stopCluster(cl)
+```
+```{r test-bootstrap-csl, include=F, eval=F}
+boot_samples_heldout <- lapply(boot_samples[1:5], 
+                               function(s) (1:nrow(nmd_all))[-s])
+
+boots_csl_res <- test_resamples_csl(nmd_all, betas_all,
+                                    boot_ssl_fits, 
+                                    boot_study_combos,
+                                    boot_samples_heldout,
+                                    test_mrs_with_SE)
+boots_csl_res_tbl <- boots_csl_res %>%
+  group_by(covariate_set) %>%
+  summarise(Mean=mean(HR_per_SD),
+            SE=sd(HR_per_SD))
+kable(boots_csl_res_tbl, 
+      caption="Bootstrap results with combined method")
+
+ggplot(boots_csl_res, aes(x=covariate_set, y=HR_per_SD)) +
+  geom_point(position=position_jitter(width=0.1), alpha=0.3) +
+  geom_point(data=boots_csl_res_tbl, aes(y=Mean), size=2) +
+  geom_errorbar(data=boots_csl_res_tbl, 
+                aes(y=Mean, ymin=Mean - SE, ymax=Mean + SE),
+                width=0, size=1) +
+  labs(x="Covariate set", y="Hazard ratio per SD of risk score",
+       title="Bootstrap results for CSL method")
 ```
 
-# Old
+```{r cv-single-study-models, cache=1, eval=F}
+cl <- makePSOCKcluster(3)
+registerDoParallel(cl)
+
+fold_study_combos <- expand.grid(fold=names(cv_folds),
+                                 study=c("whi", "fhs", "lbc36"))
+
+cv_single_study_models <- map2(
+  fold_study_combos$fold,
+  fold_study_combos$study,
+  function(f, s) {
+    nmd <- filter(nmd_all[cv_folds[[f]], ], study == s)
+    betas <- betas_all[, nmd$sampleKey]
+    cvd_surv <- Surv(nmd$time, nmd$event)
+    mads <- apply(betas, 1, mad)
+    var_cpgs <- order(mads, decreasing=T)[1:100000]
+    covars <- if (s == "fhs") "batch" else c()
+    design_mat <- construct_design_mat(
+      rownames(betas)[var_cpgs], betas, covars, nmd)
+    train_glmnet(design_mat, cvd_surv,
+                 alpha=0.05, nfolds=3, parallel=T, lmr=0.05)  
+  })
+
+stopCluster(cl)
+```
+```{r cv-ssl-models, cache=1, eval=F}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+fold_study_combos <- expand.grid(fold=names(cv_folds),
+                                 study=c("whi", "fhs", "lbc36", 
+                                         "fhs_JHU", "fhs_UofMinn"))
+
+cv_ssl_fits <- map2(
+  fold_study_combos$fold,
+  fold_study_combos$study,
+  function(f, s) {
+    nmd <- filter(nmd_all[cv_folds[[f]], ], grepl(s, batch))
+    betas <- betas_all[, nmd$sampleKey]
+    cvd_surv <- Surv(nmd$time, nmd$event)
+    mads <- apply(betas, 1, mad)
+    var_cpgs <- order(mads, decreasing=T)[1:100000]
+    design_mat <- construct_design_mat(
+      rownames(betas)[var_cpgs], betas, c(), nmd)
+    train_glmnet(design_mat, cvd_surv,
+                 alpha=0.05, nfolds=5, parallel=T, lmr=0.05)  
+  })
+
+stopCluster(cl)
+```
+```{r test-cv-csl, include=F, eval=F}
+names(fold_study_combos) <- c("resample", "study")
+fold_study_combos$resample <- as.numeric(
+  gsub("Fold", "", fold_study_combos$resample))
+
+cv_csl_res_cox <- test_resamples_csl(nmd_all, betas_all,
+                                     cv_ssl_fits, 
+                                     fold_study_combos, 
+                                     cv_folds_test, test_mrs_with_SE)
+cv_csl_res_lr <- test_resamples_csl(nmd_all, betas_all, 
+                                    cv_ssl_fits, 
+                                    fold_study_combos, 
+                                    cv_folds_test, test_mrs_binary)
+# cv_csl_res_lr_oldway <- test_folds_csl(nmd_all, betas_all, 
+#                                  cv_single_study_models, 
+#                                  fold_study_combos, 
+#                                  cv_folds_test, test_mrs_binary)
+cv_csl_res_auc <- test_resamples_csl(nmd_all, betas_all, 
+                                     cv_ssl_fits,
+                                     fold_study_combos, 
+                                     cv_folds_test, test_mrs_auc)
+
+# weights_mat <- do.call(rbind, map(cv_stack_res_per_fold, "weights"))
+# rownames(weights_mat) <- paste("Fold", 1:3)
+# kable(weights_mat, caption="Study-specific weights learned per fold")
+
+ggplot(cv_csl_res_cox, aes(x=covariate_set, y=HR_per_SD, 
+                      group=Fold, color=Fold)) +
+  geom_point(position=position_dodge(width=0.3)) +
+  geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0,
+                position=position_dodge(width=0.3)) +
+  labs(title="3-fold CV results using stacking approach")
+```
+
 ## Methylation risk score construction
 
 
 ### Initial EWAS-like screening to get marginal associations
 
-```{r screening, cache=1}
+```{r screening, cache=1, eval=F}
 cl <- makePSOCKcluster(32)
 registerDoParallel(cl)
 
@@ -1837,7 +1837,7 @@ marginal_res_list <- foreach(meth=iter(betas_all, by="row"),
 stopCluster(cl)
 ```
 
-```{r screening-processing}
+```{r screening-processing, eval=F}
 marginal_res <- do.call(rbind, marginal_res_list) %>%
   data.frame(stringsAsFactors=F, check.names=F) %>%
   dplyr::rename(p=`Pr(>|z|)`) %>%
@@ -1848,7 +1848,7 @@ marginal_res <- do.call(rbind, marginal_res_list) %>%
 
 ### Tuning
 
-```{r grid-search, cache=1}
+```{r grid-search, cache=1, eval=F}
 cpg_nums <- c(100, 500, 1000, 2000, 3000, 4000, 5000)
 alphas <- c(0, 0.25, 0.5, 0.75, 1)
 
@@ -1926,7 +1926,7 @@ A grid search suggests that performance is optimized with an alpha parameter of 
 
 ### Testing
 
-```{r tuned-model, cache=1}
+```{r tuned-model, cache=1, eval=F}
 tuned_design_mat <- construct_design_mat(marginal_res$CpG[1:3000],
                                          betas_all, "batch", nmd_all)
 

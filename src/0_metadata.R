@@ -14,7 +14,7 @@ sample_data_fhs <- bind_rows(sample_data_fhs_c1, sample_data_fhs_c2) %>%
          arrayPos=gsub("[0-9]*_", "", LABID),
          sentrixRow=substr(arrayPos, 1, 3),
          sentrixCol=substr(arrayPos, 4, 6),
-         center=ifelse(grepl("^IL",Plate), "JHU", "UofMinn")) %>%
+         center=ifelse(grepl("^IL", Plate), "JHU", "UofMinn")) %>%
   rename(sampleKey=LABID,
          plate=Plate) %>%
   select(subjID, sampleKey, sentrixRow, sentrixCol, plate, center)
@@ -325,10 +325,10 @@ soe2015_fhs_clean <- inner_join(soe2015_fhs, exam_dates_fhs, by="shareid") %>%
                              EVENT == 26 ~ "death_otherCVD",
                              EVENT %in% 27:29 ~ "death_nonCVD"),
          cvd=eventType %in% c("chd", "stroke", "death_otherCVD"),
-         time=DATE-date8) %>%
+         time=DATE - date8) %>%
   group_by(shareid) %>%
-  summarise(pastEvent=any(cvd == T & time<=0),  # Note if subject had an event before Exam 8
-            event=any(cvd == T & time>0),  # Future event if occurred after Exam 8
+  summarise(pastEvent=any(cvd == T & time <= 0),  # Note if subject had an event before Exam 8
+            event=any(cvd == T & time > 0),  # Future event if occurred after Exam 8
             timeToEvent=ifelse(any(cvd == T & time > 0), 
                                min(time[cvd == T & time > 0]), NA),  # Earliest post-Exam 8 event time
             eventType=ifelse(any(cvd == T & time > 0), 
@@ -336,8 +336,8 @@ soe2015_fhs_clean <- inner_join(soe2015_fhs, exam_dates_fhs, by="shareid") %>%
                              as.character(NA)),
             death=any(EVENT %in% 21:29),  # Did the person die?
             timeToDeath=ifelse(any(death), time[EVENT %in% 21:29], NA),  # If they died, get time to death
-            incCHD=any(eventType == "chd" & time>0),
-            incStroke=any(eventType == "stroke" & time>0),
+            incCHD=any(eventType == "chd" & time > 0),
+            incStroke=any(eventType == "stroke" & time > 0),
             timeToExam9=median(date9 - date8))  # Carry through for censorship times
 
 surv2014_fhs_c1 <- read_tsv("../data/fhs/phen/survcvd2014_fhs_c1.txt", skip=10)
@@ -345,13 +345,14 @@ surv2014_fhs_c2 <- read_tsv("../data/fhs/phen/survcvd2014_fhs_c2.txt", skip=10)
 surv2014_fhs <- bind_rows(surv2014_fhs_c1, surv2014_fhs_c2)
 
 outcome_data_fhs <- left_join(surv2014_fhs, soe2015_fhs_clean, by="shareid") %>%
+  inner_join(exam_dates_fhs, by="shareid") %>%
   filter(shareid %in% sample_data_fhs$subjID) %>%
   replace_na(list(event=F, pastEvent=F, death=F)) %>%  # Add "false" for events/deaths after left join
   mutate(time=case_when(event == T ~ timeToEvent,  # Experienced an event after Exam 8 -> use that follow-up time
                         death == T ~ timeToDeath,  # Didn't experience an event but died -> censor at death
-                        cvd == 0 ~ cvddate,  # No event and no CVD in surv file -> censoring time from surv file
-                        TRUE ~ timeToExam9),
-         time=as.integer(time)) %>%  # No event and CVD in surv file -> use exam 9 date for censor time
+                        cvd == 0 ~ cvddate - date8,  # No event and no CVD in surv file -> censoring time from surv file
+                        TRUE ~ timeToExam9),  # No event and CVD in surv file -> use exam 9 date for censor time
+         time=as.integer(time)) %>%  
   filter(!is.na(time)) %>%  # Remove those individuals with no Exam 9 date and thus no known censorship time
   mutate(subjID=as.character(shareid)) %>%
   select(subjID, pastEvent, event, eventType, time, incCHD, incStroke)
@@ -410,14 +411,14 @@ outcome_data_lbc36 <- read.spss("../data/lbc/phen/LBC1936_MethylationCardioVascu
                   cvdhist_w3 == "Yes" | stroke_w3 == "Yes" | 
                   cvdhist_w4 == "Yes" | stroke_w4 == "Yes"),
          event=ifelse(is.na(event), F, event),
-         time=case_when(cvdhist_w2 == "Yes" | stroke_w2 == "Yes" ~ 4,  ### FIX THESE VALUES ###
-                        cvdhist_w3 == "Yes" | stroke_w3 == "Yes" ~ 8,
-                        cvdhist_w4 == "Yes" | stroke_w4 == "Yes" ~ 11,
-                        !is.na(agedays_death) ~ agedays_death - 79,
-                        TRUE ~ 14)) %>%
+         time=case_when(cvdhist_w2 == "Yes" | stroke_w2 == "Yes" ~ 4 * 365,
+                        cvdhist_w3 == "Yes" | stroke_w3 == "Yes" ~ 8 * 365,
+                        cvdhist_w4 == "Yes" | stroke_w4 == "Yes" ~ 11 * 365,
+                        !is.na(agedays_death) ~ agedays_death - agedays_w1,
+                        TRUE ~ 14 * 365)) %>%
   select(subjID, pastEvent, event, time)
 
-outcome_data <- bind_rows(outcome_data_fhs, outcome_data_whi, 
+outcome_data <- bind_rows(outcome_data_fhs, outcome_data_whi,
                           outcome_data_lbc21, outcome_data_lbc36,
                           .id="study") %>%
   mutate(study=case_when(study == 1 ~ "fhs", study == 2 ~ "whi", 
