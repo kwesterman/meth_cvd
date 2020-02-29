@@ -1,5 +1,5 @@
 ---
-title: "Supplementary Material: Epigenomic prediction of cardiovascular risk and interactions with traditional risk metrics"
+title: "Supplementary Material: Epigenomic assessment of cardiovascular risk and interactions with traditional risk metrics"
 
 output:
   pdf_document:
@@ -10,7 +10,7 @@ output:
 documentclass: article
 
 bibliography: mrs_manuscript.bib
-csl: circulation.csl
+csl: jaha.csl
 
 link-citations: true
 
@@ -24,7 +24,7 @@ knitr::opts_chunk$set(echo=F, warning=F,
                       fig.path="figures/", fig.pos="h",
                       out.extra="")
 suppressMessages(silent <- lapply(
-  c("tidyverse", "survival", "kableExtra", "gridExtra", "cowplot", "broom"), 
+  c("tidyverse", "survival", "kableExtra", "gridExtra", "cowplot", "broom"),
   library, character.only=T))
 load("../../output/mrs_models_objects.RData")
 ```
@@ -56,11 +56,6 @@ The Lothian Birth Cohorts consist of two birth cohorts (born in 1921 and 1936) e
 
 The REGICOR dataset analyzed here consisted of a nested case-control for myocardial infarction within the larger REGICOR (REgistre GIroní del COR) cohort from the Girona Province in Catalonia (Spain). Whole blood samples were collected from 391 total participants, with those from cases generally collected within 24 hours of the event. Characteristics for this population are available in Supp. Table S3.
 
-## DNA methylation data processing
-
-DNA methylation data for all initial cohorts (WHI, FHS, and LBC) were collected using the Illumina HumanMethylation450 microarray platform [@Bibikova2011] and downloaded as raw intensity files. Preprocessing was performed using the *minfi* and *wateRmelon* packages for R [@Aryee2014; @Pidsley2013]. Sample-wise filters were as follows: robust overall signal in the main cluster based on visual inspection of an intensity plot, less than 10% of probes undetected at a detection threshold of p<1e-16, and a reported sex matching methylation-based sex prediction. Probes were removed using the following criteria: more than 10% of samples undetected at a detection threshold of p<1e-16, location in the X or Y chromosomes, non-CpG probes, cross-hybridizing probes, probes measuring SNPs, and probes with an annotated SNP at the CpG site or in the single-base extension region. Samples were normalized using the Noob method for background correction and dye-bias normalization, followed by the BMIQ method for probe type correction [@Fortin2016; @Teschendorff2013]. Blood cell fractions for 6 blood cell types (CD4+ T-cells, CD8+ T-cells, B-cells, natural killer cells, monocytes, and granulocytes) were estimated using a common reference-based method [@Houseman2012], and 5 of these (excluding granulocytes) were included in cell count-adjusted statistical models. After quality control and filtering steps, `r length(common_cpgs)` CpG sites were shared between the 3 datasets, formatted as beta values (ratio of methylated signal to total microarray signal).
-
-DNA methylation data for the REGICOR cohort were collected using the Illumina MethylationEPIC microarray platform [@Pidsley2016] and analyzed using the *wateRmelon* [@Pidsley2013] and methylumi [@Davis2019] R packages. Samples were excluded based on detection p-value >0.05 in at least 1% of probes or failure to cluster in the appropriate sex based on X chromosome methylation. Probes were excluded based on detection p-value >0.05 in at least 1% of samples, a bead count <3 in at least 5% of samples, discarding by Illumina based on underperformance (n=1,031) or changes in the manufacturing process (n=977), non-CpG targets, and cross-hybridization (n=43,979). A batch normalization was performed by standardizing beta values to mean zero and unit variance within each bisulfite conversion batch prior to analysis. After quality control and preprocessing, 811,610 CpG sites across 391 individuals were available for analysis. Participants were further excluded from analysis due to unknown smoking habits (n=10) and unavailable information regarding diabetes, hypertension, or hyperlipidemia (n=53). Surrogate variable analysis [@Leek2007] was used to calculate two surrogate variables, representing potential technical and biological confounders, for adjustment in MRS replication models.
 
 # Supplementary Tables and Figures
 
@@ -123,15 +118,17 @@ data.frame(`Sample size`=391,
         `Sex (% female)`="48.6",
         `Smoking`="21.5%",
         `Body mass index`="28.5 (4.8)",
-        `LDL cholesterol`="127 (26)",
-        `HDL cholesterol`="50.0 (10.5)",
-        `Systolic blood pressure`="135 (18)",
+        Hypercholesterolemia="53.0%",
+        `Hypertension prevalence`="57.1%",
+        # `LDL cholesterol`="127 (26)",
+        # `HDL cholesterol`="50.0 (10.5)",
+        # `Systolic blood pressure`="135 (18)",
         `Diabetes prevalence`="24.7%",
         check.names=F
 ) %>% 
   t() %>%
   kable(booktabs=T, longtable=T, linesep="",
-        caption="Description of REGICOR myocardial infarction nested case-control population (continuous variables presented as: mean (standard deviation)")
+        caption="Description of REGICOR myocardial infarction nested case-control population (continuous variables presented as: mean (standard deviation))")
 ```
 
 \newpage
@@ -157,7 +154,7 @@ compare_plt <- compare_df %>%
   geom_bar(stat="identity", position="dodge") +
   coord_cartesian(ylim=c(1, 2)) +
   scale_fill_brewer(palette="Dark2") +
-  labs(x="", y="Hazard ratio (per s.d. MRS)") +
+  labs(x="FHS-UM", y="Hazard ratio (per s.d. MRS)") +
   theme(legend.position="none", axis.text.x=element_text(angle=30, hjust=0.8))
 
 load("../../output/regicor_results_august2019/main_mrs_results.RData")
@@ -198,7 +195,7 @@ regicor_compare_plt <- regicor_compare_df %>%
   geom_bar(stat="identity", position="dodge") +
   coord_cartesian(ylim=c(1, 2.5)) +
   scale_fill_brewer(palette="Dark2") +
-  labs(x="", y="Odds ratio (per s.d. MRS)") +
+  labs(x="REGICOR", y="Odds ratio (per s.d. MRS)") +
   theme(axis.text.x=element_text(angle=30, hjust=0.8))
 
 plot_grid(compare_plt, regicor_compare_plt, ncol=2, rel_widths=c(2, 3),
@@ -254,6 +251,71 @@ grs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU",
 \newpage
 
 ```{r interactions, warning=F, fig.cap="Interactions of MRS with other biomarkers of CVD risk. a) Hazard ratios for the MRS within subsets of 10-year generalized CVD risk according to the Framingham Risk Score. b) Hazard ratios for the MRS within quartiles of a genetic cardiovascular risk score (in white participants only for WHI). Hazard ratios are estimated using the final MRS, which was trained using each of these datasets. Stratum-specific Cox regressions were adjusted for age, sex, and estimated cell subtype fractions. Estimates for strata with less than 25 incident events are not shown. Error bars represent standard errors for the hazard ratio estimates (cut off above in panel (a) for ease of visualization of other points)."}
+basic_covars <- c("age", "sex", "CD4T", "CD8T", "Bcell", 
+                  "NK", "Mono")
+
+test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
+                     covars=c(), robust=F) {
+  meta$mrs <- scale(mrs)
+  meta$cvd_surv <- Surv(time=meta$time, event=meta$event)  # Outcome
+  meta <- mutate_at(meta, c("chol", "ldl", "hdl", "tg", "glu", "hscrp", "sbp"), log10)
+  covar_string <- "cvd_surv ~ mrs"
+  if (length(covars) > 0) {
+    covar_string <- paste(covar_string, "+", paste(covars, collapse=" + "))
+  } 
+  form <- as.formula(paste(c("cvd_surv ~ mrs", covars), collapse=" + "))
+  mrs_test <- coxph(form, data=meta, subset=subset, robust=robust)  # Test the MRS using a Cox model
+  mrs_res <- summary(mrs_test)$coef["mrs", c("exp(coef)","z")]
+  mrs_res_tbl <- tibble(HR_per_SD=mrs_res["exp(coef)"], 
+                        p=2 * pnorm(-abs(mrs_res["z"])))
+  if (return_fit) {
+    list(fit=mrs_test, tbl=mrs_res_tbl) 
+  } else {
+    mrs_res_tbl
+  }
+}
+
+test_mrs_with_SE <- function(nmd, mrs, subset, covars, robust=F) {
+  test_res_list <- test_mrs(nmd, mrs, subset=subset, return_fit=T,
+                            covars=covars, robust=robust)
+  res_tbl <- test_res_list$tbl
+  beta <- log(res_tbl$HR_per_SD)
+  se <- sqrt(diag(test_res_list$fit$var)[1])
+  res_tbl$SE_lower <- exp(beta - se)
+  res_tbl$SE_higher <- exp(beta + se)
+  res_tbl$n <- test_res_list$fit$n
+  res_tbl
+}
+
+strat_test_by_study <- function(df, test_mrs, quantile_cat) {
+  if (is.factor(df[[quantile_cat]])) {
+    unique_levels <- na.omit(levels(df[[quantile_cat]]))
+  } else {
+    unique_levels <- na.omit(unique(df[[quantile_cat]]))
+  }
+  df$mrs <- test_mrs
+  full_res <- map_dfr(unique_levels, function(q) {
+    res_per_study <- df %>%
+      nest(-batch) %>%
+      mutate(res=map(data, function(d) {
+        na_df <- data.frame(HR_per_SD=NA, p=NA, SE_lower=NA, 
+                            SE_higher=NA, n=NA)
+        subset <- d[[quantile_cat]] == q
+        # if (sum(d$event[subset], na.rm=T) < 25) return(na_df)
+        tryCatch(test_mrs_with_SE(d, d$mrs, subset, basic_covars),
+                 error=function(e) test_mrs_with_SE(
+                   d, d$mrs, subset, basic_covars[basic_covars != "sex"]))
+      }))
+    cbind(study=res_per_study$batch,
+          bind_rows(res_per_study$res))
+  }, .id="Group")
+  full_res$Group <- unique_levels[as.numeric(full_res$Group)]
+  full_res
+}
+
+int_res_frs <- strat_test_by_study(nmd_all, nmd_all$mrs_final, "frs_group") %>%
+  mutate(Group=factor(Group, levels=unique(Group)))  # This includes groups w/ <25 events
+
 plot_strat_test_by_study <- function(qres, xlab) {
   qres %>%
     mutate(study=factor(study,

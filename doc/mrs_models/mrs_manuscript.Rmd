@@ -1,16 +1,16 @@
 ---
 output: 
-  word_document:
+#   word_document:
+#     fig_caption: true
+#     reference_docx: word-styles-reference.docx
+# always_allow_html: true
+  pdf_document:
+    keep_tex: true
     fig_caption: true
-    reference_docx: word-styles-reference.docx
-always_allow_html: true
-  # pdf_document:
-  #   keep_tex: true
-  #   fig_caption: true
-  #   latex_engine: pdflatex
+    latex_engine: pdflatex
 # see http://svmiller.com/blog/2016/02/svm-r-markdown-manuscript/ for details on this .Rmd template
 
-title: "Epigenomic prediction of cardiovascular disease risk and interactions with traditional risk metrics"
+title: "Epigenomic assessment of cardiovascular disease risk and interactions with traditional risk metrics"
 
 # author: |
 #   | Kenneth Westerman$^1$, Alba Fernández-Sanlés$^2,3^$, Prasad Patil$^4$, Paola Sebastiani$^4$, Paul Jacques$^1$, John M. Starr$^5,6^$, Ian Deary$^5,6^$, Qing Liu$^7$, Simin Liu$^7$, Roberto Elosua$^2,8,9^$, Dawn L. DeMeo$^10^$, José M. Ordovás$^1,11,12^$
@@ -19,7 +19,7 @@ title: "Epigenomic prediction of cardiovascular disease risk and interactions wi
 documentclass: article
 
 bibliography: mrs_manuscript.bib
-csl: circulation.csl
+csl: jaha.csl
 
 header-includes:
   - \usepackage{booktabs}
@@ -40,7 +40,7 @@ header-includes:
 knitr::opts_chunk$set(echo=F, fig.path="figures/", 
                       cache.path="../../cache/mrs_manuscript/",
                       warning=F)
-options(kableExtra.auto_format=F)
+# options(kableExtra.auto_format=F)
 suppressMessages(silent <- lapply(
   c("knitr", "kableExtra",
     "tidyverse", "broom", "cowplot", 
@@ -57,13 +57,29 @@ library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 anno_450k <- data.frame(
   getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19), 
   stringsAsFactors=F)
+
+nmd_all_preimputation <- mutate(nmd_all_preimputation,
+                                diabetes=dm_med | (glu > 125))
+diabetes_tbl <- table(is.na(nmd_all_preimputation$diabetes), 
+                      nmd_all_preimputation$batch)
+ht_med_tbl <- table(is.na(nmd_all_preimputation$ht_med), 
+                    nmd_all_preimputation$batch)
+smk_now_tbl <- table(is.na(nmd_all_preimputation$smk_now), 
+                     nmd_all_preimputation$batch)
+get_missing_pct <- function(tbl) {
+  frac <- tbl[2, "fhs_UofMinn"] / sum(tbl[, "fhs_UofMinn"])
+  frac * 100
+}
+diabetes_missing_pct <- get_missing_pct(diabetes_tbl)
+ht_med_missing_pct <- get_missing_pct(ht_med_tbl)
+smk_now_missing_pct <- get_missing_pct(smk_now_tbl)
 ```
 
 # Abstract
 
 Background: Epigenome-wide association studies for cardiometabolic risk factors have discovered multiple loci associated with incident cardiovascular disease (CVD). However, few studies have sought to directly optimize a predictor of CVD risk. Furthermore, it is challenging to train multivariate models across multiple studies in the presence of study- or batch effects. 
 
-Methods and Results: Here, we analyzed existing DNA methylation data collected using the Illumina HumanMethylation450 microarray to create a predictor of CVD risk across three cohorts: Women’s Health Initiative, Framingham Heart Study Offspring Cohort, and Lothian Birth Cohorts. We trained Cox proportional hazards-based elastic net regressions for incident CVD separately in each cohort, and used a recently-introduced cross-study learning approach to integrate these individual predictions into an ensemble predictor. The methylation-based risk score (MRS) predicted CVD time-to-event in a held-out fraction of the Framingham dataset (HR per SD = 1.28, p = 2e-3) and predicted myocardial infarction status in the independent REGICOR dataset (OR per SD = 2.14, p = 9e-7). These associations remained after adjustment for traditional cardiovascular risk factors and were similar to those from elastic net models trained on a directly merged dataset. Additionally, we investigated interactions between the MRS and both genetic and biochemical CVD risk, showing preliminary evidence of an enhanced predictive power in those with less traditional risk factor elevation.
+Methods and Results: Here, we analyzed existing DNA methylation data collected using the Illumina HumanMethylation450 microarray to create a predictor of CVD risk across three cohorts: Women’s Health Initiative, Framingham Heart Study Offspring Cohort, and Lothian Birth Cohorts. We trained Cox proportional hazards-based elastic net regressions for incident CVD separately in each cohort, and used a recently-introduced cross-study learning approach to integrate these individual scores into an ensemble predictor. The methylation-based risk score (MRS) was associated with CVD time-to-event in a held-out fraction of the Framingham dataset (HR per SD=1.28, 95% CI: 1.10-1.50) and predicted myocardial infarction status in the independent REGICOR dataset (OR per SD=2.14, 95% CI: 1.58-2.89). These associations remained after adjustment for traditional cardiovascular risk factors and were similar to those from elastic net models trained on a directly merged dataset. Additionally, we investigated interactions between the MRS and both genetic and biochemical CVD risk, showing preliminary evidence of an enhanced performance in those with less traditional risk factor elevation.
 
 Conclusions: This investigation provides proof-of-concept for a genome-wide, CVD-specific epigenomic risk score and suggests that the DNA methylation data may enable the discovery of high-risk individuals that would be missed by alternative risk metrics.
 
@@ -73,31 +89,33 @@ Key Words: Epigenomics, DNA methylation, cardiovascular disease, risk prediction
 
 DNA methylation is an important epigenetic pathway through which genetic variants and environmental exposures impact disease risk [@Bonder2016; @Tobi2018]. Methylation at specific cytosine-phosphate-guanine (CpG) sites has been associated with disease in epigenome-wide association studies, even showing associations in blood as a convenient but non-target tissue such as for type 2 diabetes [@Bacos2016]. Methylation-based risk scores allow genome-wide aggregation of epigenetic information, similarly to the more established genetic risk scores, and allow for the use of models with arbitrary complexity. These risk scores are often developed initially by using methylation as a proxy for disease risk factors, such as body mass index (BMI) [@Wahl2017] and general aging-related morbidity [@Levine2018]. Alternatively, given sufficient sample size, epigenetic associations with disease risk can be modeled directly [@Hao2017].
 
-Associations between DNA methylation and cardiovascular disease (CVD) have been explored in many different cohorts and using diverse approaches. Cross-sectional associations have been found across multiple relevant tissues, namely blood, aorta, and other vascular tissues [@Fernandez-Sanles2017]. Some investigations aimed at cardiovascular risk factors have discovered CpGs predictive of CVD development [@Hedman2017; @Aslibekyan2018], while Mendelian randomization approaches have suggested causality of at least some of these CpG-risk factor associations [@Richardson2017]. A few studies directly modeling incident CVD as a primary outcome have either been conducted using only global (not locus-specific) methylation levels [@Baccarelli2010], or have found limited additional predictive power in the presence of known risk factors [@Guarrera2015]. A recent large-scale meta-analysis found multiple CpG sites predictive of incident coronary heart disease, but focused on univariate approaches [@Agha2019]. We have previously investigated methylation regions and modules associating with incident CVD, generating mechanistic insights but without aggregating these results into a direct predictor of risk [@Westerman2018]. Additionally, it is unclear how the CVD risk tracked by DNA methylation is redundant with or complementary to existing risk metrics, including genetic scores [@Khera2018] and those based on traditional cardiovascular risk factors (e.g. the Framingham Risk Score for generalized CVD) [@DAgostino2008].
+Associations between DNA methylation and cardiovascular disease (CVD) have been explored in many different cohorts and using diverse approaches. Cross-sectional associations have been found across multiple relevant tissues, namely blood, aorta, and other vascular tissues [@Fernandez-Sanles2017]. Some investigations aimed at cardiovascular risk factors have discovered CpGs predictive of CVD development [@Hedman2017; @Aslibekyan2018], while Mendelian randomization approaches have suggested causality of at least some of these CpG-risk factor associations [@Richardson2017]. A few studies directly modeling incident CVD as a primary outcome have either been conducted using only global (not locus-specific) methylation levels [@Baccarelli2010], or have found limited additional predictive power in the presence of known risk factors [@Guarrera2015]. A recent large-scale meta-analysis found multiple CpG sites predictive of incident coronary heart disease, but focused on univariate approaches [@Agha2019]. We have previously investigated methylation regions and modules associating with incident CVD, generating mechanistic insights but without aggregating these results into a direct predictor of risk [@Westerman2019]. Additionally, it is unclear how the CVD risk tracked by DNA methylation is redundant with or complementary to existing risk metrics, including genetic scores [@Khera2018] and those based on traditional cardiovascular risk factors (e.g. the Framingham Risk Score for generalized CVD) [@DAgostino2008].
 
 Combining signal across population-scale cohorts can increase sample size while attenuating the effect of study-specific biases and confounding factors, but can be prone to emergent sources of confounding from "batch" effects or other systematic biases in methylation data across cohorts. This is especially problematic when there is notable class imbalance (i.e. different outcome frequencies) across cohorts [@Goh2017]. The most common method for dealing with this heterogeneity is meta-analysis, but standard meta-analysis approaches are restricted to univariate (one CpG site at a time) models. Other approaches include batch effect correction on the input dataset (e.g. ComBat [@Johnson2007]), direct adjustment for batch/study in linear models, or adjustment for derived variables intended to capture technical biases (e.g. surrogate variable analysis [@Leek2007]), but these approaches can often lead to over- or under-estimates of true biological effects [@Goh2017]. An alternative approach described recently, cross-study learning, instead trains an ensemble predictor consisting of one or multiple models per cohort [@Patil2018]. This strategy allows the use of arbitrarily complex models while avoiding technical confounding from direct combination of the datasets.
 
-In order to develop an improved DNA methylation-based cardiovascular risk predictor using multiple training cohorts, we used a cross-study learning method to develop an ensemble of penalized time-to-event regression risk models. The resulting composite risk score performed well in a held-out data subset, predicting survival even in the presence of traditional risk factors, and showing similar performance to models trained on naively merged datasets. External validation was achieved in a case-control for prevalent myocardial infarction (MI). Further, interactions were assessed between the composite methylation-based risk score and other risk predictors, finding a potentially enhanced prediction in those with low Framingham Risk Scores.
+In order to develop an improved DNA methylation-based cardiovascular risk predictor using multiple heterogeneous training cohorts, we used a cross-study learning method to develop an ensemble of penalized time-to-event regression risk models. The resulting composite risk score performed well in a held-out data subset, associating with survival even in the presence of traditional risk factors, and showing similar performance to models trained on naively merged datasets. External validation was achieved in a case-control study for prevalent myocardial infarction (MI). Further, interactions were assessed between the composite methylation-based risk score and other risk predictors, finding that it is potentially most effective in those with low Framingham Risk Scores.
 
 # Methods
 
 ## Study participants and phenotype collection
 
-Phenotypes (demographic, anthropometric, biochemical, and clinical), DNA methylation data, and imputed genotypes were available either from publicly available controlled-access databases or upon request from the cohorts. Cohort-specific details are provided in Supplementary methods. Blood-based biochemical markers (total cholesterol, LDL-cholesterol, HDL-cholesterol, triglycerides, fasting glucose, high-sensitivity C-reactive protein, and systolic blood pressure) were log10-transformed for all analyses. In the Lothian Birth Cohort 1936, LDL was estimated from total cholesterol and triglycerides using the Friedewald equation. Diabetes was defined as either use of diabetes medication or a measured fasting blood glucose level of >125 mg/dL. Median imputation was used to fill missing values for diabetes, medication use, and smoking status (thus assuming no diabetes, no medication use, and no smoking where these values were missing). Analysis of these datasets was approved by the Tufts University Health Sciences Institutional Review Board (protocol 12592), and all subjects gave informed consent. <!--While directly available in WHI, pack-years of smoking was approximated in FHS by multiplying either the number of years since starting smoking by the current number of packs per day, or else by multiplying the number of years smoked by the median number of packs per day (15) for those who had quit. Framingham Risk Scores were calculated as described previously [@DAgostino2008].-->
+Phenotypes (demographic, anthropometric, biochemical, and clinical), DNA methylation data, and imputed genotypes were available either from publicly available controlled-access databases or upon request from the cohorts. Cohort-specific details are provided in Supplementary methods. Blood-based biochemical markers (total cholesterol, LDL-cholesterol, HDL-cholesterol, triglycerides, fasting glucose, high-sensitivity C-reactive protein, and systolic blood pressure) were log10-transformed for all analyses. In the Lothian Birth Cohort 1936, LDL was estimated from total cholesterol and triglycerides using the Friedewald equation. Diabetes was defined as either use of diabetes medication or a measured fasting blood glucose level of >125 mg/dL. Antihypertensive medication use, smoking status, and diabetes status were assumed to be false where missing, though missing data rates for these variables in the held-out FHS subset were low (`r round(ht_med_missing_pct, 1)`%, `r round(smk_now_missing_pct, 1)`%, and `r round(diabetes_missing_pct)`%, respectively). Analysis of these datasets was approved by the Tufts University Health Sciences Institutional Review Board (protocol 12592), and all subjects gave informed consent. <!--While directly available in WHI, pack-years of smoking was approximated in FHS by multiplying either the number of years since starting smoking by the current number of packs per day, or else by multiplying the number of years smoked by the median number of packs per day (15) for those who had quit. Framingham Risk Scores were calculated as described previously [@DAgostino2008].-->
 
 ## DNA methylation data processing
 
-DNA methylation data for all initial cohorts (WHI, FHS, and LBC) were collected using the Illumina HumanMethylation450 microarray platform [@Bibikova2011] and downloaded as raw intensity files. Standard preprocessing steps were performed for each cohort, including sample-wise and probe-wise filters, background correction, and probe type normalization. After quality control and filtering steps, `r length(common_cpgs)` CpG sites were shared between the 3 datasets, formatted as beta values (ratio of methylated signal to total microarray signal). Preprocessing details are described in the Supplementary Methods.
+DNA methylation data for all initial cohorts (WHI, FHS, and LBC) were collected using the Illumina HumanMethylation450 microarray platform [@Bibikova2011] and downloaded as raw intensity files. FHS methylation data were collected in two primary batches in two centers -- one in subjects from a nested case-control for CVD measured at Johns Hopkins University (FHS-JHU), and the other in a larger set of remaining Framingham Offspring participants measured at the University of Minnesota (FHS-UM). Preprocessing was performed using the *minfi* and *wateRmelon* packages for R [@Aryee2014; @Pidsley2013]. Sample-wise filters were as follows: robust overall signal in the main cluster based on visual inspection of an intensity plot, less than 10% of probes undetected at a detection threshold of p<1e-16, and a reported sex matching methylation-based sex prediction. Probes were removed using the following criteria: more than 10% of samples undetected at a detection threshold of p<1e-16, location in the X or Y chromosomes, non-CpG probes, cross-hybridizing probes, probes measuring SNPs, and probes with an annotated SNP at the CpG site or in the single-base extension region. Samples were normalized using the Noob method for background correction and dye-bias normalization, followed by the BMIQ method for probe type correction [@Fortin2016; @Teschendorff2013]. Blood cell fractions for 6 blood cell types (CD4+ T-cells, CD8+ T-cells, B-cells, natural killer cells, monocytes, and granulocytes) were estimated using a common reference-based method [@Houseman2012], and 5 of these (excluding granulocytes) were included in cell count-adjusted statistical models. After quality control and filtering steps, `r length(common_cpgs)` CpG sites were shared between the 3 datasets, formatted as beta values (roughly equal to the ratio of methylated signal to total microarray signal, or $\beta=\frac{M}{M+U+100}$).
 
-## CVD risk prediction modeling
+DNA methylation data for the REGICOR cohort were collected using the Illumina MethylationEPIC microarray platform [@Pidsley2016] and analyzed using the *wateRmelon* [@Pidsley2013] and methylumi [@Davis2019] R packages. Samples were excluded based on detection p-value >0.05 in at least 1% of probes or failure to cluster in the appropriate sex based on X chromosome methylation. Probes were excluded based on detection p-value >0.05 in at least 1% of samples, a bead count <3 in at least 5% of samples, discarding by Illumina based on underperformance (n=1,031) or changes in the manufacturing process (n=977), non-CpG targets, and cross-hybridization (n=43,979). A batch normalization was performed by standardizing beta values to mean zero and unit variance within each bisulfite conversion batch prior to analysis. After quality control and preprocessing, 811,610 CpG sites across 391 individuals were available for analysis. Participants were further excluded from analysis due to unknown smoking habits (n=10) and unavailable information regarding diabetes, hypertension, or hyperlipidemia (n=53). Surrogate variable analysis [@Leek2007] was used to calculate two surrogate variables, representing potential technical and biological confounders, for adjustment in MRS replication models.
 
-Study-specific CVD risk prediction models were trained using penalized Cox proportional hazards regressions with the elastic net penalty. CVD events were defined as above, and times were right-censored based on the most recent exam available in each cohort. The elastic alpha parameter was set at 0.05, based on prior observations of good performance on Illumina methylation microarray datasets [@Zhuang2012], and the penalty parameter $\lambda$ was optimized through 5-fold cross-validation. For each model, only the most variable 100,000 CpGs according to median absolute deviation (~25% of all available sites shared across platforms) were included in order to decrease the computational burden and ensure that the selected CpGs would have meaningful interindividual variation.
+## CVD risk modeling
 
-The cross-study learner (CSL) was constructed as an ensemble of study-specific regression models. Predictions from each single-study learner (SSL) were combined using the "stacking" approach [@Patil2018], implemented as follows. First, predictions from each SSL to both itself and the other training datasets were combined into a design matrix (with dimensions $N_{total}$ x # SSLs). This formed the input to an additional penalized Cox regression (ridge regression with $\lambda$ optimized through 5-fold CV and coefficients restricted to be non-negative) of all training studies at once. Coefficients from this regression, corresponding to input study-specific SSLs, were normalized to sum to one to produce the CSL weights. For prediction in new datasets, SSL predictions were each standardized to mean zero and unit variance before calculating their weighted sum (using the "stacking" weights) as the final CSL score.
+Study-specific CVD risk models were trained using penalized Cox proportional hazards regressions with the elastic net penalty. CVD events were defined as including coronary heart disease, stroke, and death from CVD (see Supplementary Methods for cohort-specific details), and times were right-censored based on the most recent exam available in each cohort. The elastic alpha parameter was initially set at 0.05 (closer to ridge regression) in order to retain a higher number of CpGs with non-zero weights while still performing feature selection [@Benton2017]. Inner cross-validation loops varying alpha between 0.05 and 0.95 showed negligible differences in model performance (evaluted by mean squared error). The penalty parameter $\lambda$ was optimized through 5-fold cross-validation (use of 10-fold cross-validation did not meaningfully change the results). For each model, only the most variable 100,000 CpGs according to median absolute deviation (~25% of all available sites shared across platforms) were included in order to decrease the computational burden and ensure that the selected CpGs would have meaningful interindividual variation.
 
-A series of approaches for combining information across cohorts were tested as alternatives to the CSL. The naive "combined" approach consisted of simply aggregating observations from all training sets into a single dataset and training an elastic net regression as described above while adjusting for study as a fixed effect.  The ComBat method trained across all studies as with the "combined" approach, but included an empirical Bayes-based preprocessing step to directly adjust the dataset for study differences while preserving variation along the "axis" of incident CVD events [@Johnson2007].
+The cross-study learner (CSL) was constructed as an ensemble of study-specific regression models. Scores from each single-study learner (SSL) were combined using the "stacking" approach [@Patil2018], implemented as follows. First, predictions from each SSL to both itself and the other training datasets were combined into a design matrix (with dimensions $N_{total}$ x # SSLs). This formed the input to an additional penalized Cox regression (ridge regression with $\lambda$ optimized through 5-fold CV and coefficients restricted to be non-negative) of all training studies at once. Coefficients from this regression, corresponding to input study-specific SSLs, were normalized to sum to one to produce the CSL weights. For use in new datasets, SSL scores were each standardized to mean zero and unit variance before calculating their weighted sum (using the "stacking" weights) as the final CSL score.
 
-MRS evaluation in FHS was performed using Cox proportional hazards models, with a series of models adjusting for covariates including demographics, anthropometrics, biochemical values, and cell subtype estimates. Robust standard errors were used to account for family structure as has been suggested for clustered data [@Rogers1993] and used for epigenetic risk models in FHS [@Lu2019]. The proportional hazards assumption was confirmed (p > 0.05) using the *cox.zph* R function. To compare risk scores generated using different models (combined and ComBat-preprocessed) to the CSL, Cox regressions adjusting for the "basic" covariate set were used to evaluate the CSL MRS alone, the CSL MRS plus the combined MRS, and the CSL MRS plus the ComBat-preprocessed MRS in the held-out FHS-UM dataset. Likelihood ratio tests were then used to compare each of the two-MRS models to that CSL-only model, with the resulting p-values indicating whether either of these alternative scores provided additional predictive benefit. MRS evaluation in the REGICOR case-control used logistic regression models, adjusting for the same sets of covariates where possible, though traditional biochemical risk factors were only available in discrete low vs. high categories.
+A series of approaches for combining information across cohorts were tested as alternatives to the CSL. The naive "combined" approach consisted of simply aggregating observations from all training sets into a single dataset and training an elastic net regression as described above while adjusting for study as a fixed effect.  The ComBat method trained across all studies as with the “combined” approach, but included an empirical Bayes-based preprocessing step to directly remove mean differences across studies that were not associated with the outcome of interest (incident CVD events) [@Johnson2007].
+
+MRS evaluation in FHS-UM was performed using Cox proportional hazards models, with a series of models adjusting for covariates including demographics, anthropometrics, biochemical values, and cell subtype estimates. Additional sensitivity models incorporated flexible spline bases for age and cell type fractions (*pspline* function) and an interaction between age and sex. Robust standard errors were used to account for family structure as has been suggested for clustered data [@Rogers1993] and used for epigenetic risk models in FHS [@Lu2019]. The proportional hazards assumption was assessed using the *cox.zph* R function, and no violation was detected (p > 0.05). To compare risk scores generated using different models (combined and ComBat-preprocessed) to the CSL, Cox regressions adjusting for the "basic" covariate set were used to evaluate each MRS alone, the CSL MRS plus the combined MRS, and the CSL MRS plus the ComBat-preprocessed MRS in the held-out FHS-UM dataset. Likelihood ratio tests were then used to compare each of the two-MRS models to that CSL-only model, with the resulting p-values indicating whether either of these alternative scores provided additional benefit. MRS evaluation in the REGICOR case-control used logistic regression models, adjusting for the same sets of covariates where possible, though traditional biochemical risk factors were only available in discrete low vs. high categories.
 
 The biology underlying the CSL model was evaluated through a series of enrichment tests using the component CpG loci and annotated genes. Gene ontology-based enrichment analysis of each cohort-specific model was performed using the gometh function from the *missMethyl* package for R [@Phipson2015]. This procedure uses gene annotations for CpGs from the HumanMethylation450 microarray annotation from Illumina (v1.0 B2). Enrichment analysis is then performed for each gene ontology category using Wallenius' noncentral hypergeometric distribution to account for inconsistent representation of CpG sites across genes. The overall merged set of CpGs included in the final CSL model was then tested for enrichment in transcription factor binding sites using HOMER tool [@Heinz2010]. CpG loci (with respect to genome build hg19) were provided as inputs, with 200 base-pair windows and repeat-masked sequences.
 
@@ -107,7 +125,7 @@ Imputed genotype data for WHI were retrieved from dbGaP (accession: phs000746.v2
 
 ## Risk score interaction analysis
 
-Interaction analysis was performed using similar Cox regression models to those above, adjusting for the "basic" set of covariates and using robust standard error estimates. To facilitate visual comparisons, main-effect regressions for the MRS were fitted within risk strata defined by the FRS or GRS separately in each dataset. To obtain overall interaction effect estimates, an interaction between MRS and either FRS or GRS was introduced into a combined regression including all datasets, while allowing stratified baseline hazards (strata() argument to the coxph function). We note that main effects in the interaction analysis are biased upwards since the regression datasets were used for training the MRS. Regressions assessing the GRS excluded non-white participants to match the ancestry used to develop the CVD score [@Khera2018].
+Interaction analysis was performed using similar Cox regression models to those above, adjusting for the "basic" set of covariates and using robust standard error estimates. To facilitate visual comparisons, main-effect regressions for the MRS were fitted within risk strata defined by the FRS or GRS separately in each dataset. To obtain overall interaction effect estimates, an interaction between MRS and either FRS or GRS was introduced into a combined regression including all datasets, while allowing stratified baseline hazards (strata() argument to the coxph function). We note that main effects in the interaction analysis are biased away from the null since the regression datasets were used for training the MRS. Regressions assessing the GRS excluded non-white participants to match the ancestry used to develop the CVD score [@Khera2018].
 
 For quasi-replication of these associations in the REGICOR dataset, stratified logistic regressions were used to discriminate MI cases from controls using the MRS, while adjusting for estimated cell count fractions as well as two SVA components (as in the main REGICOR models). <!--Age strata comprised three groups: less than 55 years old, 55-65 years old, and greater than 65 years old.--> In the absence of continuous values for blood pressure and lipids, an empirical risk function was generated by first performing a logistic regression on the following cardiovascular risk factors: age, sex, estimated cell count fractions, BMI, diabetes, smoking status, hyperlipidemia (binary), and hypertension (binary), along with two SVA components. Predicted risks based on this model were then used to stratify subjects into four risk groups by evenly splitting the range of predicted risks into four segments (thus resulting in strata based on raw risk, rather than percentiles).
 
@@ -140,20 +158,22 @@ pop_summary_tbl <- nmd_all %>%
                                   round(sum(race == "black") / n() * 100), "%)"),
             `% Hispanic`=paste0(sum(race == "hispanic"), " (",
                                   round(sum(race == "hispanic") / n() * 100), "%)"),
-            `Body mass index`=get_median_iqr(bmi),
-            `LDL cholesterol`=get_median_iqr(ldl),
-            `HDL cholesterol`=get_median_iqr(hdl),
-            `Triglycerides`=get_median_iqr(tg),
-            `Fasting glucose`=get_median_iqr(glu),
-            `Systolic blood pressure`=get_median_iqr(sbp),
+            `Body mass index (kg/m^2)`=get_median_iqr(bmi),
+            `LDL cholesterol (mg/dL)`=get_median_iqr(ldl),
+            `HDL cholesterol (mg/dL)`=get_median_iqr(hdl),
+            `Triglycerides (mg/dL)`=get_median_iqr(tg),
+            `Fasting glucose (mg/dL)`=get_median_iqr(glu),
+            `Systolic blood pressure (mm Hg)`=get_median_iqr(sbp),
             `Prior only`=sum(pastEvent & !event),
             `Incident only`=sum(!pastEvent & event),
-            `Prior and incident`=sum(pastEvent & event)) %>%
+            `Prior and incident`=sum(pastEvent & event),
+            Total=sum(pastEvent | event),
+            `Follow-up time (years)`=round(max(time) / 365)) %>%
   mutate(batch=factor(batch,
                       levels=names(study_names_pretty),
                       labels=study_names_pretty)) %>%
-  replace_na(list(`Fasting glucose`="Unavailable")) %>%
-  arrange(batch) %>%
+  replace_na(list(`Fasting glucose (mg/dL)`="Unavailable")) %>%
+  arrange(batch) %>% 
   t()
 rownames(pop_summary_tbl)[1] <- "Study/Subset"
 
@@ -164,12 +184,12 @@ kable(pop_summary_tbl, booktabs=T,
            general_title="",
            threeparttable=T) %>%
   pack_rows("Ancestry", 5, 7, bold=F, latex_gap_space="0em") %>%
-  pack_rows("# CVD events", 14, 16, bold=F, latex_gap_space="0em")
+  pack_rows("# CVD events", 14, 17, bold=F, latex_gap_space="0em")
 ```
 
-Fig. 1 outlines the computational workflow. Briefly, a cross-study learning (CSL) model was developed by training time-to-event elastic net regressions on three of the datasets, while holding out the FHS-UM subset for evaluation. Next, a model trained on all four datasets was subject to external replication in the REGICOR study. CSL model CpGs were characterized as to their potential biological function, and model performance was assessed across strata of alternative cardiovascular risk metrics.
+Fig. 1 outlines the computational workflow. Briefly, a cross-study learning (CSL) model was developed by training time-to-event elastic net regressions on three of the datasets, while holding out the FHS-UM subset for evaluation. The FHS-UM subset was chosen to hold out as it more closely represents the larger free-living Framingham population. While there is moderate heterogeneity between the included cohorts (for example, in original cohort study designs, details of CVD definitions, and length of follow-up), the intent of the present investigation was to explore the extraction of shared signal across cohorts with recognized heterogeneity. Next, a model re-trained on all four datasets was subject to external replication in the REGICOR study. CSL model CpGs were characterized as to their potential biological function, and model performance was assessed across strata of alternative cardiovascular risk metrics.
 
-The initial predictor was developed by training individual penalized Cox proportional hazards regression models (single-study learners, or SSLs) in each of the three training cohorts (WHI, FHS-JHU, and LBC). Predictions from these models were aggregated through a "stacking" method, in which the outcomes and model predictions from each of the individual datasets are combined, and a regression is used to assign weights to each of the model predictions (see Methods). This procedure led to FHS-JHU dropping out of the ensemble model, with weights for this initial predictor as follows: 0.57 (WHI), 0.0 (FHS-JHU), and 0.43 (LBC). This result means that FHS-JHU did not generalize (i.e. to WHI and LBC) as well as the other two components models. 
+The initial predictor was developed by training individual penalized Cox proportional hazards regression models (single-study learners, or SSLs) in each of the three training cohorts (WHI, FHS-JHU, and LBC). Scores from these models were aggregated through a "stacking" method, in which the outcomes and model predictions from each of the individual datasets are combined, and a regression is used to assign weights to each of the model scores (see Methods). This procedure led to FHS-JHU dropping out of the ensemble model, with weights for this initial predictor as follows: 0.57 (WHI), 0.0 (FHS-JHU), and 0.43 (LBC). This result means that the FHS-JHU score did not transfer to the rest of the datasets (i.e. to WHI and LBC) as well as the scores from the other two components models. 
 
 ```{r workflow-diagram, fig.cap="Computational workflow for MRS development and evaluation. The initial MRS was trained in three cohorts with FHS-UM held out to evaluate performance. The final MRS was then trained using all four datasets and examined for biological significance, before testing for prevalent MI discrimination in an independent cohort and assessment of interactions with genetic and traditional risk scores."}
 include_graphics("workflow.pdf")
@@ -196,17 +216,32 @@ uofm_holdout_res_tbl %>%
          HR_per_SD=round(HR_per_SD, 2),
          CI_lower=exp(log(HR_per_SD) + 1.96 * (log(SE_lower) - log(HR_per_SD))),
          CI_upper=exp(log(HR_per_SD) + 1.96 * (log(SE_higher) - log(HR_per_SD))),
+         HR_per_SD_fmt=paste0(HR_per_SD, " [", round(CI_lower, 2), "-",
+                              round(CI_upper, 2), "]"),
          p=format(p, scientific=T, digits=2)) %>%
-  select(Model, HR_per_SD, p) %>%
+  select(Model, HR_per_SD_fmt, p) %>%
   setNames(c("Model", "HR per s.d. MRS\\textsuperscript{a}", "P-value")) %>%
   kable(booktabs=T, caption="MRS performance in held-out FHS subset", escape=F) %>%
   footnote(alphabet="Estimated hazard ratio per standard deviation of the methylation-based risk score",
            number=c("No covariates",
                     "Adjusted for age, sex, and estimated cell type fractions",
                     "Additionally adjusted for BMI, LDL, HDL, SBP, diabetes status, and current smoking",
-                    "Adjusted for Framingham Risk Score only"),
+                    "Adjusted for Framingham Risk Score only (uses all risk factors other than BMI and cell type fractions)"),
            footnote_order=c("alphabet", "number"),
            threeparttable=T)
+
+nmd_with_quintiles <- nmd_all %>%
+  filter(batch == "fhs_UofMinn") %>%
+  mutate(mrs_quintile=cut(mrs_uofm_holdout, 
+                          breaks=quantile(mrs_uofm_holdout, seq(0, 1, by=0.2)),
+                          labels=1:5)) %>%
+  filter(mrs_quintile %in% c(1, 5)) %>%
+  mutate(mrs_quintile=as.character(mrs_quintile))
+uofm_holdout_res_tbl_by_quintiles <- coxph(
+  Surv(time, event) ~ mrs_quintile + age + sex + CD4T + CD8T + NK + Bcell + Mono + bmi + diabetes + smk_now + ldl + hdl + sbp,
+  data=nmd_with_quintiles,
+  robust=T) %>%
+  tidy()
 
 # compare_df %>%
 #   mutate(CI_lower=exp(log(HR_per_SD) + 1.96 * (log(SE_lower) - log(HR_per_SD))),
@@ -242,16 +277,92 @@ ph_test <- cox.zph(
   coxph(Surv(time, event) ~ mrs_uofm_holdout + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
         data=nmd_fhsUM, robust=T))
 
-# Test in FHS-UM while excluding all individuals with past events
-no_PE_holdout <- coxph(
-  Surv(time, event) ~ mrs_uofm_holdout + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
-  data=filter(nmd_fhsUM, pastEvent==F),
-  robust=T) %>% 
-  tidy()
+# # Test in FHS-UM while excluding all individuals with past events
+# no_PE_holdout <- coxph(
+#   Surv(time, event) ~ mrs_uofm_holdout, 
+#   data=filter(nmd_fhsUM, pastEvent==F),
+#   robust=T) %>% 
+#   tidy()
 
 # Test in FHS-UM as a binary outcome rather than survival
-glm_holdout <- glm(event ~ mrs_uofm_holdout + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
+glm_holdout_mrs <- glm(event ~ mrs_uofm_holdout, 
                    family="binomial", data=nmd_fhsUM)
+binary_mrs_preds <- predict(glm_holdout_mrs, newdata=nmd_fhsUM)
+mrs_roc <- pROC::roc(nmd_fhsUM$event, binary_mrs_preds, ci=T)
+glm_holdout_frs <- glm(event ~ frs, 
+                       family="binomial", data=nmd_fhsUM)
+binary_frs_preds <- predict(glm_holdout_frs, newdata=nmd_fhsUM)
+frs_roc <- pROC::roc(nmd_fhsUM$event, binary_frs_preds, ci=T)
+glm_holdout_both <- glm(event ~ frs + mrs_uofm_holdout, 
+                       family="binomial", data=nmd_fhsUM)
+binary_both_preds <- predict(glm_holdout_both, newdata=nmd_fhsUM)
+both_roc <- pROC::roc(nmd_fhsUM$event, binary_both_preds, ci=T)
+
+# Test for residual confounding -- age splines, sex interactions, and cell type fractions
+age_spline_test <- coxph(
+  Surv(time, event) ~ mrs_uofm_holdout + pspline(age) + sex + CD4T + CD8T + NK + Bcell + Mono,
+  data=nmd_fhsUM, robust=T
+)
+age_sex_interaction_test <- coxph(
+  Surv(time, event) ~ mrs_uofm_holdout + age*sex + CD4T + CD8T + NK + Bcell + Mono,
+  data=nmd_fhsUM, robust=T
+)
+cell_type_splines_test <- coxph(
+  Surv(time, event) ~ mrs_uofm_holdout + age + sex + pspline(CD4T) + pspline(CD8T) + pspline(NK) + pspline(Bcell) + pspline(Mono),
+  data=nmd_fhsUM, robust=T
+)
+all_resid_confounding_test <- coxph(
+  Surv(time, event) ~ mrs_uofm_holdout + pspline(age) + age * sex + pspline(CD4T) + pspline(CD8T) + pspline(NK) + pspline(Bcell) + pspline(Mono),
+  data=nmd_fhsUM, robust=T
+)
+
+# Sex-stratified evaluations
+males_holdout <- coxph(
+  Surv(time, event) ~ mrs_uofm_holdout,
+  data=filter(nmd_fhsUM, sex == "M"),
+  robust=T) %>%
+  tidy()
+females_holdout <- coxph(
+  Surv(time, event) ~ mrs_uofm_holdout,
+  data=filter(nmd_fhsUM, sex == "F"),
+  robust=T) %>%
+  tidy()
+
+# Test models developed excluding stroke
+nmd_otheroutcomes <- replace_na(nmd_fhsUM, list(incStroke=F, incCHD=F))
+nostroke_mrs_test <- coxph(
+  Surv(time, event) ~ scale(mrs_uofm_holdout_nostroke) + age + sex + CD4T + CD8T + NK + Bcell + Mono,
+  data=filter(nmd_otheroutcomes),
+  robust=T) %>%
+  tidy()
+nostroke_mrs_test_stroke <- coxph(
+  Surv(time, event) ~ scale(mrs_uofm_holdout_nostroke) + age + sex + CD4T + CD8T + NK + Bcell + Mono,
+  data=filter(nmd_otheroutcomes, incCHD == F),
+  robust=T) %>%
+  tidy()
+nostroke_mrs_test_chd <- coxph(
+  Surv(time, event) ~ scale(mrs_uofm_holdout_nostroke) + age + sex + CD4T + CD8T + NK + Bcell + Mono,
+  data=filter(nmd_otheroutcomes, incStroke == F),
+  robust=T) %>%
+  tidy()
+
+# Test only stroke vs. CHD
+mrs_test_stroke <- coxph(
+  Surv(time, event) ~ scale(mrs_uofm_holdout) + age + sex + CD4T + CD8T + NK + Bcell + Mono,
+  data=filter(nmd_otheroutcomes, incCHD == F),
+  robust=T) %>%
+  tidy()
+mrs_test_chd <- coxph(
+  Surv(time, event) ~ scale(mrs_uofm_holdout) + age + sex + CD4T + CD8T + NK + Bcell + Mono,
+  data=filter(nmd_otheroutcomes, incStroke == F),
+  robust=T) %>%
+  tidy()
+
+generate_CI <- function(res_row) {
+  nonexp_coef <- log(res_row[2])
+  nonexp_SE <- log(res_row[2]) - log(res_row[4])
+  c(exp(nonexp_coef - 1.96 * nonexp_SE), exp(nonexp_coef + 1.96 * nonexp_SE))
+}
 
 # Likelihood ratio tests of combined and ComBat models over CSL only
 csl_only_model <- coxph(Surv(time, event) ~ mrs_uofm_holdout + age + sex + CD4T + CD8T + NK + Bcell + Mono,
@@ -286,9 +397,11 @@ ggsurvplot(uofm_holdout_surv_fit,
            legend.labs=paste("MRS Tertile", 1:3))
 ```
 
-Stacking of the three initial predictors resulted in model weights of `r round(uofm_holdout_csl$csl_weights["whi"], 2)`, `r round(uofm_holdout_csl$csl_weights["fhs_JHU"], 2)`, and `r round(uofm_holdout_csl$csl_weights["lbc36"], 2)` for WHI, FHS-JHU, and LBC, respectively (i.e. the FHS-JHU sub-model did not ultimately contribute to the initial ensemble model). The resulting ensemble predictor was evaluated using robust Cox proportional hazards models in FHS-UM, showing strong associations with incident CVD in an unadjusted model (HR=1.58, 95% CI: 1.37-1.83), which was attenuated partially through adjustment for standard covariates (age, sex, and estimated cell type fractions; HR=1.28, 95% CI: 1.10-1.50) as well as CVD risk factors (HR=1.29, 95% CI: 1.09-1.51). Results for the unadjusted model and three sensitivity models are shown in Table 2. These results were robust to sensitivity analyses excluding all individuals who experienced prior CVD events (Supp. Table S1), and produced similar results when incident event status was analyzed as a binary outcome using logistic regression (p = 3.3e-4).
+Stacking of the three initial predictors resulted in model weights of `r round(uofm_holdout_csl$csl_weights["whi"], 2)`, `r round(uofm_holdout_csl$csl_weights["fhs_JHU"], 2)`, and `r round(uofm_holdout_csl$csl_weights["lbc36"], 2)` for WHI, FHS-JHU, and LBC, respectively (i.e. the FHS-JHU sub-model did not contribute to the initial stacked ensemble model). The resulting ensemble predictor was evaluated using robust Cox proportional hazards models in FHS-UM, showing strong associations with incident CVD in an unadjusted model (HR=1.58, 95% CI: 1.37-1.83), which was attenuated partially through adjustment for standard covariates (age, sex, and estimated cell type fractions; HR=1.28, 95% CI: 1.10-1.50) as well as CVD risk factors (HR=1.29, 95% CI: 1.09-1.51). Results for the unadjusted model and three risk factor-adjusted models are shown in Table 2, and associated Kaplan-Meier curves across epigenetic risk tertiles are shown in Fig. 2.
 
-Results from comparison of CSL performance to models trained on combined datasets (either naive combination or including preprocessing using ComBat) are shown in Supp. Fig. S1. The ComBat-preprocessed model had modestly higher hazard ratios in FHS-UM, while relative differences with the combined model depended on the covariates included. However, likelihood ratio tests using the Basic model covariates (age, sex, and cell type fraction-adjusted) did not reveal a strong added predictive benefit of either the combined (p = 0.58) or ComBat (p = 0.08) risk scores over that using only the CSL.
+Additional sensitivity analyses were performed to assess the robustness of these results to variations in the model-building or evaluation approach. Hazard ratios in the held-out FHS-UM were no higher using penalized logistic regression in training (unadjusted HR=1.52, 95% CI: 1.32-1.76), excluding individuals with past events in training (unadjusted HR=1.55, 95% CI: 1.33-1.81), or adjusting for race in WHI (unadjusted HR=1.20, 95% CI: 1.03-1.39). Neither were these results affected by training using the full set of 390,597 CpGs. Similarly, variations in the evaluation regressions did not produce meaningfully different results, either when excluding all individuals who experienced prior CVD events (Supp. Table S1), analyzing incident CVD as a binary outcome using logistic regression (unadjusted odds ratio per standard deviation=2.15, 95% CI: 1.91-2.42), or stratifying by sex. Adjustment for age and cell type fractions as flexible spline functions as well as an age-sex interaction to assess possible residual confounding did not decrease estimated HRs from the Basic model (saturated model HR=1.31, 95% CI: 1.12-1.52). Use of the MRS for binary incident CVD prediction resulted in a c-statistic of 0.642 (95% CI: 0.599-0.685), compared to 0.691 (95% CI: 0.653-0.729) for the Framingham Risk Score alone and 0.695 (95% CI: 0.655-0.734) using the two scores together.
+
+Results from comparison of CSL performance to models trained on combined datasets (either naive combination or including preprocessing using ComBat) are shown in Supp. Fig. S1. The ComBat-preprocessed model had modestly higher hazard ratios in FHS-UM, while relative differences with the combined model depended on the covariates included. However, likelihood ratio tests using the Basic model covariates (age, sex, and cell type fraction-adjusted) did not reveal a strong added benefit of either the combined (p = 0.58) or ComBat (p = 0.08) risk scores over that using only the CSL.
 
 ## Final CSL model characterization
 
@@ -306,6 +419,17 @@ silent <- VennDiagram::venn.diagram(
 
 venn_img <- grid::rasterGrob(png::readPNG("model_cpgs_venn.png"), 
                              interpolate=T)
+
+
+# ssl_nonzero_names <- lapply(ssl_nonzero_coefs, names)
+# ssl_nonzero_annos <- lapply(ssl_nonzero_names, function(nms) {
+#   anno_450k %>%
+#     filter(Name %in% nms) %>%
+#     select(Name, chr, pos)
+# })
+# ssl_nonzero_ranges <- lapply(ssl_nonzero_annos, function(anno) {
+#   GRanges(anno$chr, IRanges(anno$pos - 1000, anno$pos + 1000))
+# })
 ```
 
 ```{r gsa, cache=1, message=F, warning=F, eval=F}
@@ -487,11 +611,11 @@ plot_grid(top_row, annot_plt, nrow=2, rel_heights=c(3, 2), labels=c("", "d"))
 homer_res <- read_tsv("../../output/homer_results/csl/knownResults.txt")
 ```
 
-The stacking regression in the final CSL model gave the most weight to WHI (0.48) and LBC (0.38), while retaining nonzero weights for FHS-JHU (0.06) and FHS-UM (0.08). This result indicates that the WHI and LBC-trained models were better able to generalize to the other cohorts than vice versa. There was very little overlap of specific CpG sites across cohort-specific models, with a maximum of 13 CpGs shared between two models (WHI and FHS-UM) and no CpGs shared between three or more models (Fig. 3a). Despite this lack of site-specific overlap, there was broad agreement for three of the four component SSL models at the level of enriched biological processes, with all except FHS-JHU enriched most strongly for proximity to genes involved in homophilic cell adhesion (Fig. 3b). MRS component CpGs tended to be found in similar genomic loci to the overall set of variable CpGs, and were enriched in gene bodies and depleted in CpG islands compared to the full microarray CpG set. However, MRS CpGs did show a modest enrichment in and around CpG islands compared to the set of variable CpGs (Fig. 3d). To seek more clarity as to potential biological mechanisms represented by the MRS, the HOMER tool was used to calculate enrichment of transcription factor (TF) binding motifs in the MRS component CpG sites. Using the union of all individual SSL CpG sites as input, no strong enrichments were found (all q-values >0.5).
+The stacking regression in the final CSL model defining the methylation-based risk score (MRS) gave the most weight to WHI (0.48) and LBC (0.38), while retaining nonzero weights for FHS-JHU (0.06) and FHS-UM (0.08). This result indicates that the WHI and LBC-trained models were better able to transfer across the combined-cohort set of outcomes compared to the other models. There was little overlap of specific CpG sites across cohort-specific models, with a maximum of 13 CpGs shared between two models (WHI and FHS-UM) and no CpGs shared between three or more models (Fig. 3a). This could result from heterogeneity in the complex relationships between DNA methylation and CVD across populations. However, it may also reflect the tendency of the elastic net regression to select only a single feature from a group of correlated features, where the specific CpGs selected in different datasets varied due to the presence of biological and technical noise. However, even if the SSLs were capturing different biological mechanisms, the CSL model is designed to capture such heterogeneous signal from across cohorts. Despite the lack of site-specific overlap, there was broad agreement for three of the four component SSL models at the level of enriched biological processes, with all except FHS-JHU enriched most strongly for proximity to genes involved in homophilic cell adhesion (Fig. 3b). MRS component CpGs tended to be found in similar genomic loci to the overall set of variable CpGs, and were enriched in gene bodies and depleted in CpG islands compared to the full microarray CpG set. However, MRS CpGs did show a modest enrichment in and around CpG islands compared to the set of variable CpGs (Fig. 3d). To seek more clarity as to potential biological mechanisms represented by the MRS, the HOMER tool was used to calculate enrichment of transcription factor (TF) binding motifs in the MRS component CpG sites. Using the union of all individual SSL CpG sites as input, no strong enrichments were found (all q-values >0.5).
 
-To better understand the stability of the risk score over time, intraclass correlation coefficients (ICCs) were calculated for two sets of grouped samples: 26 technical replicates from FHS and approximately 1000 longitudinal samples (across 3 visits, or about 6 years total) from LBC (Supp. Table S2). The technical replicates showed an ICC of 0.85, while the longitudinal samples showed an ICC of 0.68. As would be expected, the ICC for samples closer in time (Waves 1 & 2; ICC = 0.69) were higher than that for samples more distant in time (Waves 1 & 3; ICC = 0.61). Based on the observation of imperfect stability of the MRS over time as well as the partial attenuation in predictive power after adjustment for age, its component CpGs (the `r length(all_nonzero_cpgs)`-element union of all CpGs in any of the four individual SSL models) were examined for overlap with established epigenetic age metrics. While no enrichment was seen for the original cross-tissue DNAm age from Horvath [@Horvath2013], strong enrichment was seen for the morbidity-directed PhenoAge [@Levine2018] (9 of 513 CpGs; p=2.3e-5) and especially the blood-specific aging marker from Hannum et al. [@Hannum2013] (13 of 71 CpGs; p=5.9e-21). We note that these overlaps do not constitute a major fraction of either CpG set, but are nonetheless highly statistically significant. The PhenoAge metric is based on some known cardiovascular risk factors (e.g. C-reactive protein) and is known to associate with CVD, but is not trained in any of the cohorts included here.
+To better understand the stability of the risk score over time, intraclass correlation coefficients (ICCs) were calculated for two sets of grouped samples: 26 technical replicates from FHS and approximately 1000 longitudinal samples (across 3 visits, or about 6 years total) from LBC (Supp. Table S2). The technical replicates showed an ICC of 0.85, while the longitudinal samples showed an ICC of 0.68. As would be expected, the ICC for samples closer in time (Waves 1 & 2; ICC = 0.69) were higher than that for samples more distant in time (Waves 1 & 3; ICC = 0.61). Based on the observation of imperfect stability of the MRS over time as well as the partial attenuation in held-out hazard ratios after adjustment for age, its component CpGs (the `r length(all_nonzero_cpgs)`-element union of all CpGs in any of the four individual SSL models) were examined for overlap with established epigenetic age metrics. While no enrichment was seen for the original cross-tissue DNAm age from Horvath [@Horvath2013], strong enrichment was seen for the morbidity-directed PhenoAge [@Levine2018] (9 of 513 CpGs; p=2.3e-5) and especially the blood-specific aging marker from Hannum et al. [@Hannum2013] (13 of 71 CpGs; p=5.9e-21). We note that these overlaps do not constitute a major fraction of either CpG set, but are nonetheless highly statistically significant. The PhenoAge metric is based on some known cardiovascular risk factors (e.g. C-reactive protein) and is known to associate with CVD, but is not trained in any of the cohorts included here.
 
-## Discrimination in myocardial infarction case-control
+## Discrimination in myocardial infarction case-control study
 
 ```{r regicor, warning=F}
 # combat_model_results <- list(
@@ -545,71 +669,19 @@ kable(regicor_res_tbl, booktabs=T,
            threeparttable=T)
 ```
 
-As one form of replication, the MRS was investigated for its discriminative performance in a nested case-control for prior myocardial infarction in the REGICOR cohort (Table 3; cohort description in Supp. Table S3). Though this dataset contained prevalent (rather than incident) events, its matching of sex and age allowed an evaluation free of potential confounding by these factors. The MRS was able to discriminate cases and controls in both unadjusted (odds ratio = 1.79, p = 6.33e-6) and, to a lesser degree, risk factor-adjusted models (odds ratio = 1.61, p = 0.019). Given the relatively large confidence intervals, there was no meaningful difference in odds ratios across modeling strategies (Combined, ComBat, and CSL) for any of the adjustment models.
+As one form of replication, the MRS was investigated for its discriminative performance in a nested case-control for prior myocardial infarction in the REGICOR cohort (Table 3; cohort description in Supp. Table S3), which was matched for sex and age and thus free of potential confounding by these variables. We note that this dataset contained prevalent (rather than incident) events, and thus provides replication in a similar but not identical biological context. These methylation data were collected on the next generation of Illumina methylation microarray (MethylationEPIC), which does not perfectly overlap with the HumanMethylation450 platform, but contained approximately 93% of the CpGs input to the MRS model training procedure. The MRS was able to discriminate cases and controls in both unadjusted (odds ratio = 1.79, p = 6.33e-6) and, to a lesser degree, risk factor-adjusted models (odds ratio = 1.61, p = 0.019). Odds ratios were qualitatively similar across modeling strategies (Combined, ComBat, and CSL) for all of the adjustment models (Supp. Fig. S1b).
 
 ## Interactions with alternate risk metrics
 
-```{r aggregate-interactions, warning=F, fig.cap="Interactions of MRS with other biomarkers of CVD risk. a) Hazard ratios for the MRS within subsets of 10-year generalized CVD risk according to the Framingham Risk Score. b) Hazard ratios for the MRS within quartiles of a genetic cardiovascular risk score (in white WHI participants only). Hazard ratios are estimated using the final MRS, which was trained using each of these datasets. Cox regressions included stratum-specific baseline hazards and were adjusted for age, sex, and estimated cell subtype fractions. Error bars represent standard errors for the hazard ratio estimates."}
-# my_test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
-#                      covars=c(), robust=F) {
-#   meta$mrs <- scale(mrs)
-#   meta$cvd_surv <- Surv(time=meta$time, event=meta$event)  # Outcome
-#   form <- as.formula(paste(c("cvd_surv ~ mrs", covars), collapse=" + "))
-#   mrs_test <- coxph(form, data=meta, subset=subset, robust=robust)  # Test the MRS using a Cox model
-#   mrs_res <- summary(mrs_test)$coef["mrs", c("exp(coef)","z")]
-#   mrs_res_tbl <- tibble(HR_per_SD=mrs_res["exp(coef)"], 
-#                         p=2 * pnorm(-abs(mrs_res["z"])))
-#   if (return_fit) {
-#     list(fit=mrs_test, tbl=mrs_res_tbl) 
-#   } else {
-#     mrs_res_tbl
-#   }
-# }
-
-# my_strat_test_by_study <- function(df, test_mrs, quantile_cat) {
-#   df$mrs <- test_mrs
-#   unique_levels <- levels(df[[quantile_cat]])
-#   expand.grid(study=unique(df$batch),
-#               frs_group=unique_levels,
-#               stringsAsFactors=F) %>%
-#     mutate(cox_fit=map2(study, frs_group, function(s, g) {
-#       fit <- my_test_mrs(df, df$mrs, 
-#                          subset=(df$batch == s) & (df[[quantile_cat]] == g), 
-#                          covars={if (s == "whi") setdiff(basic_covars, "sex") else basic_covars},
-#                          return_fit=T)$fit
-#       broom::tidy(fit) %>%
-#         filter(term == "mrs")
-#     })
-#     )
-#   # full_res <- map_dfr(setNames(unique_levels, unique_levels), function(q) {
-#   #   subset <- df[[quantile_cat]] == q
-#   #   my_test_mrs_with_SE(df, df$mrs, subset, basic_covars)
-#   # }, .id="Group")
-#   # full_res
-# }
-
-# a <- my_strat_test_by_study(nmd_all, nmd_all$mrs_final, "frs_group") %>%
-#   mutate(estimate=map_dbl(cox_fit, "estimate"),
-#          statistic=map_dbl(cox_fit, "statistic"),
-#          SE=map_dbl(cox_fit, "std.error")) %>%
-#   select(study, frs_group, estimate, statistic, SE) %>%
-#   nest(-frs_group) %>%
-#   mutate(meta_res=map(data, function(d) {
-#     metagen(estimate, SE, data=d)
-#   }),
-#   TE=map_dbl(meta_res, "TE.random"),
-#   seTE=map_dbl(meta_res, "seTE.random"))
-# 
-# 
-# b <- map(unique(levels(nmd_all$frs_group)), function(g) {
-#   coxme(Surv(time,event) ~ mrs_final + (1|batch) + age + sex + CD4T + CD8T + Bcell + NK + Mono,
-#         data=filter(nmd_all, frs_group == g))
-# })
-# 
-# d <- map_dfr(unique(levels(nmd_all$frs_group)), function(g) {
-#   coxph(Surv(time,event) ~ mrs_final + cluster(batch) + strata(batch) + age + sex + CD4T + CD8T + Bcell + NK + Mono,
-#         data=filter(nmd_all, frs_group == g)) %>% tidy() %>% filter(term == "mrs_final")
-# })
+```{r aggregate-interactions, warning=F, fig.cap="Interactions of MRS with other biomarkers of CVD risk. a) Hazard ratios for the MRS within subsets of 10-year generalized CVD risk according to the Framingham Risk Score. b) Hazard ratios for the MRS within quartiles of a genetic cardiovascular risk score (in white WHI participants only). Hazard ratios are estimated using the final MRS, which was trained using each of these datasets. Cox regressions included stratum-specific baseline hazards and were adjusted for age, sex, and estimated cell subtype fractions. Error bars represent standard errors for the hazard ratio estimates. Annotated p-values describe the test of interaction between the MRS and the alternative risk metric."}
+mrs_frs_interaction_model <- coxph(
+  Surv(time, event) ~ scale(mrs_final) * frs + strata(batch) + age + sex + CD4T + CD8T + NK + Bcell + Mono, 
+  robust=T, data=nmd_all) %>%
+  tidy()
+mrs_frs_interaction_effect_per10pct <- round(
+  (1 - exp(mrs_frs_interaction_model$estimate[10] / 10)) * 100)
+mrs_frs_interaction_pval <- signif(
+  mrs_frs_interaction_model$p.value[10], 3)
 
 all_mrs_sd <- sd(nmd_all$mrs_final)
 # Note: study-specific estimates (in int_res_list) are implicitly normalized
@@ -633,6 +705,7 @@ agg_frs_tbl <- map_dfr(levels(nmd_all$frs_group), function(g) {
 agg_frs_plt <- ggplot(agg_frs_tbl, aes(x=frs_group, y=HR_per_SD)) +
   geom_point() +
   geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) + 
+  annotate("text", label="MRS-FRS interaction:\np = 8.27e-5", x=3, y=2.5) +
   labs(x="FRS 10-year risk") +
   theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
 
@@ -661,6 +734,7 @@ agg_grs_tbl <- map_dfr(levels(nmd_all$grs_group_white), function(g) {
 agg_grs_plt <- ggplot(agg_grs_tbl, aes(x=grs_group, y=HR_per_SD)) +
   geom_point() +
   geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) + 
+  annotate("text", label="MRS-GRS interaction:\np = 0.719", x=3, y=2.5) +
   labs(x="Genetic risk score quartile") +
   theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
 
@@ -681,7 +755,7 @@ plot_grid(
 
 g <- coxph(Surv(time,event) ~ mrs_final + strata(batch), data=nmd_all)
 mrs_frs_scatterplt <- nmd_all %>%
-  filter(mrs_final>quantile(mrs_final, 0.75)) %>%
+  filter(mrs_final > quantile(mrs_final, 0.75)) %>%
   ggplot(aes(x=frs, y=mrs_final)) +
   geom_point(aes(alpha=event)) +
   scale_alpha_manual(values=c(0.2, 0.6)) +
@@ -722,6 +796,73 @@ mrs_grs_interaction_pval <- signif(
 #        }) %>%
 #   bind_rows()
 # meta::metagen(a$estimate, a$std.error)
+```
+
+```{r individual-interactions}
+basic_covars <- c("age", "sex", "CD4T", "CD8T", "Bcell", 
+                  "NK", "Mono")
+
+test_mrs <- function(meta, mrs, subset=NULL, return_fit=F,
+                     covars=c(), robust=F) {
+  meta$mrs <- scale(mrs)
+  meta$cvd_surv <- Surv(time=meta$time, event=meta$event)  # Outcome
+  meta <- mutate_at(meta, c("chol", "ldl", "hdl", "tg", "glu", "hscrp", "sbp"), log10)
+  covar_string <- "cvd_surv ~ mrs"
+  if (length(covars) > 0) {
+    covar_string <- paste(covar_string, "+", paste(covars, collapse=" + "))
+  } 
+  form <- as.formula(paste(c("cvd_surv ~ mrs", covars), collapse=" + "))
+  mrs_test <- coxph(form, data=meta, subset=subset, robust=robust)  # Test the MRS using a Cox model
+  mrs_res <- summary(mrs_test)$coef["mrs", c("exp(coef)","z")]
+  mrs_res_tbl <- tibble(HR_per_SD=mrs_res["exp(coef)"], 
+                        p=2 * pnorm(-abs(mrs_res["z"])))
+  if (return_fit) {
+    list(fit=mrs_test, tbl=mrs_res_tbl) 
+  } else {
+    mrs_res_tbl
+  }
+}
+
+test_mrs_with_SE <- function(nmd, mrs, subset, covars, robust=F) {
+  test_res_list <- test_mrs(nmd, mrs, subset=subset, return_fit=T,
+                            covars=covars, robust=robust)
+  res_tbl <- test_res_list$tbl
+  beta <- log(res_tbl$HR_per_SD)
+  se <- sqrt(diag(test_res_list$fit$var)[1])
+  res_tbl$SE_lower <- exp(beta - se)
+  res_tbl$SE_higher <- exp(beta + se)
+  res_tbl$n <- test_res_list$fit$n
+  res_tbl
+}
+
+strat_test_by_study <- function(df, test_mrs, quantile_cat) {
+  if (is.factor(df[[quantile_cat]])) {
+    unique_levels <- na.omit(levels(df[[quantile_cat]]))
+  } else {
+    unique_levels <- na.omit(unique(df[[quantile_cat]]))
+  }
+  df$mrs <- test_mrs
+  full_res <- map_dfr(unique_levels, function(q) {
+    res_per_study <- df %>%
+      nest(-batch) %>%
+      mutate(res=map(data, function(d) {
+        na_df <- data.frame(HR_per_SD=NA, p=NA, SE_lower=NA, 
+                            SE_higher=NA, n=NA)
+        subset <- d[[quantile_cat]] == q
+        # if (sum(d$event[subset], na.rm=T) < 25) return(na_df)
+        tryCatch(test_mrs_with_SE(d, d$mrs, subset, basic_covars),
+                 error=function(e) test_mrs_with_SE(
+                   d, d$mrs, subset, basic_covars[basic_covars != "sex"]))
+      }))
+    cbind(study=res_per_study$batch,
+          bind_rows(res_per_study$res))
+  }, .id="Group")
+  full_res$Group <- unique_levels[as.numeric(full_res$Group)]
+  full_res
+}
+
+int_res_frs <- strat_test_by_study(nmd_all, nmd_all$mrs_final, "frs_group") %>%
+  mutate(Group=factor(Group, levels=unique(Group)))
 ```
 
 ```{r regicor-interactions}
@@ -903,11 +1044,11 @@ grs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU",
   select(Study, OR_per_SD, p=p.value)
 ```
 
-To understand how the present risk score interacts with other established CVD risk metrics, the performance of the MRS was re-evaluated after stratifying individuals by risk scores reflecting either demographic and biochemical features (Framingham Risk Score), or genetic variants (based on Khera et al. 2018). First, the marginal effects of these risk scores were confirmed in each population. The Framingham Risk Score (FRS) was strongly predictive in WHI and FHS, while surprisingly showing no association with CVD incidence in LBC (Supp. Table S4). The genetic score was evaluated in WHI, demonstrating a moderate association with CVD (odds ratio per standard deviation = 1.28, p = 1.1e-6).
+To understand how the present risk score interacts with other established CVD risk metrics, the performance of the MRS was re-evaluated after stratifying individuals by risk scores reflecting either demographic and biochemical features (Framingham Risk Score), or genetic variants (based on Khera et al. 2018). First, the marginal effects of these risk scores were confirmed in each population. The Framingham Risk Score (FRS) was strongly predictive in WHI and FHS, while surprisingly showing no association with CVD incidence in LBC (Supp. Table S4). As the dataset with the largest number of available events, the genetic score was evaluated in WHI, demonstrating a moderate association with CVD (odds ratio per standard deviation = 1.28, p = 1.1e-6).
 
-In Cox models using baseline hazards stratified by study and performed using the final four-study MRS, it appeared that the MRS was more effective in those in lower "traditional" risk strata (according to the FRS; Fig. 4). As a sensitivity analysis, the cohorts were fully stratified into separate models, in which this pattern was visually clear in WHI and FHS-JHU (Supp. Fig. S2). The pattern did not appear in LBC, although we note that the Framingham Risk Score also did not show a "main effect" for predicting incident CVD in this cohort. A similar pattern appeared with respect to genetic risk in WHI (European ancestry participants only based on the formulation of the relevant risk score), in which maximum MRS performance was achieved in the lowest alternative risk stratum. Supplementing these visual comparisons, combined Cox regressions across all cohorts (allowing for different baseline hazards across studies) showed a strong MRS-FRS interaction effect (`r mrs_frs_interaction_effect_per10pct`% reduction in HR for the MRS per 10% increase in FRS; p = `r as.character(mrs_frs_interaction_pval)`), while that for the MRS-GRS interaction did not reach nominal statistical significance (`r mrs_grs_interaction_effect_per_sd`% reduction in HR for the MRS per standard deviation increase in GRS; p = `r as.character(mrs_grs_interaction_pval)`).
+In pooled Cox models using study-specific baseline hazards and performed using the final four-study MRS, it appeared that the MRS was more effective in those in lower "traditional" risk strata (based on models stratified by FRS categories; Fig. 4a). As a sensitivity analysis, the cohorts were fully stratified into separate models, in which this pattern was visually clear in WHI and FHS-JHU (Supp. Fig. S2). The pattern did not appear in LBC, although we note that the Framingham Risk Score also did not show a "main effect" for incident CVD in this cohort. A similar pattern appeared with respect to genetic risk in WHI (European ancestry participants only based on the formulation of the relevant risk score), in which maximum MRS performance was achieved in the lowest alternative risk stratum. Supplementing these visual comparisons, combined Cox regressions across all cohorts (allowing for different baseline hazards across studies) showed a strong MRS-FRS interaction effect (`r mrs_frs_interaction_effect_per10pct`% reduction in HR for the MRS per 10% increase in FRS; p = `r as.character(mrs_frs_interaction_pval)`), while that for the MRS-GRS interaction did not reach nominal statistical significance (`r mrs_grs_interaction_effect_per_sd`% reduction in HR for the MRS per standard deviation increase in GRS; p = `r as.character(mrs_grs_interaction_pval)`).
 
-To explore the clinical potential of these interactions further, we returned to the initial MRS (trained in 3 datasets with FHS-UM held out). The FHS-UM dataset was filtered to include only participants with lower CVD risk based on the FRS (<10% estimated 10-year risk). Within this lower-risk subset, participants in the upper MRS quintile had more than double the risk of the remainder of the participants: 7% (12/176) versus 3% (19/701). <!--While a similar risk increase was observed when taking the intersection of these low-risk groups (low FRS and low GRS), the sample size was not enough to draw reasonable statistical conclusions (only 6 events in total).-->
+To explore the clinical potential of these interactions further, we returned to the initial MRS (trained in 3 datasets with FHS-UM held out). The FHS-UM dataset was filtered to include only participants with lower CVD risk based on the FRS (<10% estimated 10-year risk). Within this lower-risk subset, participants in the upper MRS quintile had more than double the risk of the remainder of the participants: 7% (12/176) of the upper MRS quintile experienced incident events, while 3% (19/701) of the remaining four MRS quintiles experienced incident events. <!--While a similar risk increase was observed when taking the intersection of these low-risk groups (low FRS and low GRS), the sample size was not enough to draw reasonable statistical conclusions (only 6 events in total).-->
 
 FRS could not be calculated in the REGICOR dataset, as not all risk factors were available as continuous values. However, stratified models replicated the observation of greater MRS discrimination in the lowest alternative risk stratum. <!--The estimated odds ratio per standard deviation for the MRS was 6.79 in the youngest individuals (<55 years old) versus 1.29 in the oldest individuals (>65 years old).--> An empirical risk function was generated through logistic regression of MI status on cardiovascular risk factors (age, sex, BMI, diabetes, smoking status, hyperlipidemia (binary), and hypertension). Predicted MI risk using this model was used to stratify subjects into four risk groups, with MRS odds ratios (per standard deviation) of 4.49 in the lowest-risk group versus 1.20 in the highest-risk group. More detailed results from these analyses are shown in Supp. Table S5.
 
@@ -917,25 +1058,30 @@ FRS could not be calculated in the REGICOR dataset, as not all risk factors were
 
 # Discussion
 
-Epigenetic signatures of cardiometabolic diseases and aging in general are being actively explored as biomarkers of disease risk that are potentially modifiable and reveal underlying biological mechanisms. Here, in a novel application of a cross-study ensembling method, we introduce a DNA methylation-based score specific to cardiovascular disease risk. The model performs similarly to one trained on a direct combination of the component datasets, and may be most strongly predictive in individuals predicted to be at lower risk based on traditional risk factors. 
+Epigenetic signatures of cardiometabolic diseases and aging in general are being actively explored as biomarkers of disease risk that are potentially modifiable and reveal underlying biological mechanisms. Here, in a novel application of a cross-study ensembling method, we introduce a DNA methylation-based score specific to cardiovascular disease risk. The model performs similarly to one trained on a direct combination of the component datasets, and may perform best in individuals predicted to be at lower risk based on traditional risk factors. 
 
-We opted to use cross-study learning to train our risk model based on the expectation that differences across cohorts (e.g. demographic, behavioral) may contribute to heterogeneity in both the marginal distribution of the CpG features and the conditional distribution of the CVD outcome. Under these conditions, the generalizability of a single-study predictor is often obscured or overstated [@Chang2015; @Zhang2018]. The performance of the CSL model was similar to that of models trained on the merged cohorts with or without batch adjustment via ComBat. This suggests that the assumptions made by these direct combination strategies (i.e. that the heterogeneity structure can be captured by variation in the marginal effects of each CpG site) are met. In practice, this underlying structure is unknown, and we highlight that the CSL was able to produce similar gains in predictive accuracy without making specific assumptions. <!--Using the CSL, we observed improved performance in test sets as compared to the naïve strategy of combining cohorts and training a single-study model. This suggests that up- and down-weighting single-study models offers an advantage compared to the increased combined sample size of the cohort-merging strategy.-->
+We opted to use cross-study learning to train our risk model based on the expectation that differences across cohorts (e.g. demographic, behavioral) may contribute to heterogeneity in both the marginal distribution of the CpG features and the conditional distribution of the CVD outcome. Under these conditions, the generalizability of a single-study predictor is often obscured or overstated [@Chang2015; @Zhang2018]. The performance of the CSL model was similar to that of models trained on the merged cohorts with or without batch adjustment via ComBat. This suggests that the assumptions made by these direct combination strategies (i.e. that the heterogeneity structure can be captured by variation in the marginal effects of each CpG site) are met. In practice, this underlying structure is unknown, and we highlight that the CSL was able to produce similar gains in accuracy without making specific assumptions. <!--Using the CSL, we observed improved performance in test sets as compared to the naïve strategy of combining cohorts and training a single-study model. This suggests that up- and down-weighting single-study models offers an advantage compared to the increased combined sample size of the cohort-merging strategy.-->
     
 In assessing the stability of the MRS, we observed reasonable reproducibility between technical replicates (ICC=0.85). ICCs for LBC subjects over time were somewhat lower (ICC=0.68), which is to be expected due to not only changes in environment, but also the known epigenetic evolution with age that we observed to be enriched in the components of our score. Furthermore, this value is at the upper end of the range of single-CpG repeatability measurements over time calculated in the combined Lothian Birth Cohorts (1921 and 1936) [@Shah2014]. These ICC values suggest an imperfect but usable reproducibility of the MRS, and an aggregate marker that is fairly robust considering the low replicability that has been observed for individual sites in technical replicates (general median ICC of 0.3 and mode of 0.75 in a "high reliability" cluster) [@Bose2014].
 
-The enrichment of the MRS component CpGs for proximity to genes related to cell-cell adhesion (in all subsets except FHS-JHU) is indicative of the underlying biological mechanisms. As we have previously observed in the WHI and FHS cohorts, it appears that immune activation is central to the prognostic information contained in leukocyte DNA methylation [@Westerman2018]. For example, epigenetic processes have been shown to be involved in the activation and increased adhesion of monocytes in response to environmental insults and metabolic stress, though these have been explored primarily in relation to histone modifications [@Short2017]. Our results provide preliminary support for an attractive model in which a methylation-based score could act as a monitor of cumulative stress in leukocytes and their corresponding activation towards a more atherogenic state.
+Our observation that different CpGs tended to be selected across studies (Fig. 3) is in agreement with the relative lack of replication seen in prior cardiovascular epigenomic studies [@Fernandez-Sanles2017]. However, the enrichment of the MRS component CpGs for proximity to genes related to cell-cell adhesion (in all subsets except FHS-JHU) is indicative of shared underlying biological mechanisms. As we have previously observed in the WHI and FHS cohorts, it appears that immune activation is central to the prognostic information contained in leukocyte DNA methylation [@Westerman2018]. For example, epigenetic processes have been shown to be involved in the activation and increased adhesion of monocytes in response to environmental insults and metabolic stress, though these have been explored primarily in relation to histone modifications [@Short2017]. Our results provide preliminary support for an attractive model in which a methylation-based score could act as a monitor of cumulative stress in leukocytes and their corresponding activation towards a more atherogenic state.
 
-Existing epigenetic scores have shown varying strength in predicting incident cardiovascular disease. An early investigation examined blood-based methylation in LINE-1 elements, finding strong associations of global hypomethylation with prevalent and incident ischemic heart disease global (LINE-1), though additional reports showed opposite associations of methylation at repetitive elements with CVD [@Kim2010]. Guarrera et al. developed a biomarker for MI based on global LINE-1 and ZBTB12 gene methylation that provided a modest net reclassification index improvement (0.23-0.47) compared to traditional risk factors only. Multiple epigenetic aging metrics, though not developed specifically for CVD, have been shown to predict incident CHD, including PhenoAge (odds ratios from 1.02 to 1.08) and GrimAge (hazard ratio = 1.07, adjusted for age and technical factors) [@Levine2018; @Lu2019]. While these associations are statistically significant, they do not represent clinically meaningful improvements in discrimination. Our observed hazard ratio of 1.28 (Basic model in the held-out FHS-UM dataset) indicates that this MRS may be closer to clinical relevance. We note that our component CpG sites overlap strongly with those of these established epigenetic metrics including PhenoAge, suggesting that it captures some of the same biological patterns. However, the mechanistic significance of the specific methylation signals captured by these aging-related metrics, whether as markers of epigenetic regulation breakdown or the work of an "epigenetic maintenance system", is still unclear [@Horvath2013; @Lund2019].
+Existing epigenetic scores have shown varying strengths of association with incident cardiovascular disease. An early investigation examined blood-based methylation in LINE-1 elements, finding strong associations of global hypomethylation with prevalent and incident ischemic heart disease (LINE-1), though additional reports showed opposite associations of methylation at repetitive elements with CVD [@Kim2010]. Guarrera et al. developed a biomarker for MI based on global LINE-1 and ZBTB12 gene methylation that provided a modest net reclassification index improvement (0.23-0.47) compared to traditional risk factors only. Multiple epigenetic aging metrics, though not developed specifically for CVD, have been shown to predict incident CHD, including PhenoAge (odds ratios from 1.02 to 1.08) and GrimAge (hazard ratio = 1.07, adjusted for age and technical factors) [@Levine2018; @Lu2019]. While these associations are statistically significant, they do not represent clinically meaningful improvements in discrimination. Our observed hazard ratio of 1.28 (Basic model in the held-out FHS-UM dataset) indicates that this MRS may be closer to clinical relevance. We note that our component CpG sites overlap strongly with those of these established epigenetic metrics including PhenoAge, suggesting that it captures some of the same biological patterns. However, the mechanistic significance of the specific methylation signals captured by these aging-related metrics, whether as markers of epigenetic regulation breakdown or the work of an "epigenetic maintenance system", is still unclear [@Horvath2013; @Lund2019].
 
-In examining the potential clinical utility of an novel risk score for CVD, it is important to understand to what extent it is redundant with or complementary to existing risk metrics. This type of cross-metric analysis can be clinically relevant, as demonstrated for example in a recent investigation exploring the interaction between genetic and lifestyle-based risk prediction for dementia [@Licher2019]. Here, we saw a pattern of improved epigenetic risk prediction in individuals whose cardiovascular risk based on traditional metrics (here, the Framingham Risk Score) was low. This pattern replicated in the REGICOR dataset (though FRS could not be directly calculated), with improved MRS discrimination in lower-risk subjects based on an empirical risk function. While these associations are preliminary, they suggest that an epigenetic risk score could help identify higher-risk individuals who otherwise would not have been detected by other metrics. While we did not identify any robust patterns of differential MRS performance in strata based on a genetic cardiovascular risk score, there may have been lower power to detect any such patterns from the outset given the modest discriminatory performance of the GRS in WHI.
+In examining the potential clinical utility of an novel risk score for CVD, it is important to understand to what extent it is redundant with or complementary to existing risk metrics. We first note that the strength of this epigenetic score in adjusted models is lower than that found for traditional risk scores (Supp. Table S4) and some novel biochemical risk measures such as high-sensitivity Troponin I (adjusted HR for global CVD = 3.01) [@Jia2019]. However, analysis of interactions between different risk metrics can be clinically relevant, as demonstrated for example in a recent investigation exploring the interaction between genetic and lifestyle-based risk prediction for dementia [@Licher2019]. Here, we saw a pattern of stronger epigenetic risk associations in individuals whose cardiovascular risk based on traditional metrics (here, the Framingham Risk Score) was low. This pattern replicated in the REGICOR dataset (though FRS could not be directly calculated), with improved MRS discrimination in lower-risk subjects based on an empirical risk function. While these associations are preliminary, they suggest that an epigenetic risk score could help identify higher-risk individuals who otherwise would not have been detected by other metrics. While we did not identify any robust patterns of differential MRS performance in strata based on a genetic cardiovascular risk score, there may have been lower power to detect any such patterns from the outset given the modest discriminatory performance of the GRS in WHI.
 
-Multiple limitations should be acknowledged. While lymphocytes are known to be important in CVD pathogenesis, there is likely additional biological signal in other CVD-relevant tissues not examined here. Additionally, the present definition of CVD was chosen to balance specificity of CVD subtypes with sample size, but this balance could be altered to focus on more specific disease subtypes (e.g. myocardial infarction) or a broader definition of CVD (e.g. including heart failure). Finally, while the REGICOR dataset provided an important age- and sex-matched case-control setting for replication of the MRS, this work would benefit from future replication in an independent cohort enabling assessment of incident disease.
+Multiple limitations should be acknowledged. While lymphocytes are known to be important in CVD pathogenesis, epigenetic signals have been reported in other CVD-relevant tissues, such as aorta and other vascular tissues [@Fernandez-Sanles2017], that were not examined here. Additionally, the present definition of CVD was chosen to balance specificity of CVD subtypes with sample size, but this balance could be altered to focus on more specific disease subtypes (e.g. myocardial infarction) or a broader definition of CVD (e.g. including heart failure). Finally, while the REGICOR dataset provided an important age- and sex-matched case-control setting for replication of the MRS, this work would benefit from future replication in an independent cohort enabling assessment of incident disease.
 
-In sum, we have developed an epigenetic risk score for cardiovascular disease that provides additional predictive power beyond existing risk measures, and may show improved performance in populations otherwise designated as low-risk. Furthermore, we have shown a novel application of a cross-cohort ensembling method that may provide significant value to future investigations in genomic epidemiology.
+In sum, we have developed an epigenetic risk score for cardiovascular disease that provides additional value beyond existing risk measures, and may show improved performance in populations otherwise designated as low-risk. Furthermore, we have shown a novel application of a cross-cohort ensembling method that may provide significant value to future investigations in genomic epidemiology.
 
 # Acknowledgements
 
 We thank all LBC1936 study participants and research team members. The LBC1936 is supported by Age UK (Disconnected Mind program) and the Medical Research Council (MR/M01311/1). Methylation typing in LBC1936 was supported by Centre for Cognitive Ageing and Cognitive Epidemiology (Pilot Fund award), Age UK, The Wellcome Trust Institutional Strategic Support Fund, The University of Edinburgh, and The University of Queensland. LBC1936 work was conducted in the Centre for Cognitive Ageing and Cognitive Epidemiology, which is supported by the Medical Research Council and Biotechnology and Biological Sciences Research Council (MR/K026992/1), and which supported IJD. 
+
+
+# Reproducibility
+
+Code supporting the analyses described here can be found at https://github.com/kwesterman/meth_cvd. Code and instructions related to the original cross-study learning approach can be found at https://github.com/prpatil/csml_rep. 
 
 # Funding Sources
 

@@ -410,13 +410,16 @@ outcome_data_lbc36 <- read.spss("../data/lbc/phen/LBC1936_MethylationCardioVascu
          event=(cvdhist_w2 == "Yes" | stroke_w2 == "Yes" | 
                   cvdhist_w3 == "Yes" | stroke_w3 == "Yes" | 
                   cvdhist_w4 == "Yes" | stroke_w4 == "Yes"),
+         incStroke=(stroke_w2 == "Yes" | 
+                      (cvdhist_w3 == "No" & stroke_w3 == "Yes") | 
+                      (cvdhist_w3 == "No" & cvdhist_w4 == "No" & stroke_w4 == "Yes")),
          event=ifelse(is.na(event), F, event),
          time=case_when(cvdhist_w2 == "Yes" | stroke_w2 == "Yes" ~ 4 * 365,
                         cvdhist_w3 == "Yes" | stroke_w3 == "Yes" ~ 8 * 365,
                         cvdhist_w4 == "Yes" | stroke_w4 == "Yes" ~ 11 * 365,
                         !is.na(agedays_death) ~ agedays_death - agedays_w1,
                         TRUE ~ 14 * 365)) %>%
-  select(subjID, pastEvent, event, time)
+  select(subjID, pastEvent, event, time, incStroke)
 
 outcome_data <- bind_rows(outcome_data_fhs, outcome_data_whi,
                           outcome_data_lbc21, outcome_data_lbc36,

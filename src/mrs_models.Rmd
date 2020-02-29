@@ -342,6 +342,19 @@ train_glmnet <- function(X, y, alpha=0.5, nfolds=5, lmr=0.01,
        cpg_coefs=cpg_coefs)
 }
 
+train_glmnet_logistic <- function(X, y, alpha=0.5, nfolds=5, lmr=0.01,
+                         parallel=F, s="lambda.min") {
+  mrs_fit_cv <- cv.glmnet(X, y, family="binomial", alpha=alpha,  # Train MRS model
+                          penalty.factor=ifelse(grepl("^cg", colnames(X)), 1, 0),
+                          lambda.min.ratio=lmr,
+                          nfolds=nfolds, parallel=parallel)
+  coefs <- coef(mrs_fit_cv, s=s)
+  cpg_coefs <- coefs[grepl("^cg", rownames(coefs)), 1]
+  list(fit=mrs_fit_cv,  # Output is a list containing the model fit and the CpG model coefficients
+       all_coefs=coefs,
+       cpg_coefs=cpg_coefs)
+}
+
 calc_mrs_glmnet <- function(coefs, meth) {
   if (length(coefs) == 0 || all(coefs == 0)) {
     message("No non-zero coefficients")
@@ -393,6 +406,7 @@ boot_samples <- lapply(1:n_boots, function(i) {
 ```{r calc-frs, message=F, warning=F}
 source("helpers.R")
 
+nmd_all_preimputation <- nmd_all
 nmd_all$diabetes <- nmd_all$dm_med | (nmd_all$glu > 125)
 nmd_all <- replace_na(nmd_all, list(diabetes=F, ht_med=F, smk_now=F))
 nmd_all$frs <- calc_FRS(nmd_all)
@@ -461,6 +475,153 @@ names(ssl_fits) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
 stopCluster(cl)
 ```
 
+```{r ssl-models-tune-alpha, cache=1}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+alpha_series <- c(0.05, 0.25, 0.5, 0.75, 0.95)
+
+ssl_fits_alpha <- lapply(
+  c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn"),
+  function(b) {
+    lapply(alpha_series, function(alpha) {
+      idx <- which(nmd_all$batch == b)
+      mads <- apply(betas_all[, idx], 1, mad)
+      var_cpgs <- order(mads, decreasing=T)[1:100000]
+      design_mat <- construct_design_mat(
+        rownames(betas_all)[var_cpgs], betas_all, "batch", nmd_all)
+      train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+                   alpha=alpha, nfolds=5, parallel=T, lmr=0.05)  
+    }) %>% setNames(as.character(alpha_series))
+  })
+names(ssl_fits_alpha) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
+
+stopCluster(cl)
+```
+
+```{r ssl-models-logistic, cache=1}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+ssl_fits_logistic <- lapply(
+  c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn"),
+  function(b) {
+    idx <- which(nmd_all$batch == b)
+    mads <- apply(betas_all[, idx], 1, mad)
+    var_cpgs <- order(mads, decreasing=T)[1:100000]
+    design_mat <- construct_design_mat(
+      rownames(betas_all)[var_cpgs], betas_all, "batch", nmd_all)
+    train_glmnet_logistic(design_mat[idx, ], nmd_all$event[idx],
+                          alpha=0.05, nfolds=5, parallel=T, lmr=0.05)  
+  })
+names(ssl_fits_logistic) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
+
+stopCluster(cl)
+```
+
+```{r ssl-models-raceadjust, cache=1}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+ssl_fits_raceadjust <- lapply(c("whi"),
+                     function(b) {
+  idx <- which(nmd_all$batch == b)
+  mads <- apply(betas_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:100000]
+  design_mat <- construct_design_mat(
+    rownames(betas_all)[var_cpgs], betas_all, c("batch", "race"), nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=5, parallel=T, lmr=0.05)  
+})
+names(ssl_fits) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
+
+stopCluster(cl)
+```
+
+```{r ssl-models-tenfold, cache=1}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+ssl_fits_tenfold <- lapply(c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn"),
+                     function(b) {
+  idx <- which(nmd_all$batch == b)
+  mads <- apply(betas_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:100000]
+  design_mat <- construct_design_mat(
+    rownames(betas_all)[var_cpgs], betas_all, "batch", nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=10, parallel=T, lmr=0.05)  
+})
+names(ssl_fits_tenfold) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
+
+stopCluster(cl)
+```
+
+```{r ssl-models-doublecpg, cache=1}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+ssl_fits_doublecpg <- lapply(c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn"),
+                     function(b) {
+  idx <- which(nmd_all$batch == b)
+  mads <- apply(betas_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:200000]
+  design_mat <- construct_design_mat(
+    rownames(betas_all)[var_cpgs], betas_all, "batch", nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=5, parallel=T, lmr=0.05)  
+})
+names(ssl_fits_doublecpg) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
+
+stopCluster(cl)
+```
+
+```{r ssl-models-allcpgs, cache=1}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+ssl_fits_allcpgs <- lapply(c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn"),
+                     function(b) {
+  idx <- which(nmd_all$batch == b)
+  mads <- apply(betas_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)
+  design_mat <- construct_design_mat(
+    rownames(betas_all)[var_cpgs], betas_all, "batch", nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=5, parallel=T, lmr=0.05)  
+})
+names(ssl_fits_allcpgs) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
+
+stopCluster(cl)
+```
+
+```{r ssl-models-nostroke, cache=1}
+set.seed(1)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+ssl_fits_nostroke <- lapply(c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn"),
+                     function(b) {
+  nmd_all <- replace_na(nmd_all, list(incStroke=F))
+  idx <- which(nmd_all$batch == b & !nmd_all$incStroke)
+  mads <- apply(betas_all[, idx], 1, mad)
+  var_cpgs <- order(mads, decreasing=T)[1:100000]
+  design_mat <- construct_design_mat(
+    rownames(betas_all)[var_cpgs], betas_all, "batch", nmd_all)
+  train_glmnet(design_mat[idx, ], cvd_surv_all[idx],
+               alpha=0.05, nfolds=10, parallel=T, lmr=0.05)  
+})
+names(ssl_fits_nostroke) <- c("whi", "lbc36", "fhs_JHU", "fhs_UofMinn")
+
+stopCluster(cl)
+```
+
 ## Description
 
 The "stacking" method used here is based on Patil 2018, who suggest using linear combinations of predictions from multiple studies as an alternative to a simple combination of all datasets as was done above. It involves training study-specific predictors, then using predictions from these models as features in a multivariate, penalized Cox regression on the full combined ("stacked") dataset. Normalized coefficients from this regression then act as weights for linear combination of these study-specific predictors into a final risk score.
@@ -490,6 +651,88 @@ uofm_holdout_res_tbl_noPE <- test_models(
 nmd_all$mrs_uofm_holdout <- uofm_holdout_mrs
 
 kable(uofm_holdout_res_tbl, caption="MRS performance in held-out FHS subset")
+```
+
+```{r test-UofM-holdout-sensitivity}
+non_uofm_cpg_coefs_logistic <- list(whi=ssl_fits_logistic$whi$cpg_coefs,
+                                    fhs_JHU=ssl_fits_logistic$fhs_JHU$cpg_coefs,
+                                    lbc36=ssl_fits_logistic$lbc36$cpg_coefs)
+uofm_holdout_csl_logistic <- assemble_csl(
+  nmd_all, betas_all, non_uofm_cpg_coefs_logistic,
+  which(nmd_all$batch != "fhs_UofMinn"))
+uofm_holdout_mrs_logistic <- uofm_holdout_csl_logistic$mrs
+uofm_holdout_res_tbl_logistic <- test_models(
+  nmd_all, uofm_holdout_mrs_logistic, 
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T)
+uofm_holdout_res_tbl_noPE_logistic <- test_models(
+  nmd_all, uofm_holdout_mrs_logistic,
+  nmd_all$batch == "fhs_UofMinn" & nmd_all$pastEvent == F, 
+  test_mrs_with_SE, robust=T)
+nmd_all$mrs_uofm_holdout_logistic <- uofm_holdout_mrs_logistic
+
+non_uofm_cpg_coefs_raceadj <- list(whi=ssl_fits_raceadjust$whi$cpg_coefs,
+                                   fhs_JHU=ssl_fits$fhs_JHU$cpg_coefs,
+                                   lbc36=ssl_fits$lbc36$cpg_coefs)
+uofm_holdout_csl_raceadj <- assemble_csl(
+  nmd_all, betas_all, non_uofm_cpg_coefs_raceadj,
+  which(nmd_all$batch != "fhs_UofMinn"))
+uofm_holdout_mrs_raceadj <- uofm_holdout_csl_raceadj$mrs
+uofm_holdout_res_tbl_raceadj <- test_models(
+  nmd_all, uofm_holdout_mrs_raceadj, 
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T)
+uofm_holdout_res_tbl_noPE_raceadj <- test_models(
+  nmd_all, uofm_holdout_mrs_raceadj,
+  nmd_all$batch == "fhs_UofMinn" & nmd_all$pastEvent == F, 
+  test_mrs_with_SE, robust=T)
+nmd_all$mrs_uofm_holdout_raceadj <- uofm_holdout_mrs_raceadj
+
+non_uofm_cpg_coefs_tenfold <- list(whi=ssl_fits_tenfold$whi$cpg_coefs,
+                                   fhs_JHU=ssl_fits_tenfold$fhs_JHU$cpg_coefs,
+                                   lbc36=ssl_fits_tenfold$lbc36$cpg_coefs)
+uofm_holdout_csl_tenfold <- assemble_csl(
+  nmd_all, betas_all, non_uofm_cpg_coefs_tenfold,
+  which(nmd_all$batch != "fhs_UofMinn"))
+uofm_holdout_mrs_tenfold <- uofm_holdout_csl_tenfold$mrs
+uofm_holdout_res_tbl_tenfold <- test_models(
+  nmd_all, uofm_holdout_mrs_tenfold, 
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T)
+nmd_all$mrs_uofm_holdout_tenfold <- uofm_holdout_mrs_tenfold
+
+non_uofm_cpg_coefs_doublecpg <- list(whi=ssl_fits_doublecpg$whi$cpg_coefs,
+                                   fhs_JHU=ssl_fits_doublecpg$fhs_JHU$cpg_coefs,
+                                   lbc36=ssl_fits_doublecpg$lbc36$cpg_coefs)
+uofm_holdout_csl_doublecpg <- assemble_csl(
+  nmd_all, betas_all, non_uofm_cpg_coefs_doublecpg,
+  which(nmd_all$batch != "fhs_UofMinn"))
+uofm_holdout_mrs_doublecpg <- uofm_holdout_csl_doublecpg$mrs
+uofm_holdout_res_tbl_doublecpg <- test_models(
+  nmd_all, uofm_holdout_mrs_doublecpg, 
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T)
+nmd_all$mrs_uofm_holdout_doublecpg <- uofm_holdout_mrs_doublecpg
+
+non_uofm_cpg_coefs_allcpgs <- list(whi=ssl_fits_allcpgs$whi$cpg_coefs,
+                                   fhs_JHU=ssl_fits_allcpgs$fhs_JHU$cpg_coefs,
+                                   lbc36=ssl_fits_allcpgs$lbc36$cpg_coefs)
+uofm_holdout_csl_allcpgs <- assemble_csl(
+  nmd_all, betas_all, non_uofm_cpg_coefs_allcpgs,
+  which(nmd_all$batch != "fhs_UofMinn"))
+uofm_holdout_mrs_allcpgs <- uofm_holdout_csl_allcpgs$mrs
+uofm_holdout_res_tbl_allcpgs <- test_models(
+  nmd_all, uofm_holdout_mrs_allcpgs, 
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T)
+nmd_all$mrs_uofm_holdout_allcpgs <- uofm_holdout_mrs_allcpgs
+
+non_uofm_cpg_coefs_nostroke <- list(whi=ssl_fits_nostroke$whi$cpg_coefs,
+                                   fhs_JHU=ssl_fits_nostroke$fhs_JHU$cpg_coefs,
+                                   lbc36=ssl_fits_nostroke$lbc36$cpg_coefs)
+uofm_holdout_csl_nostroke <- assemble_csl(
+  nmd_all, betas_all, non_uofm_cpg_coefs_nostroke,
+  which(nmd_all$batch != "fhs_UofMinn" & !(nmd_all$incStroke)))
+uofm_holdout_mrs_nostroke <- uofm_holdout_csl_nostroke$mrs
+uofm_holdout_res_tbl_nostroke <- test_models(
+  nmd_all, uofm_holdout_mrs_nostroke, 
+  nmd_all$batch == "fhs_UofMinn", test_mrs_with_SE, robust=T)
+nmd_all$mrs_uofm_holdout_nostroke <- uofm_holdout_mrs_nostroke
 ```
 
 ```{r other-csl-assessment}
@@ -1414,11 +1657,11 @@ Parameter selection:
 
 # Export of objects for reports/manuscripts
 
-```{r export-prep, cache=1}
+```{r export-prep-1, cache=1}
 mads_full <- apply(betas_all, 1, mad)
 ```
 
-```{r export}
+```{r export-prep-2}
 int_res_list <- list(age=age_quantile_res, frs=frs_quantile_res, 
                      grs=grs_quantile_res, grs_white=grs_quantile_res_white,
                      race=race_res, sex=sex_res)
@@ -1431,11 +1674,17 @@ variable_100k_cpgs <- rownames(betas_all)[order(mads_full,
                                                 decreasing=T)[1:100000]]
 ```
 
-
 ```{r export}
-save("nmd_all", "common_cpgs", "variable_100k_cpgs",
+save("nmd_all", "nmd_all_preimputation", "common_cpgs", "variable_100k_cpgs",
+     "ssl_fits_alpha",
      "uofm_holdout_csl", 
      "uofm_holdout_res_tbl", "uofm_holdout_res_tbl_noPE",
+     "uofm_holdout_res_tbl_logistic", "uofm_holdout_res_tbl_noPE_logistic",
+     "uofm_holdout_res_tbl_raceadj", "uofm_holdout_res_tbl_noPE_raceadj",
+     "uofm_holdout_res_tbl_tenfold",
+     "uofm_holdout_res_tbl_doublecpg",
+     "uofm_holdout_res_tbl_allcpgs",
+     "uofm_holdout_res_tbl_nostroke",
      "uofm_holdout_surv_fit", 
      "compare_df", "ssl_nonzero_coefs",
      "final_csl",
