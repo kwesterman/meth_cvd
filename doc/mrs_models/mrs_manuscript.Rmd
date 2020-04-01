@@ -560,7 +560,7 @@ gsa_summary_plt <- gsa_summary_tbl %>%
   scale_y_discrete(position="right") +
   theme(axis.line=element_blank(), axis.ticks=element_blank(),
         axis.title=element_blank(), 
-        legend.position=c(1.8, 0.5),
+        legend.position=c(1.6, 0.5),
         # legend.key.width=unit(0.06, "npc"),
         axis.text.x=element_text(angle=60, hjust=0, size=10),
         axis.text.y=element_text(size=7))
@@ -705,9 +705,9 @@ agg_frs_tbl <- map_dfr(levels(nmd_all$frs_group), function(g) {
 agg_frs_plt <- ggplot(agg_frs_tbl, aes(x=frs_group, y=HR_per_SD)) +
   geom_point() +
   geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) + 
-  annotate("text", label="MRS-FRS interaction:\np = 8.27e-5", x=3, y=2.5) +
-  labs(x="FRS 10-year risk") +
-  theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
+  annotate("text", label="MRS-FRS interaction:\np = 8.27e-5", x=3, y=2.5, size=3.5) +
+  labs(x="FRS 10-year risk") #+
+  # theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
 
 whi_white_mrs_sd <- sd(filter(nmd_all, study == "whi", race == "white")$mrs_final)
 agg_grs_tbl <- map_dfr(levels(nmd_all$grs_group_white), function(g) {
@@ -734,9 +734,9 @@ agg_grs_tbl <- map_dfr(levels(nmd_all$grs_group_white), function(g) {
 agg_grs_plt <- ggplot(agg_grs_tbl, aes(x=grs_group, y=HR_per_SD)) +
   geom_point() +
   geom_errorbar(aes(ymin=SE_lower, ymax=SE_higher), width=0) + 
-  annotate("text", label="MRS-GRS interaction:\np = 0.719", x=3, y=2.5) +
-  labs(x="Genetic risk score quartile") +
-  theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
+  annotate("text", label="MRS-GRS interaction:\np = 0.719", x=3, y=2.5, size=3.5) +
+  labs(x="Genetic risk score quartile") #+
+  # theme(axis.text.x=element_text(angle=30, size=10, hjust=0.75))
 
 # study_legend <- get_legend(frs_quantile_plt)
 plot_grid(
@@ -744,11 +744,14 @@ plot_grid(
     scale_x_discrete(labels=c("<0.1", "0.1-0.2", "0.2-0.4", ">0.4")) +
     labs(y="Hazard ratio (per s.d. MRS)") +
     coord_cartesian(ylim=c(1.65, 2.65)) +
-    theme(axis.text.x=element_text(angle=30, size=10), legend.position="none"),
+    theme(axis.text.x=element_text(size=9), 
+          axis.title=element_text(size=10),
+          legend.position="none"),
   agg_grs_plt + theme(legend.position="none") + 
     coord_cartesian(ylim=c(1.65, 2.65)) +
     labs(y="") +
-    theme(axis.text.x=element_text(size=10, hjust=0.75)),
+    theme(axis.text.x=element_text(size=9, hjust=0.75), 
+          axis.title=element_text(size=10)),
   nrow=1, align="h", axis="bt", 
   labels=c("a", "b"))
 

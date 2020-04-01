@@ -9,8 +9,8 @@ output:
 
 documentclass: article
 
-bibliography: mrs_manuscript.bib
-csl: jaha.csl
+# bibliography: mrs_manuscript.bib
+# csl: jaha.csl
 
 link-citations: true
 
@@ -38,7 +38,7 @@ load("../../output/mrs_models_objects.RData")
 
 \beginsupplement
 
-# Supplementary Methods
+# Supplemental Methods
 
 ## Women's Health Initiative
 
@@ -57,7 +57,10 @@ The Lothian Birth Cohorts consist of two birth cohorts (born in 1921 and 1936) e
 The REGICOR dataset analyzed here consisted of a nested case-control for myocardial infarction within the larger REGICOR (REgistre GIroní del COR) cohort from the Girona Province in Catalonia (Spain). Whole blood samples were collected from 391 total participants, with those from cases generally collected within 24 hours of the event. Characteristics for this population are available in Supp. Table S3.
 
 
-# Supplementary Tables and Figures
+
+\newpage
+
+# Supplemental Tables
 
 ```{r fhs-holdout-noPE}
 pretty_models <- c(unadjusted="Unadjusted",
@@ -97,8 +100,6 @@ homer_res %>%
   column_spec(1, width = "15em")
 ```
 
-\newpage
-
 ```{r stability}
 icc_res_tbl$ICC <- round(icc_res_tbl$ICC, 2)
 
@@ -131,7 +132,70 @@ data.frame(`Sample size`=391,
         caption="Description of REGICOR myocardial infarction nested case-control population (continuous variables presented as: mean (standard deviation))")
 ```
 
+```{r risk-score-validation}
+study_names_pretty <- c(whi="WHI", fhs_JHU="FHS-JHU", lbc36="LBC", 
+                        fhs_UofMinn="FHS-UM")
+
+test_frs <- function(frs_df) {
+  frs_df$frs <- scale(frs_df$frs)
+  coxph(Surv(time, event) ~ frs, data=frs_df) %>%
+    tidy() %>%
+    filter(term == "frs") %>%
+    select(estimate, p.value)
+}
+
+frs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU", 
+                         fhs_UofMinn="fhs_UofMinn", lbc36="lbc36"), 
+                       function(b) test_frs(filter(nmd_all, batch == b))) %>%
+  bind_rows(.id="Study") %>%
+  mutate(Study=study_names_pretty[Study],
+         HR_per_SD=round(exp(estimate), 2),
+         p=format(p.value, scientific=T, digits=2)) %>%
+  select(Study, HR_per_SD, p) %>%
+  setNames(c("Study", "HR per s.d. MRS", "p"))
+
+kable(frs_res_tbl, booktabs=T, longtable=T,
+      caption="Validation of Framingham Risk Score")
+
+test_grs <- function(grs_df) {
+  grs_df$grs <- scale(grs_df$grs)
+  glm((pastEvent | event) ~ grs, data=grs_df, family="binomial") %>%
+    tidy() %>%
+    filter(term == "grs") %>%
+    select(estimate, p.value)
+}
+
+grs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU", 
+                        fhs_UofMinn="fhs_UofMinn"), 
+                      function(b) test_grs(filter(nmd_all, batch == b))) %>%
+  bind_rows(.id="Study") %>%
+  mutate(Study=study_names_pretty[Study],
+         OR_per_SD=round(exp(estimate), 2),
+         p=format(p.value, scientific=T, digits=2)) %>%
+  select(Study, OR_per_SD, p=p.value)
+
+# kable(grs_res_tbl, booktabs=T,
+#       caption="Validation of genetic risk score")
+```
+
+```{r regicor-interactions}
+load("../../output/regicor_results_august2019/stratified_results.RData")
+regicor_rf_strat <- rf_risk_group_strat_csl %>%
+  mutate(SE=log(OR_per_SD) - log(SE_lower),
+         CI_lower=round(exp(log(OR_per_SD) - 1.96 * SE), 2),
+         CI_upper=round(exp(log(OR_per_SD) + 1.96 * SE), 2),
+         res_string=paste0(round(OR_per_SD, 2), " [", CI_lower, "-", CI_upper, 
+                           "]")) %>%
+  select(`Risk factor group`=`Risk factor-based risk quartile`, 
+         `OR per s.d. MRS [95% CI]`=res_string, N)
+regicor_rf_strat %>%
+  kable(booktabs=T, longtable=T,
+        caption="Risk factor-stratified MRS performance in the REGICOR dataset")
+```
+
 \newpage
+
+# Supplemental Figures
 
 ```{r csl-comparison, fig.cap="Comparison of modeling approaches. Performance metrics are shown as a function of the test dataset, either FHS-UM (a) or REGICOR (b), and the covariate adjustment. Performance is quantified by either hazard ratio from Cox models (a) or odds ratio from logistic models (b). Covariate sets used for adjustment for models named here are identical to their descriptions for the regression models presented above. Errors bars represent standard errors for the hazard ratio or odds ratio estimates."}
 method_conversions=c(combined="Combined", 
@@ -200,52 +264,6 @@ regicor_compare_plt <- regicor_compare_df %>%
 
 plot_grid(compare_plt, regicor_compare_plt, ncol=2, rel_widths=c(2, 3),
           labels=c("a", "b"))
-```
-
-```{r risk-score-validation}
-study_names_pretty <- c(whi="WHI", fhs_JHU="FHS-JHU", lbc36="LBC", 
-                        fhs_UofMinn="FHS-UM")
-
-test_frs <- function(frs_df) {
-  frs_df$frs <- scale(frs_df$frs)
-  coxph(Surv(time, event) ~ frs, data=frs_df) %>%
-    tidy() %>%
-    filter(term == "frs") %>%
-    select(estimate, p.value)
-}
-
-frs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU", 
-                         fhs_UofMinn="fhs_UofMinn", lbc36="lbc36"), 
-                       function(b) test_frs(filter(nmd_all, batch == b))) %>%
-  bind_rows(.id="Study") %>%
-  mutate(Study=study_names_pretty[Study],
-         HR_per_SD=round(exp(estimate), 2),
-         p=format(p.value, scientific=T, digits=2)) %>%
-  select(Study, HR_per_SD, p) %>%
-  setNames(c("Study", "HR per s.d. MRS", "p"))
-
-kable(frs_res_tbl, booktabs=T, longtable=T,
-      caption="Validation of Framingham Risk Score")
-
-test_grs <- function(grs_df) {
-  grs_df$grs <- scale(grs_df$grs)
-  glm((pastEvent | event) ~ grs, data=grs_df, family="binomial") %>%
-    tidy() %>%
-    filter(term == "grs") %>%
-    select(estimate, p.value)
-}
-
-grs_res_tbl <- lapply(c(whi="whi", fhs_JHU="fhs_JHU", 
-                        fhs_UofMinn="fhs_UofMinn"), 
-                      function(b) test_grs(filter(nmd_all, batch == b))) %>%
-  bind_rows(.id="Study") %>%
-  mutate(Study=study_names_pretty[Study],
-         OR_per_SD=round(exp(estimate), 2),
-         p=format(p.value, scientific=T, digits=2)) %>%
-  select(Study, OR_per_SD, p=p.value)
-
-# kable(grs_res_tbl, booktabs=T,
-#       caption="Validation of genetic risk score")
 ```
 
 \newpage
@@ -357,22 +375,3 @@ int_plts <- plot_grid(
 
 plot_grid(int_plts, fqp_legend, nrow=1, rel_widths=c(5, 1))
 ```
-
-```{r regicor-interactions}
-load("../../output/regicor_results_august2019/stratified_results.RData")
-regicor_rf_strat <- rf_risk_group_strat_csl %>%
-  mutate(SE=log(OR_per_SD) - log(SE_lower),
-         CI_lower=round(exp(log(OR_per_SD) - 1.96 * SE), 2),
-         CI_upper=round(exp(log(OR_per_SD) + 1.96 * SE), 2),
-         res_string=paste0(round(OR_per_SD, 2), " [", CI_lower, "-", CI_upper, 
-                           "]")) %>%
-  select(`Risk factor group`=`Risk factor-based risk quartile`, 
-         `OR per s.d. MRS [95% CI]`=res_string, N)
-regicor_rf_strat %>%
-  kable(booktabs=T, longtable=T,
-        caption="Risk factor-stratified MRS performance in the REGICOR dataset")
-```
-
-\newpage
-
-# Supplementary References
