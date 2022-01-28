@@ -5,6 +5,7 @@ cache/*
 *.RData
 *.rds
 *.Rhistory
+!output/mrs_calculation/*
 
 # LaTeX helper files
 *.sty
@@ -22,6 +23,7 @@ cache/*
 # Submissions
 doc/module_ewas/past_submissions/*
 doc/mrs_models/past_submissions/*
+doc/mrs_models/jaha/proofing/*
 *cover_letter*
 
 # Mac-specific
